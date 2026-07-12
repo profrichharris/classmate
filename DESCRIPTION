@@ -1,0 +1,28 @@
+Package: classmate
+Title: AI Assistant for Teaching R
+Version: 0.5.22
+Authors@R:
+    person("Richard", "Harris", email = "profrichharris@gmail.com",
+           role = c("aut", "cre"))
+Description: A Shiny front-end that lets students interact with Claude AI
+    directly from their R session. Provides a prompt box, file and
+    workspace-object context, automatic code extraction and execution,
+    AI-assisted error fixing, session pause/resume, and code logging.
+    Bundled with example spatial data for the accompanying practical exercises.
+    Launch with ask().
+License: MIT + file LICENSE
+Encoding: UTF-8
+Imports:
+    shiny,
+    shinyjs,
+    shinyFiles,
+    shinyAce,
+    callr,
+    rstudioapi,
+    httr2
+Suggests:
+    remotes
+LazyData: true
+Depends:
+    R (>= 4.1.0)
+Config/roxygen2/version: 8.0.0
