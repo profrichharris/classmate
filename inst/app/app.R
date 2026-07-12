@@ -304,10 +304,19 @@ format_prompt_as_comment <- function(prompt_text) {
 }
 
 format_log_entries <- function(entries) {
-  blocks <- vapply(entries, function(e) {
-    paste0(format_prompt_as_comment(e$prompt), "\n", e$code)
-  }, character(1))
-  paste(blocks, collapse = "\n\n")
+  header <- paste0(
+    "---\ntitle: \"Classmate Code Log\"\ndate: \"",
+    format(Sys.time(), "%Y-%m-%d %H:%M"), "\"\noutput: html_notebook\n---\n"
+  )
+  chunks <- lapply(seq_along(entries), function(i) {
+    e <- entries[[i]]
+    prompt_text <- if (is.null(e$prompt) || !nzchar(trimws(e$prompt)))
+      "_No prompt recorded — code entered or edited manually._"
+    else
+      paste0("*", trimws(e$prompt), "*")
+    paste0(prompt_text, "\n\n```{r chunk_", i, "}\n", trimws(e$code), "\n```")
+  })
+  paste(c(header, chunks), collapse = "\n\n")
 }
 
 validate_api_key <- function(key) {
@@ -2593,8 +2602,8 @@ server <- function(input, output, session) {
   # log_path is generated fresh each time Save Code Log is pressed (date-time stamped)
   make_log_path <- function()
     file.path(PROJECT_ROOT,
-      paste0("classmate_log_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".R"))
-  log_path <- reactiveVal(file.path(PROJECT_ROOT, "classmate_log.R"))  # placeholder
+      paste0("classmate_log_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".Rmd"))
+  log_path <- reactiveVal(file.path(PROJECT_ROOT, "classmate_log.Rmd"))  # placeholder
 
   selected_files   <- reactiveVal(character(0))
   selected_objects <- reactiveVal(character(0))
