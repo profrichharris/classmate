@@ -2347,7 +2347,9 @@ server <- function(input, output, session) {
     if (is.null(idx)) return()
     convs <- saved_conversations()
     if (idx > length(convs)) return()
-    # Save current conversation before recalling
+    # If the current conversation is blank, recalling gives back one slot
+    current_is_blank <- length(prompt_history()) == 0 && length(run_history()) == 0
+    # Save current conversation before recalling (no-op if blank)
     save_current_conversation_if_nonempty()
     # Restore recalled conversation
     recalled <- convs[[idx]]
@@ -2379,6 +2381,7 @@ server <- function(input, output, session) {
       updateAceEditor(session, "code_editor", value = "")
     output$run_status <- renderUI(NULL)
     updateTabsetPanel(session, "main_tabs", selected = "Code")
+    if (current_is_blank) conv_count_rv(max(conv_count_rv() - 1L, 1L))
   })
 
   # --- File browser and workspace object picker -----------------------------
