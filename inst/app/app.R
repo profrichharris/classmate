@@ -373,8 +373,9 @@ code_too_long <- function(code, max_lines) {
 compute_diff <- function(old_code, new_code) {
   old_lines <- strsplit(old_code, "\n", fixed = TRUE)[[1]]
   new_lines <- strsplit(new_code, "\n", fixed = TRUE)[[1]]
-  old_norm  <- trimws(old_lines)
-  new_norm  <- trimws(new_lines)
+  strip_trailing_op <- function(x) trimws(sub("[+,|&]\\s*$", "", trimws(x)))
+  old_norm  <- strip_trailing_op(old_lines)
+  new_norm  <- strip_trailing_op(new_lines)
   n_old <- length(old_lines)
   n_new <- length(new_lines)
 
@@ -400,7 +401,7 @@ compute_diff <- function(old_code, new_code) {
   if (n_changed > 10) return(NULL)
 
   matched_old <- sort(unique(new_to_old[!is.na(new_to_old)]))
-  if (length(matched_old) < 3) return(NULL)   # codes too different to be comparable
+  if (length(matched_old) < 1) return(NULL)   # codes too different to be comparable
 
   # Extract the old section that spans the matching region
   old_start   <- min(matched_old)
@@ -1687,6 +1688,66 @@ server <- function(input, output, session) {
     diff_rv(NULL)
   }
 
+  past_convs_tab_shown <- reactiveVal(FALSE)
+
+  # Show tab on startup if a paused session already had saved conversations
+  observe({
+    if (length(saved_conversations()) > 0) show_past_convs_tab()
+  }) |> bindEvent(saved_conversations(), once = TRUE, ignoreNULL = FALSE)
+
+  show_past_convs_tab <- function() {
+    if (!past_convs_tab_shown()) {
+      insertTab("main_tabs",
+        tabPanel("Past conversations",
+          tags$div(style = "margin-top: 8px; min-height: 220px;",
+            uiOutput("past_conversations_ui")
+          )
+        ),
+        target = "Past code", position = "after", select = FALSE)
+      past_convs_tab_shown(TRUE)
+    }
+  }
+
+  # Generate a short summary from the prompts list (first prompt, truncated)
+  make_conversation_summary <- function(prompts, api_key) {
+    if (length(prompts) == 0) return("Unnamed conversation")
+    # Try a quick Claude call; fall back to using first prompt directly
+    first_few <- paste(rev(head(rev(prompts), 3)), collapse = " / ")
+    summary_text <- tryCatch({
+      resp <- call_claude(
+        messages = list(list(role = "user", content = paste0(
+          "In one short sentence (max 10 words), describe what this R session was about based on these prompts: ",
+          first_few
+        ))),
+        model        = MODEL_SONNET,
+        max_tokens   = 40,
+        api_key      = api_key,
+        cache_system = FALSE
+      )
+      trimws(resp$text)
+    }, error = function(e) {
+      lbl <- trimws(prompts[[length(prompts)]])
+      if (nchar(lbl) > 70) paste0(substr(lbl, 1, 67), "...") else lbl
+    })
+    summary_text
+  }
+
+  # Save current conversation to saved_conversations (prepend = newest first)
+  save_current_conversation_if_nonempty <- function() {
+    ph <- prompt_history()
+    rh <- run_history()
+    if (length(ph) == 0 && length(rh) == 0) return(invisible(NULL))
+    summary <- make_conversation_summary(ph, api_key_val())
+    entry <- list(
+      id       = as.numeric(Sys.time()),
+      summary  = summary,
+      prompts  = ph,
+      codes    = rh
+    )
+    saved_conversations(c(list(entry), saved_conversations()))
+    show_past_convs_tab()
+  }
+
   output$diff_ui <- renderUI({
     d <- diff_rv()
     if (is.null(d))
@@ -1702,8 +1763,12 @@ server <- function(input, output, session) {
         tags$div(class = "diff-pre", do.call(tagList, line_divs))
       )
     }
+    new_code_text <- paste(d$new_lines, collapse = "\n")
+    confirmed <- !is.null(last_run_code()) &&
+                 identical(trimws(new_code_text), trimws(last_run_code()))
+    new_label <- if (confirmed) "New code (confirmed)" else "New code (not yet run)"
     tags$div(class = "diff-panel",
-      make_panel(d$new_lines, d$changed,     "New code"),
+      make_panel(d$new_lines, d$changed,     new_label),
       make_panel(d$old_lines, d$old_changed, "Previous code")
     )
   })
@@ -2112,11 +2177,6 @@ server <- function(input, output, session) {
     }))
   })
 
-  observeEvent(input$copy_past_prompt, {
-    updateTextAreaInput(session, "prompt", value = input$copy_past_prompt)
-    updateTabsetPanel(session, "prompt_tabs", selected = "Your prompt")
-  })
-
   output$past_code_ui <- renderUI({
     full_history <- run_history()
     # Keep original indices so button IDs match the observer's lookup
@@ -2161,16 +2221,114 @@ server <- function(input, output, session) {
     tagList(items)
   })
 
-  # Observe any repeat_code_N button — extract index, look up code from history
+  # Observe any repeat_code_N button — move entry to top (no duplicate), load into editor
   observe({
     history <- run_history()
     lapply(seq_along(history), function(i) {
       btn_id <- paste0("repeat_code_", i)
       observeEvent(input[[btn_id]], {
-        updateAceEditor(session, "code_editor", value =run_history()[[i]]$code)
+        h <- run_history()
+        entry <- h[[i]]
+        run_history(c(list(entry), h[-i]))
+        updateAceEditor(session, "code_editor", value = entry$code)
         updateTabsetPanel(session, "main_tabs", selected = "Code")
       }, ignoreInit = TRUE)
     })
+  })
+
+  # Past prompt repeat: move to top (no duplicate)
+  observeEvent(input$copy_past_prompt, {
+    p   <- input$copy_past_prompt
+    ph  <- prompt_history()
+    idx <- match(p, ph)
+    if (!is.na(idx)) ph <- c(p, ph[-idx]) else ph <- c(p, ph)
+    prompt_history(ph)
+    updateTextAreaInput(session, "prompt", value = p)
+    updateTabsetPanel(session, "prompt_tabs", selected = "Your prompt")
+  })
+
+  # --- Past Conversations ----------------------------------------------------
+  output$past_conversations_ui <- renderUI({
+    convs <- saved_conversations()
+    if (length(convs) == 0)
+      return(tags$p(em("No past conversations yet."),
+                    style = "color: #999; margin: 4px 0; font-size: 0.9em;"))
+    items <- lapply(seq_along(convs), function(i) {
+      conv   <- convs[[i]]
+      btn_id <- paste0("recall_conv_", i)
+      div(style = "display: flex; align-items: flex-start; border-bottom: 1px solid #eee; padding: 4px 0;",
+        tags$p(conv$summary,
+          style = "margin: 0; flex: 1; font-size: 0.85em; color: #444; white-space: pre-wrap; word-break: break-word;"),
+        actionButton(btn_id, "Recall",
+          style = paste0(
+            "flex-shrink: 0; margin-left: 6px; padding: 1px 6px;",
+            "font-size: 0.75em; background: white;",
+            "border: 1px solid #bbb; border-radius: 3px;",
+            "cursor: pointer; color: #555; height: auto;"
+          )
+        )
+      )
+    })
+    tagList(items)
+  })
+
+  recall_conv_index <- reactiveVal(NULL)
+
+  observe({
+    convs <- saved_conversations()
+    lapply(seq_along(convs), function(i) {
+      btn_id <- paste0("recall_conv_", i)
+      observeEvent(input[[btn_id]], {
+        recall_conv_index(i)
+        showModal(modalDialog(
+          title = "Recall past conversation?",
+          tags$p("Your current conversation will be saved to Past conversations, then the selected conversation will be restored."),
+          tags$p("The Code editor, Past code, and Past prompts will be replaced with those from the recalled conversation."),
+          footer = tagList(
+            modalButton("Cancel"),
+            actionButton("confirm_recall_conv", "Yes, recall this conversation", class = "btn-primary")
+          )
+        ))
+      }, ignoreInit = TRUE)
+    })
+  })
+
+  observeEvent(input$confirm_recall_conv, {
+    removeModal()
+    idx <- recall_conv_index()
+    if (is.null(idx)) return()
+    convs <- saved_conversations()
+    if (idx > length(convs)) return()
+    # Save current conversation before recalling
+    save_current_conversation_if_nonempty()
+    # Restore recalled conversation
+    recalled <- convs[[idx]]
+    # Remove from list (it's now the active conversation; will be re-saved on next New Conversation)
+    saved_conversations(convs[-idx])
+    # Reset Claude conversation history
+    conversation_history(list())
+    # Restore prompts and code history
+    prompt_history(recalled$prompts)
+    run_history(recalled$codes)
+    # Clear transient state
+    hide_changes_tab()
+    pending_log_entries(list())
+    last_extracted_code("")
+    last_prompt_for_code("")
+    last_code_description("")
+    loaded_script_name(NULL)
+    last_run_failed(FALSE)
+    code_before_fix(NULL)
+    console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0))
+    # Load most recent code into editor
+    codes <- recalled$codes
+    ask_code_entries <- Filter(function(e) identical(e$source, "ask_code"), codes)
+    if (length(ask_code_entries) > 0)
+      updateAceEditor(session, "code_editor", value = ask_code_entries[[length(ask_code_entries)]]$code)
+    else
+      updateAceEditor(session, "code_editor", value = "")
+    output$run_status <- renderUI(NULL)
+    updateTabsetPanel(session, "main_tabs", selected = "Code")
   })
 
   # --- File browser and workspace object picker -----------------------------
@@ -2364,8 +2522,9 @@ server <- function(input, output, session) {
   } else NULL
 
   # --- Conversation + run-history state --------------------------------------
-  conversation_history <- reactiveVal(if (!is.null(ps)) ps$conversation_history else list())
-  last_extracted_code  <- reactiveVal(if (!is.null(ps)) ps$last_extracted_code  else "")
+  conversation_history  <- reactiveVal(if (!is.null(ps)) ps$conversation_history  else list())
+  saved_conversations   <- reactiveVal(if (!is.null(ps)) ps$saved_conversations   else list())
+  last_extracted_code   <- reactiveVal(if (!is.null(ps)) ps$last_extracted_code   else "")
   last_prompt_for_code <- reactiveVal(if (!is.null(ps)) ps$last_prompt_for_code else "")
   last_code_description <- reactiveVal("")
   loaded_script_name    <- reactiveVal(NULL)
@@ -2602,6 +2761,7 @@ server <- function(input, output, session) {
   })
 
   do_new_conversation_reset <- function() {
+    save_current_conversation_if_nonempty()
     hide_changes_tab()
     conversation_history(list())
     run_history(list())
@@ -2630,7 +2790,8 @@ server <- function(input, output, session) {
     if (length(pending_log_entries()) > 0) {
       showModal(modalDialog(
         title = "Save code log?",
-        "Do you want to save the code log before starting a new conversation?",
+        tags$p("Do you want to save the code log before starting a new conversation?"),
+        tags$p("This will also clear the Code editor, R output, Past code, and Past prompts. The current conversation will be saved to Past conversations."),
         footer = tagList(
           modalButton("Cancel"),
           actionButton("new_conv_skip_log",  "No",  style = "background-color:white; border-color:#bbb; color:#333;"),
@@ -2640,10 +2801,8 @@ server <- function(input, output, session) {
     } else {
       showModal(modalDialog(
         title = "Start a new conversation?",
-        paste(
-          "Are you sure? This will clear the conversation history and all",
-          "context. There is nothing to save to the code log."
-        ),
+        tags$p("This will clear the Code editor, R output, Past code, and Past prompts. The current conversation will be saved to Past conversations before clearing."),
+        tags$p("There is nothing to save to the code log."),
         footer = tagList(
           modalButton("Cancel"),
           actionButton("confirm_new_conversation", "Yes, start new conversation", class = "btn-danger")
@@ -3314,7 +3473,6 @@ server <- function(input, output, session) {
     code_text <- input$code_editor
     updateTextAreaInput(session, "prompt", value = "")
     console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0))
-    hide_changes_tab()
 
     check_and_install_if_needed(code_text, function() {
       code_running(TRUE)
@@ -3623,6 +3781,7 @@ server <- function(input, output, session) {
         comment_density = prefs$comment_density
       ),
       conversation_history = conversation_history(),
+      saved_conversations  = saved_conversations(),
       run_history          = run_history(),
       pending_log_entries  = pending_log_entries(),
       all_log_entries      = all_log_entries(),
