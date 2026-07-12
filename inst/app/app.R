@@ -1632,26 +1632,24 @@ server <- function(input, output, session) {
       btn_lines <- paste0(round(pct_remaining * 100), "% remaining")
       if (nzchar(reset_label)) btn_lines <- paste0(btn_lines, "<br>", reset_label)
       if (!is.null(expiry_str))  btn_lines <- paste0(btn_lines, "<br>", expiry_str)
-      tagList(
+      div(style = "display: flex; align-items: center; gap: 8px;",
+        div(style = "background: #ddd; border-radius: 4px; height: 12px; width: 120px; flex-shrink: 0; display: flex; justify-content: flex-end;",
+          div(style = paste0("background: ", bar_colour, "; width: ",
+                             round(pct_remaining * 100), "%; height: 100%; border-radius: 4px;"))
+        ),
         div(class = "usage-text-normal",
-          style = "display: flex; align-items: center; gap: 8px;",
-          div(style = "background: #ddd; border-radius: 4px; height: 12px; width: 120px; flex-shrink: 0; display: flex; justify-content: flex-end;",
-            div(style = paste0("background: ", bar_colour, "; width: ",
-                               round(pct_remaining * 100), "%; height: 100%; border-radius: 4px;"))
+          style = "display: flex; flex-direction: column; line-height: 1.25;",
+          tags$span(
+            style = "color: #222; font-size: 0.82em; white-space: nowrap;",
+            paste0(round(pct_remaining * 100), "% remaining")
           ),
-          div(style = "display: flex; flex-direction: column; line-height: 1.25;",
-            tags$span(
-              style = "color: #222; font-size: 0.82em; white-space: nowrap;",
-              paste0(round(pct_remaining * 100), "% remaining")
-            ),
-            if (nzchar(reset_label)) tags$span(
-              style = "color: #888; font-size: 0.75em; white-space: nowrap;",
-              reset_label
-            ),
-            if (!is.null(expiry_str)) tags$span(
-              style = "color: #888; font-size: 0.75em; white-space: nowrap;",
-              expiry_str
-            )
+          if (nzchar(reset_label)) tags$span(
+            style = "color: #888; font-size: 0.75em; white-space: nowrap;",
+            reset_label
+          ),
+          if (!is.null(expiry_str)) tags$span(
+            style = "color: #888; font-size: 0.75em; white-space: nowrap;",
+            expiry_str
           )
         ),
         actionButton("usage_help", HTML(btn_lines),
