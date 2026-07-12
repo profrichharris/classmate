@@ -1030,6 +1030,7 @@ ui <- fluidPage(
     }
     body.help-mode #help-mode-label { display: block !important; }
     body.help-mode #student-mode-label { display: none !important; }
+    body.help-mode #conv_remaining_ui { color: #555 !important; }
     /* Full-page overlay that intercepts all clicks in help mode */
     #classmate-help-overlay {
       display: none;
