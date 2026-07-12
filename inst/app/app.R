@@ -1713,13 +1713,18 @@ server <- function(input, output, session) {
 
   show_past_convs_tab <- function() {
     if (!past_convs_tab_shown()) {
-      insertTab("main_tabs",
+      insertTab("prompt_tabs",
         tabPanel("Past conversations",
-          tags$div(style = "margin-top: 8px; min-height: 220px;",
+          tags$div(
+            style = paste0(
+              "margin-top: 8px; height: 108px; overflow-y: auto;",
+              "border: 1px solid #e3e3e3; border-radius: 4px;",
+              "padding: 4px 8px; background: #fafafa;"
+            ),
             uiOutput("past_conversations_ui")
           )
         ),
-        target = "Past code", position = "after", select = FALSE)
+        target = "Past prompts", position = "after", select = FALSE)
       past_convs_tab_shown(TRUE)
     }
   }
