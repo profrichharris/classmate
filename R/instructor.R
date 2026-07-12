@@ -30,6 +30,7 @@
 classmate_make_key <- function(api_key      = NULL,
                                 cost_limit   = NULL,
                                 reset_period = NULL,
+                                final_expiry = NULL,
                                 output_file  = "classmate.key") {
 
   if (is.null(api_key) || !nzchar(trimws(api_key))) {
@@ -52,6 +53,25 @@ classmate_make_key <- function(api_key      = NULL,
     message("Reset period options: weekly, daily, hourly, rolling_24h, rolling_Nh, rolling_Nm")
     ans <- trimws(readline("Reset period [default: weekly, or press Enter to accept]: "))
     reset_period <- if (!nzchar(ans)) "weekly" else ans
+  }
+
+  if (is.null(final_expiry)) {
+    default_expiry <- Sys.Date() + 7L * 15L
+    default_str    <- format(default_expiry, "%d/%m/%y")
+    ans <- trimws(readline(paste0(
+      "Final expiry date DD/MM/YY [default: ", default_str, ", or press Enter to accept]: "
+    )))
+    final_expiry <- if (!nzchar(ans)) {
+      default_expiry
+    } else {
+      parsed <- tryCatch(as.Date(ans, format = "%d/%m/%y"), error = function(e) NA)
+      if (is.na(parsed)) {
+        message("Invalid date — using default of ", default_str, ".")
+        default_expiry
+      } else parsed
+    }
+  } else if (is.character(final_expiry)) {
+    final_expiry <- as.Date(final_expiry, format = "%d/%m/%y")
   }
 
   valid_named <- c("rolling_24h", "hourly", "daily", "weekly")
@@ -88,6 +108,7 @@ classmate_make_key <- function(api_key      = NULL,
                           sample(10000L:99999L, 1L)),
     cost_limit   = cost_limit,
     reset_period = reset_period,
+    final_expiry = final_expiry,
     created      = Sys.time()
   )
   saveRDS(payload, output_file)
@@ -98,6 +119,7 @@ classmate_make_key <- function(api_key      = NULL,
     message("  Cost limit:   $", cost_limit, " per ", reset_period)
   else
     message("  Cost limit:   none")
+  message("  Final expiry: ", format(final_expiry, "%d/%m/%y"))
   message("Email this file to students — they load it via the 'Load key file'",
           " button in the app.")
   invisible(out)

@@ -1309,8 +1309,9 @@ server <- function(input, output, session) {
   .saved_cfg       <- tryCatch(readRDS(active_cfg_path()), error = function(e) NULL)
   .resuming_pause  <- file.exists(PAUSE_FILE)   # checked before pause state is consumed
   app_mode        <- reactiveVal(if (!is.null(.saved_cfg)) "student" else "personal")
-  cost_limit_val  <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$cost_limit   else NULL)
-  reset_period_val<- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$reset_period else "weekly")
+  cost_limit_val   <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$cost_limit   else NULL)
+  reset_period_val <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$reset_period else "weekly")
+  final_expiry_val <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$final_expiry else NULL)
   usage_log_rv    <- reactiveVal(read_usage_log())
 
   # Show disclaimer once per R session for student users (not on pause resume).
@@ -1330,14 +1331,34 @@ server <- function(input, output, session) {
     period_spend(usage_log_rv(), reset_period_val())
   })
 
+  key_expired <- reactive({
+    if (app_mode() != "student") return(FALSE)
+    expiry <- final_expiry_val()
+    if (is.null(expiry)) return(FALSE)
+    Sys.Date() > as.Date(expiry)
+  })
+
   quota_exceeded <- reactive({
     if (app_mode() != "student") return(FALSE)
+    if (key_expired()) return(TRUE)
     limit <- cost_limit_val()
     if (is.null(limit)) return(FALSE)
     current_spend() >= limit
   })
 
   show_quota_modal <- function() {
+    if (isTRUE(key_expired())) {
+      expiry <- final_expiry_val()
+      showModal(modalDialog(
+        title     = "Key expired",
+        tags$p("Your Classmate key expired on ",
+               tags$strong(format(as.Date(expiry), "%d %B %Y")), "."),
+        tags$p("Please contact your instructor for a new key."),
+        easyClose = FALSE,
+        footer    = modalButton("OK")
+      ))
+      return(invisible(NULL))
+    }
     rt  <- next_reset_time(isolate(usage_log_rv()), isolate(reset_period_val()))
     reset_line <- if (!is.null(rt))
       paste0("Your allowance is scheduled to top up at approximately ",
@@ -1459,6 +1480,7 @@ server <- function(input, output, session) {
     app_mode(        "student")
     cost_limit_val(  payload$cost_limit)
     reset_period_val(payload$reset_period)
+    final_expiry_val(payload$final_expiry)
     on_success()
     show_student_disclaimer()
     options(.classmate_disclaimer_shown = TRUE)
@@ -1577,6 +1599,10 @@ server <- function(input, output, session) {
           if (nzchar(reset_label)) tags$span(
             style = "color: #888; font-size: 0.75em; white-space: nowrap;",
             reset_label
+          ),
+          if (!is.null(final_expiry_val())) tags$span(
+            style = "color: #888; font-size: 0.75em; white-space: nowrap;",
+            paste0("expires ", format(as.Date(final_expiry_val()), "%d/%m/%y"))
           )
         )
       )
