@@ -2036,8 +2036,8 @@ server <- function(input, output, session) {
         "whether you want to save your code log."
       ),
       quit             = paste(
-        "Quit — Closes Classmate. You will first be asked whether you want to save",
-        "your code log. Your R workspace and any files you have saved are not affected."
+        "Quit — Closes Classmate. Your code log (.R) and prompt log (.txt) are saved",
+        "automatically and opened in your editor. Your R workspace is not affected."
       ),
       file_select      = paste(
         "Add Files — Opens a file browser so you can attach files from your project",
@@ -2533,6 +2533,7 @@ server <- function(input, output, session) {
   all_log_entries      <- reactiveVal(if (!is.null(ps)) ps$all_log_entries      else list())
   last_logged_code     <- reactiveVal(if (!is.null(ps)) ps$last_logged_code     else "")
   prompt_history       <- reactiveVal(if (!is.null(ps)) ps$prompt_history       else character(0))
+  prompt_log_rv        <- reactiveVal(if (!is.null(ps)) ps$prompt_log_rv        else character(0))
 
   # log_path is generated fresh each time Save Code Log is pressed (date-time stamped)
   make_log_path <- function()
@@ -2894,6 +2895,7 @@ server <- function(input, output, session) {
       record_usage(api_result$cost_usd)
       conversation_history(c(history_so_far, list(list(role = "assistant", content = raw_response))))
       prompt_history(c(current_prompt, prompt_history()))
+      prompt_log_rv(c(prompt_log_rv(), current_prompt))
 
       parts <- split_response_into_text_and_code(raw_response)
 
@@ -3008,6 +3010,7 @@ server <- function(input, output, session) {
     record_usage(api_result$cost_usd)
     conversation_history(c(history_so_far, list(list(role = "assistant", content = raw_response))))
     prompt_history(c(current_prompt, prompt_history()))
+    prompt_log_rv(c(prompt_log_rv(), current_prompt))
 
     parts <- split_response_into_text_and_code(raw_response)
     last_prompt_for_code(current_prompt)
@@ -3713,6 +3716,19 @@ server <- function(input, output, session) {
 
   observeEvent(input$save_log, { do_save_log() })
 
+  make_prompt_log_path <- function()
+    file.path(PROJECT_ROOT,
+      paste0("classmate_prompts_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".txt"))
+
+  do_save_prompt_log <- function() {
+    prompts <- prompt_log_rv()
+    if (length(prompts) == 0) return(invisible(NULL))
+    p <- make_prompt_log_path()
+    writeLines(paste(prompts, collapse = "\n\n"), p)
+    open_log_file(p)
+    invisible(p)
+  }
+
   observeEvent(input$save_block, {
     code_text <- isolate(input$code_editor %||% "")
     req(nzchar(trimws(code_text)))
@@ -3758,8 +3774,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$quit_from_pause, {
     removeModal()
-    if (length(pending_log_entries()) > 0) show_quit_save_modal()
-    else show_quit_confirm_modal()
+    show_quit_confirm_modal()
   })
 
   observeEvent(input$confirm_pause_app, {
@@ -3788,7 +3803,8 @@ server <- function(input, output, session) {
       last_extracted_code  = last_extracted_code(),
       last_prompt_for_code = last_prompt_for_code(),
       last_logged_code     = last_logged_code(),
-      prompt_history       = prompt_history()
+      prompt_history       = prompt_history(),
+      prompt_log_rv        = prompt_log_rv()
     )
     tryCatch(
       saveRDS(pause_state, PAUSE_FILE),
@@ -3800,10 +3816,31 @@ server <- function(input, output, session) {
   })
 
   # --- Quit ------------------------------------------------------------------
+  do_quit_with_autosave <- function() {
+    # Always auto-save code log if there is anything to save
+    if (length(all_log_entries()) > 0) do_save_log()
+    # Always auto-save prompt log if there are any prompts
+    do_save_prompt_log()
+    do_quit()
+  }
+
   show_quit_confirm_modal <- function() {
+    has_log     <- length(all_log_entries()) > 0
+    has_prompts <- length(prompt_log_rv()) > 0
+    save_note <- if (has_log || has_prompts) {
+      items <- c(
+        if (has_log)     "code log (.R)" else NULL,
+        if (has_prompts) "prompt log (.txt)" else NULL
+      )
+      paste0("Your ", paste(items, collapse = " and "),
+             " will be saved automatically and opened in your editor.")
+    } else {
+      "There is nothing to save."
+    }
     showModal(modalDialog(
       title = "Quit Classmate?",
-      "Are you sure you want to quit? This will stop the app. Nothing within the app itself will be saved but your workspace is not cleared.",
+      tags$p("Are you sure you want to quit? Your R workspace will not be cleared."),
+      tags$p(save_note),
       footer = tagList(
         modalButton("Cancel"),
         actionButton("confirm_quit", "Yes, quit", class = "btn-danger")
@@ -3811,26 +3848,8 @@ server <- function(input, output, session) {
     ))
   }
 
-  show_quit_save_modal <- function() {
-    showModal(modalDialog(
-      title = "Save code log before quitting?",
-      "Do you want to save the code log before quitting?",
-      footer = tagList(
-        modalButton("Cancel"),
-        actionButton("quit_skip_log", "No",  style = "background-color:white; border-color:#bbb; color:#333;"),
-        actionButton("quit_save_log", "Yes", class = "btn-primary")
-      )
-    ))
-  }
-
-  observeEvent(input$quit, {
-    if (length(pending_log_entries()) > 0) show_quit_save_modal()
-    else show_quit_confirm_modal()
-  })
-
-  observeEvent(input$quit_save_log,  { removeModal(); do_save_log(); do_quit() })
-  observeEvent(input$quit_skip_log,  { removeModal(); do_quit() })
-  observeEvent(input$confirm_quit,   { removeModal(); do_quit() })
+  observeEvent(input$quit,         { show_quit_confirm_modal() })
+  observeEvent(input$confirm_quit, { removeModal(); do_quit_with_autosave() })
 }
 
 shinyApp(ui, server)
