@@ -25,6 +25,7 @@ KEY_CHECK_INTERVAL_MS <- 10 * 60 * 1000
 # Pinned to Sonnet.  Haiku hallucinated a non-existent tmap function in
 # side-by-side testing so it is not offered here.
 MODEL_SONNET <- "claude-sonnet-4-6"
+MODEL_HAIKU  <- "claude-haiku-4-5-20251001"
 
 # --- System-prompt building blocks -------------------------------------------
 
@@ -1747,7 +1748,7 @@ server <- function(input, output, session) {
           "In one short sentence (max 10 words), describe what this R session was about based on these prompts: ",
           first_few
         ))),
-        model        = MODEL_SONNET,
+        model        = MODEL_HAIKU,
         max_tokens   = 40,
         api_key      = api_key,
         cache_system = FALSE
