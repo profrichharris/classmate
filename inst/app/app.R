@@ -1714,11 +1714,6 @@ server <- function(input, output, session) {
 
   past_convs_tab_shown <- reactiveVal(FALSE)
 
-  # Show tab on startup if a paused session already had saved conversations
-  observe({
-    if (length(saved_conversations()) > 0) show_past_convs_tab()
-  }) |> bindEvent(saved_conversations(), once = TRUE, ignoreNULL = FALSE)
-
   show_past_convs_tab <- function() {
     if (!past_convs_tab_shown()) {
       insertTab("prompt_tabs",
@@ -1736,6 +1731,21 @@ server <- function(input, output, session) {
       past_convs_tab_shown(TRUE)
     }
   }
+
+  hide_past_convs_tab <- function() {
+    if (past_convs_tab_shown()) {
+      if (isTRUE(isolate(input$prompt_tabs) == "Past conversations"))
+        updateTabsetPanel(session, "prompt_tabs", selected = "Your prompt")
+      removeTab("prompt_tabs", "Past conversations")
+      past_convs_tab_shown(FALSE)
+    }
+  }
+
+  # Auto-hide tab when the list becomes empty, auto-show when it becomes non-empty
+  observe({
+    if (length(saved_conversations()) == 0) hide_past_convs_tab()
+    else show_past_convs_tab()
+  })
 
   # Generate a short summary from the prompts list (first prompt, truncated)
   make_conversation_summary <- function(prompts, api_key) {
