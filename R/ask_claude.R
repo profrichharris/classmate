@@ -95,88 +95,44 @@ classmate_preflight <- function() {
 }
 
 # ---------------------------------------------------------------------------
-# Shows a small Shiny update page, installs the new version in a background
-# callr process, then re-launches the app under the new package version.
-# Returns TRUE on success, FALSE if anything goes wrong (install silently
-# falls back to the existing version).
+# Downloads and installs the new version silently, then re-launches the app.
+# Returns TRUE on success, FALSE if anything goes wrong (caller continues
+# with the existing version in that case).
 # ---------------------------------------------------------------------------
 classmate_do_update <- function(latest_version, download_url) {
 
-  ui <- shiny::fluidPage(
-    shiny::tags$head(shiny::tags$style("
-      body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-             background: #f4f4f4; margin: 0; }
-      .update-box { max-width: 420px; margin: 120px auto; background: #fff;
-                    border-radius: 8px; padding: 36px 40px;
-                    box-shadow: 0 2px 12px rgba(0,0,0,0.10); text-align: center; }
-      h3 { margin: 0 0 6px 0; font-size: 1.35em; }
-      .sub { color: #666; font-size: 0.92em; margin-bottom: 22px; }
-      .progress { height: 8px; border-radius: 4px; background: #e9ecef;
-                  overflow: hidden; margin-bottom: 18px; }
-      .progress-bar { height: 100%; background: #337ab7; border-radius: 4px;
-                      animation: slide 1.4s linear infinite; width: 40%; }
-      @keyframes slide { from { margin-left: -40%; } to { margin-left: 100%; } }
-      .note { color: #aaa; font-size: 0.8em; }
-    ")),
-    shiny::div(class = "update-box",
-      shiny::tags$h3("Updating Classmate"),
-      shiny::p(class = "sub", paste0("Installing version ", latest_version, "…")),
-      shiny::div(class = "progress", shiny::div(class = "progress-bar")),
-      shiny::p(class = "note", "This window will close automatically when done.")
-    )
-  )
+  success <- tryCatch({
+    tmp <- tempfile(fileext = ".tar.gz")
+    suppressWarnings(utils::download.file(download_url, tmp, quiet = TRUE, mode = "wb"))
+    suppressMessages(suppressWarnings(
+      utils::install.packages(tmp, repos = NULL, type = "source", quiet = TRUE)
+    ))
+    TRUE
+  }, error = function(e) FALSE)
 
-  captured_url <- download_url
-
-  server <- function(input, output, session) {
-    proc <- callr::r_bg(
-      func = function(url) {
-        tmp <- tempfile(fileext = ".tar.gz")
-        utils::download.file(url, tmp, quiet = TRUE, mode = "wb")
-        utils::install.packages(tmp, repos = NULL, type = "source", quiet = TRUE)
-        invisible(NULL)
-      },
-      args    = list(url = captured_url),
-      package = FALSE
-    )
-
-    shiny::observe({
-      shiny::invalidateLater(600, session)
-      if (!proc$is_alive()) {
-        shiny::stopApp(returnValue = proc$get_exit_status())
-      }
-    })
-  }
-
-  exit_status <- tryCatch(
-    shiny::runApp(shiny::shinyApp(ui, server), launch.browser = TRUE, quiet = TRUE),
-    error = function(e) 1L
-  )
-
-  # exit_status == 0 means the install process completed without error.
-  # We still verify by checking the new package version on disk.
-  new_version <- tryCatch(
-    as.character(utils::packageVersion("classmate",
-      lib.loc = .libPaths()[.libPaths() != ""])),
-    error = function(e) ""
-  )
-
-  if (!identical(new_version, latest_version)) {
-    # Install did not produce the expected version — record failure, carry on
+  if (!success) {
     options(classmate.failed_update_version = latest_version)
     return(FALSE)
   }
 
-  # Detach old namespace and reload the freshly installed version
+  new_version <- tryCatch(
+    as.character(utils::packageVersion("classmate")),
+    error = function(e) ""
+  )
+
+  if (!identical(new_version, latest_version)) {
+    options(classmate.failed_update_version = latest_version)
+    return(FALSE)
+  }
+
   tryCatch({
     if ("package:classmate" %in% search())
       detach("package:classmate", unload = TRUE, force = TRUE)
     library(classmate)
-    message("Classmate updated to v", latest_version, ". Launching…")
     classmate::ask()
     return(TRUE)
   }, error = function(e) {
-    message("Update installed. Please call ask() to launch the updated app.")
+    message("Classmate updated to v", latest_version, ". Please call ask() to launch.")
     return(TRUE)
   })
 }
