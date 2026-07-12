@@ -962,8 +962,8 @@ ui <- fluidPage(
     body.help-mode .tab-content,
     body.help-mode .shiny-input-container { background-color: #d8d8d8 !important; }
     /* All buttons — enabled or disabled — go black in help mode */
-    body.help-mode button:not(#help_toggle):not(#about_classmate),
-    body.help-mode a.action-button:not(#help_toggle):not(#about_classmate) {
+    body.help-mode button:not(#help_toggle):not(#about_classmate):not(#usage_help),
+    body.help-mode a.action-button:not(#help_toggle):not(#about_classmate):not(#usage_help) {
       background-color: #111 !important;
       color: #fff !important;
       border-color: #111 !important;
@@ -1005,6 +1005,23 @@ ui <- fluidPage(
     }
     body.help-mode #about_classmate {
       display: inline-block !important;
+    }
+    /* Usage help button: hidden normally, black button in help mode */
+    #usage_help {
+      display: none;
+      position: relative;
+      z-index: 9991;
+      background-color: #111;
+      color: #fff;
+      border-color: #111;
+      font-size: 0.82em;
+      padding: 2px 8px;
+    }
+    body.help-mode #usage_help {
+      display: inline-block !important;
+    }
+    body.help-mode #usage-bar-wrapper {
+      display: none !important;
     }
     body.help-mode #help-mode-label { display: block !important; }
     /* Full-page overlay that intercepts all clicks in help mode */
@@ -1125,7 +1142,10 @@ ui <- fluidPage(
     ),
     tags$h3(id = "help-mode-label", "Help Mode",
             style = "margin: 0; display: none;"),
-    uiOutput("usage_bar_ui")
+    div(style = "display: flex; align-items: center;",
+      div(id = "usage-bar-wrapper", uiOutput("usage_bar_ui")),
+      actionButton("usage_help", "Your usage", id = "usage_help")
+    )
   ),
 
   conditionalPanel(
@@ -1824,12 +1844,52 @@ server <- function(input, output, session) {
     }
   })
 
+  observeEvent(input$usage_help, {
+    limit  <- cost_limit_val()
+    spend  <- current_spend()
+    expiry <- final_expiry_val()
+    period <- reset_period_val()
+    reset_label <- tryCatch({
+      rt <- next_reset_time(isolate(usage_log_rv()), period)
+      if (grepl("^rolling", period)) "on a rolling window basis"
+      else paste0("on ", format(rt, "%d %B %Y"))
+    }, error = function(e) "")
+    spend_line <- if (!is.null(limit)) {
+      pct <- round(min(spend / limit, 1) * 100)
+      pct_rem <- 100 - pct
+      paste0("You have used ", pct, "% of your allowance ($",
+             sprintf("%.3f", spend), " of $", sprintf("%.2f", limit), "). ",
+             pct_rem, "% remains.")
+    } else {
+      paste0("Your session spend so far is $", sprintf("%.3f", spend), ".")
+    }
+    reset_line <- if (nzchar(reset_label) && !is.null(limit))
+      paste0("Your allowance resets ", reset_label, ".")
+    else NULL
+    expiry_line <- if (!is.null(expiry))
+      paste0("Your Classmate key expires on ",
+             format(as.Date(expiry), "%d %B %Y"), ".")
+    else NULL
+    showModal(modalDialog(
+      title = "Your usage",
+      tags$p("This bar shows how much of your Classmate allowance you have used. Your instructor sets a spending limit to manage costs; the bar turns from green to orange to red as you approach it."),
+      tags$p(spend_line),
+      if (!is.null(reset_line)) tags$p(reset_line),
+      if (!is.null(expiry_line)) tags$p(expiry_line),
+      tags$p("If you reach your limit, buttons will be disabled until the allowance resets or your instructor provides a new key."),
+      footer = modalButton("Close"),
+      easyClose = TRUE
+    ))
+  })
+
   observeEvent(input$about_classmate, {
     showModal(modalDialog(
       title = "About Classmate",
       tags$p("Classmate is an AI-powered learning assistant that works alongside RStudio (or R) and opens in your web browser. It acts as an interface between R and Claude — Anthropic’s AI — so instead of switching between RStudio and a separate chat tool, you can ask questions, request code, and get explanations all in one place, with direct access to what’s currently in your R script and workspace."),
       tags$p("When you ask Classmate to write or modify code, it runs the code and displays the output. If the code fails, Classmate can diagnose the error and fix it. If it succeeds, you can ask for an explanation of what the code does and why, pitched at whatever level suits you. Classmate also keeps track of what has changed between versions, so you can see exactly what was added or altered and why."),
       tags$p("Classmate is designed to support your learning, not replace it — to encourage you to engage with the answers, not just the output."),
+      tags$br(),
+      tags$p("To find out more, please press any of the buttons shaded black."),
       footer = modalButton("Close"),
       easyClose = TRUE
     ))
