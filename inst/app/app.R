@@ -962,8 +962,8 @@ ui <- fluidPage(
     body.help-mode .tab-content,
     body.help-mode .shiny-input-container { background-color: #d8d8d8 !important; }
     /* All buttons — enabled or disabled — go black in help mode */
-    body.help-mode button:not(#help_toggle),
-    body.help-mode a.action-button:not(#help_toggle) {
+    body.help-mode button:not(#help_toggle):not(#about_classmate),
+    body.help-mode a.action-button:not(#help_toggle):not(#about_classmate) {
       background-color: #111 !important;
       color: #fff !important;
       border-color: #111 !important;
@@ -992,6 +992,19 @@ ui <- fluidPage(
       background-color: #fff !important;
       color: #111 !important;
       border-color: #111 !important;
+    }
+    /* About Classmate button: hidden normally, shown in help mode, above overlay */
+    #about_classmate {
+      display: none;
+      position: relative;
+      z-index: 9991;
+      background-color: #fff;
+      color: #111;
+      border-color: #111;
+      margin-right: 8px;
+    }
+    body.help-mode #about_classmate {
+      display: inline-block !important;
     }
     body.help-mode #help-mode-label { display: block !important; }
     /* Full-page overlay that intercepts all clicks in help mode */
@@ -1241,6 +1254,8 @@ ui <- fluidPage(
         disabled(actionButton("save_block", "Save Code Block", class = "btn-primary"))
       )),
       column(6, div(style = "text-align: right; white-space: nowrap;",
+        actionButton("about_classmate", "About Classmate",
+          style = "margin-right: 8px;"),
         actionButton("help_toggle", "?",
           style = "margin-right: 8px;"),
         actionButton("pause_app", "Pause App",
@@ -1807,6 +1822,17 @@ server <- function(input, output, session) {
     } else {
       shinyjs::removeClass(selector = "body", class = "help-mode")
     }
+  })
+
+  observeEvent(input$about_classmate, {
+    showModal(modalDialog(
+      title = "About Classmate",
+      tags$p("Classmate is an AI-powered learning assistant that works alongside RStudio (or R) and opens in your web browser. It acts as an interface between R and Claude — Anthropic’s AI — so instead of switching between RStudio and a separate chat tool, you can ask questions, request code, and get explanations all in one place, with direct access to what’s currently in your R script and workspace."),
+      tags$p("When you ask Classmate to write or modify code, it runs the code and displays the output. If the code fails, Classmate can diagnose the error and fix it. If it succeeds, you can ask for an explanation of what the code does and why, pitched at whatever level suits you. Classmate also keeps track of what has changed between versions, so you can see exactly what was added or altered and why."),
+      tags$p("Classmate is designed to support your learning, not replace it — to encourage you to engage with the answers, not just the output."),
+      footer = modalButton("Close"),
+      easyClose = TRUE
+    ))
   })
 
   help_text_for <- function(btn_id) {
