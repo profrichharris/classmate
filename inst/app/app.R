@@ -1030,7 +1030,7 @@ ui <- fluidPage(
     }
     body.help-mode #help-mode-label { display: block !important; }
     body.help-mode #student-mode-label { display: none !important; }
-    body.help-mode #conv_remaining_ui { color: #555 !important; }
+
     /* Full-page overlay that intercepts all clicks in help mode */
     #classmate-help-overlay {
       display: none;
@@ -2853,7 +2853,7 @@ server <- function(input, output, session) {
     max_c <- max_conversations_val()
     if (is.null(max_c)) return(NULL)
     remaining <- max(max_c - conv_count_rv(), 0L)
-    colour <- if (remaining == 0) "#dc3545" else if (remaining == 1) "#fd7e14" else "#888"
+    colour <- if (remaining == 0) "#dc3545" else if (remaining == 1) "#fd7e14" else if (help_mode()) "#555" else "#888"
     tags$div(
       style = paste0("font-size: 0.75em; color: ", colour, "; margin-top: 2px; white-space: nowrap;"),
       paste0(remaining, " new conversation", if (remaining != 1) "s" else "", " remaining")
