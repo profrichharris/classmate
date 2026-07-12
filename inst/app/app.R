@@ -1922,6 +1922,13 @@ server <- function(input, output, session) {
       disable("ask_code")
       disable("ask_plain")
     }
+    # Disable New conversation when conversation limit is reached
+    max_c <- max_conversations_val()
+    if (!is.null(max_c) && conv_count_rv() >= max_c) {
+      disable("new_conversation")
+    } else {
+      enable("new_conversation")
+    }
   })
 
   # Update Explain button label to reflect whether a selection is active
@@ -2821,13 +2828,12 @@ server <- function(input, output, session) {
     if (app_mode() != "student") return(NULL)
     max_c <- max_conversations_val()
     if (is.null(max_c)) return(NULL)
-    remaining <- max_c - conv_count_rv() + 1L
-    remaining <- max(remaining, 0L)
-    colour <- if (remaining <= 1) "#dc3545" else if (remaining <= 2) "#fd7e14" else "#888"
+    remaining <- max(max_c - conv_count_rv(), 0L)
+    colour <- if (remaining == 0) "#dc3545" else if (remaining == 1) "#fd7e14" else "#888"
     tags$div(
       style = paste0("text-align: right; font-size: 0.75em; color: ", colour,
                      "; margin-top: 2px; white-space: nowrap;"),
-      paste0(remaining, " conversation", if (remaining != 1) "s" else "", " remaining")
+      paste0(remaining, " new conversation", if (remaining != 1) "s" else "", " remaining")
     )
   })
 
