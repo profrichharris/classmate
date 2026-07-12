@@ -1213,7 +1213,10 @@ ui <- fluidPage(
         actionButton("add_objects", "Add objects"),
         tags$span(style = "display: inline-block; width: 4px;"),
         shinyFilesButton("load_workspace", "Load Workspace",
-          title = "Select a workspace file (.RData / .rda)", multiple = FALSE)
+          title = "Select a workspace file (.RData / .rda)", multiple = FALSE),
+        tags$span(style = "display: inline-block; width: 4px;"),
+        actionButton("clear_workspace", "Clear Workspace",
+          style = "background-color: #e67e22; border-color: #ca6f1e; color: white;")
       ),
       column(4,
         actionButton("remove_context", "Remove checked"),
@@ -1288,12 +1291,12 @@ ui <- fluidPage(
             style = "margin-right: 8px;"),
           actionButton("pause_app", "Pause App",
             style = "background-color: white; border-color: #bbb; color: #333; margin-right: 14px;"),
-          actionButton("clear_workspace", "Clear Workspace",
-            style = "background-color: #e67e22; border-color: #ca6f1e; color: white;"),
           div(style = "display: inline-flex; flex-direction: column; align-items: flex-start;",
             div(
-              actionButton("new_conversation", "New conversation", class = "btn-danger"),
-              actionButton("quit", "Quit", class = "btn-danger")
+              actionButton("new_conversation", "New conversation",
+                style = "background-color: #e67e22; border-color: #ca6f1e; color: white;"),
+              actionButton("quit", "Quit", class = "btn-danger",
+                style = "margin-left: 4px;")
             ),
             uiOutput("conv_remaining_ui")
           )
