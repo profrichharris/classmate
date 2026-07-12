@@ -34,7 +34,12 @@ r_system_prompt <- paste(
   "Please prefer to answer with R code.",
   "If another programming language is genuinely necessary (for example",
   "Python via the reticulate package), make sure any code you provide can",
-  "be run from within this R/RStudio session, and briefly explain how."
+  "be run from within this R/RStudio session, and briefly explain how.",
+  "COLUMN NAME RULE: When files or objects are provided with a known schema",
+  "(listed as columns: ... in the context), you MUST use only those exact",
+  "column names in any code you write. Do not guess, abbreviate, or paraphrase",
+  "column names. If the user refers to a variable by a name that does not",
+  "exactly match a listed column, identify the closest actual match and use that."
 )
 
 tmap_v4_instruction <- paste(
@@ -219,6 +224,114 @@ format_already_run_block <- function(run_history) {
   )
 }
 
+schema_from_r_object <- function(obj) {
+  if (inherits(obj, "sf")) {
+    geom_col  <- attr(obj, "sf_column")
+    cols      <- setdiff(names(obj), geom_col)
+    geom_type <- tryCatch(
+      paste(unique(as.character(sf::st_geometry_type(obj))), collapse = "/"),
+      error = function(e) "spatial"
+    )
+    list(type = paste("sf", geom_type), cols = cols, nrow = nrow(obj))
+  } else if (is.data.frame(obj)) {
+    list(type = "data frame", cols = names(obj), nrow = nrow(obj))
+  } else if (is.matrix(obj)) {
+    list(type = "matrix", cols = colnames(obj), nrow = nrow(obj))
+  } else if (is.list(obj)) {
+    list(type = "list", cols = names(obj))
+  } else {
+    list(type = paste(class(obj), collapse = "/"), cols = NULL)
+  }
+}
+
+extract_file_schema <- function(path) {
+  if (!file.exists(path)) return(NULL)
+  ext <- tolower(tools::file_ext(path))
+  tryCatch({
+    switch(ext,
+      csv = {
+        df <- utils::read.csv(path, nrow = 0, check.names = FALSE)
+        list(type = "CSV", cols = names(df))
+      },
+      tsv = , txt = {
+        df <- utils::read.delim(path, nrow = 0, check.names = FALSE)
+        list(type = "TSV", cols = names(df))
+      },
+      xlsx = , xls = {
+        if (!requireNamespace("readxl", quietly = TRUE)) return(NULL)
+        df <- readxl::read_excel(path, n_max = 0)
+        list(type = "Excel", cols = names(df))
+      },
+      rds = {
+        schema_from_r_object(readRDS(path))
+      },
+      rdata = , rda = {
+        e    <- new.env(parent = emptyenv())
+        nms  <- load(path, envir = e)
+        if (length(nms) == 0) return(NULL)
+        schemas <- Filter(Negate(is.null),
+                          lapply(nms, function(nm)
+                            schema_from_r_object(get(nm, envir = e))))
+        if (length(schemas) == 0) return(NULL)
+        if (length(schemas) == 1) return(schemas[[1]])
+        list(type = "RData", multi = schemas, multi_names = nms)
+      },
+      shp = , gpkg = , geojson = , json = , kml = , gml = , fgb = {
+        if (!requireNamespace("sf", quietly = TRUE)) return(NULL)
+        sf_obj <- tryCatch({
+          lyr <- sf::st_layers(path)$name[1]
+          if (!is.null(lyr) && ext %in% c("gpkg", "fgb", "geopackage")) {
+            sf::st_read(path, layer = lyr,
+                        query = paste0('SELECT * FROM "', lyr, '" LIMIT 0'),
+                        quiet = TRUE)
+          } else {
+            sf::st_read(path, quiet = TRUE)
+          }
+        }, error = function(e) sf::st_read(path, quiet = TRUE))
+        schema_from_r_object(sf_obj)
+      },
+      sav = {
+        if (!requireNamespace("haven", quietly = TRUE)) return(NULL)
+        df <- haven::read_sav(path, n_max = 0)
+        list(type = "SPSS (.sav)", cols = names(df))
+      },
+      dta = {
+        if (!requireNamespace("haven", quietly = TRUE)) return(NULL)
+        df <- haven::read_dta(path, n_max = 0)
+        list(type = "Stata (.dta)", cols = names(df))
+      },
+      sas7bdat = {
+        if (!requireNamespace("haven", quietly = TRUE)) return(NULL)
+        df <- haven::read_sas(path, n_max = 0)
+        list(type = "SAS (.sas7bdat)", cols = names(df))
+      },
+      NULL
+    )
+  }, error = function(e) NULL)
+}
+
+format_schema_line <- function(label, schema, max_cols = 100) {
+  if (is.null(schema)) return(paste0("- ", label))
+  if (!is.null(schema$multi)) {
+    lines <- mapply(function(s, nm) {
+      format_schema_line(paste0(label, " [object: ", nm, "]"), s, max_cols)
+    }, schema$multi, schema$multi_names, SIMPLIFY = TRUE)
+    return(paste(lines, collapse = "\n"))
+  }
+  cols     <- schema$cols
+  type_str <- schema$type %||% "file"
+  nrow_str <- if (!is.null(schema$nrow))
+    paste0(format(schema$nrow, big.mark = ","), " rows, ") else ""
+  if (is.null(cols) || length(cols) == 0)
+    return(paste0("- ", label, " [", type_str, "]"))
+  n_cols   <- length(cols)
+  omitted  <- max(0L, n_cols - max_cols)
+  col_str  <- paste(cols[seq_len(min(n_cols, max_cols))], collapse = ", ")
+  if (omitted > 0) col_str <- paste0(col_str, " ... and ", omitted, " more")
+  paste0("- ", label, " [", type_str, ", ", nrow_str, n_cols,
+         " column", if (n_cols != 1) "s" else "", ": ", col_str, "]")
+}
+
 summarise_workspace_object <- function(obj_name, envir = .GlobalEnv) {
   if (!exists(obj_name, envir = envir, inherits = FALSE))
     return(paste0("`", obj_name, "`: [no longer exists in workspace]"))
@@ -234,16 +347,20 @@ summarise_workspace_object <- function(obj_name, envir = .GlobalEnv) {
 build_user_message <- function(file_paths, object_names = character(0), current_code,
                                 last_known_code, run_history, user_prompt,
                                 last_console_output = character(0),
-                                object_envir = .GlobalEnv) {
+                                object_envir = .GlobalEnv,
+                                file_schemas = list()) {
   if (is.null(current_code))    current_code    <- ""
   if (is.null(last_known_code)) last_known_code <- ""
   pieces <- character(0)
   already_run_block <- format_already_run_block(run_history)
   if (nzchar(already_run_block)) pieces <- c(pieces, already_run_block)
   if (length(file_paths) > 0) {
+    schema_lines <- vapply(file_paths, function(p) {
+      format_schema_line(p, file_schemas[[p]])
+    }, character(1))
     pieces <- c(pieces, paste0(
       "The following files are available on disk and may be relevant:\n",
-      paste0("- ", file_paths, collapse = "\n")
+      paste(schema_lines, collapse = "\n")
     ))
   }
   if (length(object_names) > 0) {
@@ -306,7 +423,9 @@ format_prompt_as_comment <- function(prompt_text) {
 format_log_entries <- function(entries) {
   header <- paste0(
     "---\ntitle: \"Classmate Code Log\"\ndate: \"",
-    format(Sys.time(), "%Y-%m-%d %H:%M"), "\"\noutput: html_notebook\n---\n"
+    format(Sys.time(), "%Y-%m-%d %H:%M"), "\"\noutput: html_notebook\n---\n\n",
+    "> **Note:** Please Pause or Quit Classmate before running code in this notebook.",
+    " Running code here while the app is active may cause conflicts."
   )
   chunks <- lapply(seq_along(entries), function(i) {
     e <- entries[[i]]
@@ -1230,9 +1349,9 @@ ui <- fluidPage(
           style = "background-color: #e67e22; border-color: #ca6f1e; color: white;")
       ),
       column(4,
-        actionButton("remove_context", "Remove checked"),
+        disabled(actionButton("remove_context", "Remove checked")),
         tags$span(style = "display: inline-block; width: 4px;"),
-        actionButton("remove_all_context", "Remove all")
+        disabled(actionButton("remove_all_context", "Remove all"))
       )
     ),
     tags$p(tags$strong("Files and objects added as context:")),
@@ -1934,13 +2053,21 @@ server <- function(input, output, session) {
     }
     if (last_run_failed() && !code_running() && !exceeded)
       enable("fix_code") else disable("fix_code")
-    if (on_code_tab && !exceeded) {
+    on_log_eligible_tab <- on_code_tab || on_output_tab || on_changes_tab ||
+                           isTRUE(input$main_tabs == "Past code")
+    if (on_log_eligible_tab && !exceeded && length(all_log_entries()) > 0) {
       enable("save_log")
-      enable("save_block")
-      enable("load_script")
     } else {
       disable("save_log")
+    }
+    if (on_code_tab && !exceeded && !is.null(last_run_code())) {
+      enable("save_block")
+    } else {
       disable("save_block")
+    }
+    if (on_code_tab && !exceeded) {
+      enable("load_script")
+    } else {
       disable("load_script")
     }
     if (!exceeded) {
@@ -1950,9 +2077,19 @@ server <- function(input, output, session) {
       disable("ask_code")
       disable("ask_plain")
     }
-    # Disable New conversation when conversation limit is reached
+    has_context <- length(selected_files()) > 0 || length(selected_objects()) > 0
+    if (has_context) {
+      enable("remove_context")
+      enable("remove_all_context")
+    } else {
+      disable("remove_context")
+      disable("remove_all_context")
+    }
+    # Disable New conversation until something has been asked, and when limit reached
     max_c <- max_conversations_val()
-    if (!is.null(max_c) && conv_count_rv() >= max_c) {
+    conv_limit_hit <- !is.null(max_c) && conv_count_rv() >= max_c
+    has_activity <- length(prompt_history()) > 0
+    if (conv_limit_hit || !has_activity) {
       disable("new_conversation")
     } else {
       enable("new_conversation")
@@ -2607,6 +2744,21 @@ server <- function(input, output, session) {
 
   selected_files   <- reactiveVal(character(0))
   selected_objects <- reactiveVal(character(0))
+  file_schema_cache <- reactiveVal(list())
+
+  observe({
+    paths <- selected_files()
+    cache <- isolate(file_schema_cache())
+    new_paths <- setdiff(paths, names(cache))
+    if (length(new_paths) > 0) {
+      new_schemas <- lapply(new_paths, extract_file_schema)
+      names(new_schemas) <- new_paths
+      cache <- c(cache, new_schemas)
+    }
+    stale <- setdiff(names(cache), paths)
+    if (length(stale) > 0) cache <- cache[setdiff(names(cache), stale)]
+    file_schema_cache(cache)
+  })
 
   # --- Package tracking & installation state ---------------------------------
   loaded_packages   <- reactiveVal(character(0))   # pkgs library()'d this conversation
@@ -2845,6 +2997,7 @@ server <- function(input, output, session) {
     loaded_script_name(NULL)
     last_logged_code("")
     last_run_failed(FALSE)
+    last_run_code(NULL)
     code_before_fix(NULL)
     console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); diff_rv(NULL)
     # Note: selected_files and selected_objects are intentionally NOT cleared —
@@ -2915,7 +3068,8 @@ server <- function(input, output, session) {
         last_known_code     = last_extracted_code(),
         run_history         = run_history(),
         user_prompt         = current_prompt,
-        last_console_output = console_output_rv()
+        last_console_output = console_output_rv(),
+        file_schemas        = file_schema_cache()
       )
       new_user_turn   <- list(role = "user", content = user_message)
       history_so_far  <- c(conversation_history(), list(new_user_turn))
@@ -3035,7 +3189,8 @@ server <- function(input, output, session) {
       last_known_code     = last_extracted_code(),
       run_history         = run_history(),
       user_prompt         = current_prompt,
-      last_console_output = console_output_rv()
+      last_console_output = console_output_rv(),
+      file_schemas        = file_schema_cache()
     )
     new_user_turn   <- list(role = "user", content = user_message)
     history_so_far  <- c(conversation_history(), list(new_user_turn))
