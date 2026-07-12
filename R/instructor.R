@@ -27,11 +27,12 @@
 #'
 #' @return The normalised path to the key file, invisibly.
 #' @export
-classmate_make_key <- function(api_key      = NULL,
-                                cost_limit   = NULL,
-                                reset_period = NULL,
-                                final_expiry = NULL,
-                                output_file  = "classmate.key") {
+classmate_make_key <- function(api_key           = NULL,
+                                cost_limit        = NULL,
+                                reset_period      = NULL,
+                                final_expiry      = NULL,
+                                max_conversations = NULL,
+                                output_file       = "classmate.key") {
 
   if (is.null(api_key) || !nzchar(trimws(api_key))) {
     api_key <- trimws(readline("Paste Anthropic API key: "))
@@ -74,6 +75,25 @@ classmate_make_key <- function(api_key      = NULL,
     final_expiry <- as.Date(final_expiry, format = "%d/%m/%y")
   }
 
+  if (is.null(max_conversations)) {
+    ans <- trimws(readline(
+      "Max conversations per app start [default: 5, 0 = unlimited, max 25]: "
+    ))
+    max_conversations <- if (!nzchar(ans)) 5L else {
+      v <- suppressWarnings(as.integer(ans))
+      if (is.na(v) || v < 0L) {
+        message("Invalid — using default of 5.")
+        5L
+      } else if (v == 0L) {
+        NULL   # unlimited
+      } else {
+        min(v, 25L)
+      }
+    }
+  } else if (!is.null(max_conversations)) {
+    max_conversations <- min(max(as.integer(max_conversations), 1L), 25L)
+  }
+
   valid_named <- c("rolling_24h", "hourly", "daily", "weekly")
   is_rolling_n <- grepl("^rolling_[0-9]+(h|m)$", reset_period)
   if (!reset_period %in% valid_named && !is_rolling_n)
@@ -103,13 +123,14 @@ classmate_make_key <- function(api_key      = NULL,
          call. = FALSE)
 
   payload <- list(
-    api_key      = api_key,
-    key_id       = paste0(format(Sys.time(), "%Y%m%d%H%M%S"), "_",
-                          sample(10000L:99999L, 1L)),
-    cost_limit   = cost_limit,
-    reset_period = reset_period,
-    final_expiry = final_expiry,
-    created      = Sys.time()
+    api_key           = api_key,
+    key_id            = paste0(format(Sys.time(), "%Y%m%d%H%M%S"), "_",
+                               sample(10000L:99999L, 1L)),
+    cost_limit        = cost_limit,
+    reset_period      = reset_period,
+    final_expiry      = final_expiry,
+    max_conversations = max_conversations,
+    created           = Sys.time()
   )
   saveRDS(payload, output_file)
 
@@ -120,6 +141,10 @@ classmate_make_key <- function(api_key      = NULL,
   else
     message("  Cost limit:   none")
   message("  Final expiry: ", format(final_expiry, "%d/%m/%y"))
+  if (!is.null(max_conversations))
+    message("  Max conversations per start: ", max_conversations)
+  else
+    message("  Max conversations per start: unlimited")
   message("Email this file to students — they load it via the 'Load key file'",
           " button in the app.")
   invisible(out)

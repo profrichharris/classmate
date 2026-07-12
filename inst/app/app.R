@@ -1028,6 +1028,7 @@ ui <- fluidPage(
       display: inline-block !important;
     }
     body.help-mode #help-mode-label { display: block !important; }
+    body.help-mode #student-mode-label { display: none !important; }
     /* Full-page overlay that intercepts all clicks in help mode */
     #classmate-help-overlay {
       display: none;
@@ -1137,12 +1138,17 @@ ui <- fluidPage(
   div(style = paste0(
         "display: flex; align-items: center; justify-content: space-between;",
         "padding: 10px 0 4px 0; border-bottom: 1px solid #e3e3e3; margin-bottom: 12px;"),
-    div(style = "display: flex; align-items: baseline; gap: 8px;",
-      tags$h3("Classmate", style = "margin: 0;"),
-      tags$span(
-        style = "color: #888; font-size: 0.75em; white-space: nowrap;",
-        paste0("v", utils::packageVersion("classmate"))
-      )
+    div(style = "display: flex; flex-direction: column; gap: 1px;",
+      div(style = "display: flex; align-items: baseline; gap: 8px;",
+        tags$h3("Classmate", style = "margin: 0;"),
+        tags$span(
+          style = "color: #888; font-size: 0.75em; white-space: nowrap;",
+          paste0("v", utils::packageVersion("classmate"))
+        )
+      ),
+      tags$span(id = "student-mode-label",
+        style = "color: #888; font-size: 0.75em; display: none;",
+        "Student mode")
     ),
     tags$h3(id = "help-mode-label", "Help Mode",
             style = "margin: 0; display: none;"),
@@ -1274,18 +1280,21 @@ ui <- fluidPage(
         disabled(actionButton("save_log",   "Save Code Log",   class = "btn-primary")),
         disabled(actionButton("save_block", "Save Code Block", class = "btn-primary"))
       )),
-      column(6, div(style = "text-align: right; white-space: nowrap;",
-        actionButton("about_classmate", "About Classmate",
-          style = "margin-right: 8px;"),
-        actionButton("help_toggle", "?",
-          style = "margin-right: 8px;"),
-        actionButton("pause_app", "Pause App",
-          style = "background-color: white; border-color: #bbb; color: #333; margin-right: 14px;"),
-        actionButton("clear_workspace", "Clear Workspace",
-          style = "background-color: #e67e22; border-color: #ca6f1e; color: white;"),
-        actionButton("new_conversation", "New conversation", class = "btn-danger"),
-        actionButton("quit", "Quit", class = "btn-danger")
-      ))
+      column(6,
+        div(style = "text-align: right; white-space: nowrap;",
+          actionButton("about_classmate", "About Classmate",
+            style = "margin-right: 8px;"),
+          actionButton("help_toggle", "?",
+            style = "margin-right: 8px;"),
+          actionButton("pause_app", "Pause App",
+            style = "background-color: white; border-color: #bbb; color: #333; margin-right: 14px;"),
+          actionButton("clear_workspace", "Clear Workspace",
+            style = "background-color: #e67e22; border-color: #ca6f1e; color: white;"),
+          actionButton("new_conversation", "New conversation", class = "btn-danger"),
+          actionButton("quit", "Quit", class = "btn-danger")
+        ),
+        uiOutput("conv_remaining_ui")
+      )
     ),
 
     hr(),
@@ -1345,9 +1354,14 @@ server <- function(input, output, session) {
   .saved_cfg       <- tryCatch(readRDS(active_cfg_path()), error = function(e) NULL)
   .resuming_pause  <- file.exists(PAUSE_FILE)   # checked before pause state is consumed
   app_mode        <- reactiveVal(if (!is.null(.saved_cfg)) "student" else "personal")
-  cost_limit_val   <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$cost_limit   else NULL)
-  reset_period_val <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$reset_period else "weekly")
-  final_expiry_val <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$final_expiry else NULL)
+  # Show student-mode label on startup if already in student mode
+  if (!is.null(.saved_cfg)) {
+    observe({ shinyjs::show("student-mode-label") }) |> bindEvent(session$clientData$url_hostname, once = TRUE)
+  }
+  cost_limit_val        <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$cost_limit        else NULL)
+  reset_period_val      <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$reset_period      else "weekly")
+  final_expiry_val      <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$final_expiry      else NULL)
+  max_conversations_val <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$max_conversations else NULL)
   usage_log_rv    <- reactiveVal(read_usage_log())
 
   # Show disclaimer once per R session for student users (not on pause resume).
@@ -1513,10 +1527,12 @@ server <- function(input, output, session) {
 
     # Save active config for classmate_config_show()
     tryCatch(saveRDS(payload, active_cfg_path()), error = function(e) invisible(NULL))
-    app_mode(        "student")
-    cost_limit_val(  payload$cost_limit)
-    reset_period_val(payload$reset_period)
-    final_expiry_val(payload$final_expiry)
+    app_mode(             "student")
+    shinyjs::show("student-mode-label")
+    cost_limit_val(       payload$cost_limit)
+    reset_period_val(     payload$reset_period)
+    final_expiry_val(     payload$final_expiry)
+    max_conversations_val(payload$max_conversations)
     on_success()
     if (!isTRUE(getOption(".classmate_disclaimer_shown"))) {
       show_student_disclaimer()
@@ -1739,10 +1755,12 @@ server <- function(input, output, session) {
     if (length(ph) == 0 && length(rh) == 0) return(invisible(NULL))
     summary <- make_conversation_summary(ph, api_key_val())
     entry <- list(
-      id       = as.numeric(Sys.time()),
-      summary  = summary,
-      prompts  = ph,
-      codes    = rh
+      id      = as.numeric(Sys.time()),
+      summary = summary,
+      prompts = ph,
+      codes   = rh,
+      files   = unique(selected_files()),
+      objects = unique(selected_objects())
     )
     saved_conversations(c(list(entry), saved_conversations()))
     show_past_convs_tab()
@@ -2307,9 +2325,11 @@ server <- function(input, output, session) {
     saved_conversations(convs[-idx])
     # Reset Claude conversation history
     conversation_history(list())
-    # Restore prompts and code history
+    # Restore prompts, code history, and file/object context
     prompt_history(recalled$prompts)
     run_history(recalled$codes)
+    selected_files(  recalled$files   %||% character(0))
+    selected_objects(recalled$objects %||% character(0))
     # Clear transient state
     hide_changes_tab()
     pending_log_entries(list())
@@ -2534,6 +2554,7 @@ server <- function(input, output, session) {
   last_logged_code     <- reactiveVal(if (!is.null(ps)) ps$last_logged_code     else "")
   prompt_history       <- reactiveVal(if (!is.null(ps)) ps$prompt_history       else character(0))
   prompt_log_rv        <- reactiveVal(if (!is.null(ps)) ps$prompt_log_rv        else character(0))
+  conv_count_rv        <- reactiveVal(if (!is.null(ps)) ps$conv_count_rv        else 1L)
 
   # log_path is generated fresh each time Save Code Log is pressed (date-time stamped)
   make_log_path <- function()
@@ -2763,6 +2784,10 @@ server <- function(input, output, session) {
 
   do_new_conversation_reset <- function() {
     save_current_conversation_if_nonempty()
+    # Mark new conversation in prompt log
+    if (length(prompt_log_rv()) > 0)
+      prompt_log_rv(c(prompt_log_rv(), "", "", "--- NEW CONVERSATION STARTED ---", ""))
+    conv_count_rv(conv_count_rv() + 1L)
     hide_changes_tab()
     conversation_history(list())
     run_history(list())
@@ -2777,8 +2802,8 @@ server <- function(input, output, session) {
     last_run_failed(FALSE)
     code_before_fix(NULL)
     console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); diff_rv(NULL)
-    selected_files(character(0))
-    selected_objects(character(0))
+    # Note: selected_files and selected_objects are intentionally NOT cleared —
+    # the user's context files carry over into the new conversation.
     prompt_history(character(0))
     updateTextAreaInput(session, "prompt",      value = "")
     updateAceEditor(session, "code_editor", value = "")
@@ -2787,7 +2812,37 @@ server <- function(input, output, session) {
     disable("save_block")
   }
 
+  output$conv_remaining_ui <- renderUI({
+    if (app_mode() != "student") return(NULL)
+    max_c <- max_conversations_val()
+    if (is.null(max_c)) return(NULL)
+    remaining <- max_c - conv_count_rv() + 1L
+    remaining <- max(remaining, 0L)
+    colour <- if (remaining <= 1) "#dc3545" else if (remaining <= 2) "#fd7e14" else "#888"
+    tags$div(
+      style = paste0("text-align: right; font-size: 0.75em; color: ", colour,
+                     "; margin-top: 2px; white-space: nowrap;"),
+      paste0(remaining, " conversation", if (remaining != 1) "s" else "", " remaining")
+    )
+  })
+
   observeEvent(input$new_conversation, {
+    # Check conversation limit before proceeding
+    max_c <- max_conversations_val()
+    if (!is.null(max_c) && conv_count_rv() >= max_c) {
+      showModal(modalDialog(
+        title = "Conversation limit reached",
+        tags$p(paste0(
+          "You have used all ", max_c, " conversation",
+          if (max_c != 1) "s" else "",
+          " permitted in this session."
+        )),
+        tags$p("Please quit and restart Classmate, or ask your instructor for guidance."),
+        footer = modalButton("OK"),
+        easyClose = TRUE
+      ))
+      return()
+    }
     if (length(pending_log_entries()) > 0) {
       showModal(modalDialog(
         title = "Save code log?",
@@ -3804,7 +3859,8 @@ server <- function(input, output, session) {
       last_prompt_for_code = last_prompt_for_code(),
       last_logged_code     = last_logged_code(),
       prompt_history       = prompt_history(),
-      prompt_log_rv        = prompt_log_rv()
+      prompt_log_rv        = prompt_log_rv(),
+      conv_count_rv        = conv_count_rv()
     )
     tryCatch(
       saveRDS(pause_state, PAUSE_FILE),
