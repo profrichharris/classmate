@@ -1006,22 +1006,25 @@ ui <- fluidPage(
     body.help-mode #about_classmate {
       display: inline-block !important;
     }
-    /* Usage help button: hidden normally, black button in help mode */
-    #usage_help {
+    /* Usage text: shown normally, hidden in help mode */
+    .usage-text-normal { display: block; }
+    body.help-mode .usage-text-normal { display: none !important; }
+    /* Usage help button: hidden normally, shown as black button in help mode */
+    .usage-text-help {
       display: none;
       position: relative;
       z-index: 9991;
-      background-color: #111;
-      color: #fff;
-      border-color: #111;
+      background-color: #111 !important;
+      color: #fff !important;
+      border-color: #111 !important;
       font-size: 0.82em;
+      line-height: 1.25;
       padding: 2px 8px;
+      white-space: nowrap;
+      text-align: left;
     }
-    body.help-mode #usage_help {
+    body.help-mode .usage-text-help {
       display: inline-block !important;
-    }
-    body.help-mode #usage-bar-wrapper {
-      display: none !important;
     }
     body.help-mode #help-mode-label { display: block !important; }
     /* Full-page overlay that intercepts all clicks in help mode */
@@ -1142,10 +1145,7 @@ ui <- fluidPage(
     ),
     tags$h3(id = "help-mode-label", "Help Mode",
             style = "margin: 0; display: none;"),
-    div(style = "display: flex; align-items: center;",
-      div(id = "usage-bar-wrapper", uiOutput("usage_bar_ui")),
-      actionButton("usage_help", "Your usage", id = "usage_help")
-    )
+    uiOutput("usage_bar_ui")
   ),
 
   conditionalPanel(
@@ -1605,9 +1605,14 @@ server <- function(input, output, session) {
     limit <- cost_limit_val()
     spend <- current_spend()
     if (is.null(limit)) {
-      # No limit set — just show spend
-      div(style = "font-size: 0.85em; color: #444;",
-        paste0("Session spend: $", sprintf("%.3f", spend)))
+      spend_str <- paste0("Session spend: $", sprintf("%.3f", spend))
+      tagList(
+        div(class = "usage-text-normal",
+          style = "font-size: 0.85em; color: #444;",
+          spend_str),
+        actionButton("usage_help", HTML(spend_str),
+          class = "usage-text-help")
+      )
     } else {
       pct_used      <- min(spend / limit, 1)
       pct_remaining <- max(1 - pct_used, 0)
@@ -1617,31 +1622,40 @@ server <- function(input, output, session) {
       reset_period <- reset_period_val()
       reset_label  <- tryCatch({
         rt <- next_reset_time(isolate(usage_log_rv()), reset_period)
-        if (grepl("^rolling", reset_period)) {
-          paste0("rolling window")
-        } else {
-          paste0("resets ", format(rt, "%d %b %Y"))
-        }
+        if (grepl("^rolling", reset_period)) "rolling window"
+        else paste0("resets ", format(rt, "%d %b %Y"))
       }, error = function(e) "")
-      div(style = "display: flex; align-items: center; gap: 8px;",
-        div(style = "background: #ddd; border-radius: 4px; height: 12px; width: 120px; flex-shrink: 0; display: flex; justify-content: flex-end;",
-          div(style = paste0("background: ", bar_colour, "; width: ",
-                             round(pct_remaining * 100), "%; height: 100%; border-radius: 4px;"))
-        ),
-        div(style = "display: flex; flex-direction: column; line-height: 1.25;",
-          tags$span(
-            style = "color: #222; font-size: 0.82em; white-space: nowrap;",
-            paste0(round(pct_remaining * 100), "% remaining")
+      expiry_str <- if (!is.null(final_expiry_val()))
+        paste0("expires ", format(as.Date(final_expiry_val()), "%d/%m/%y"))
+      else NULL
+      # Build button label lines (same content as the text column)
+      btn_lines <- paste0(round(pct_remaining * 100), "% remaining")
+      if (nzchar(reset_label)) btn_lines <- paste0(btn_lines, "<br>", reset_label)
+      if (!is.null(expiry_str))  btn_lines <- paste0(btn_lines, "<br>", expiry_str)
+      tagList(
+        div(class = "usage-text-normal",
+          style = "display: flex; align-items: center; gap: 8px;",
+          div(style = "background: #ddd; border-radius: 4px; height: 12px; width: 120px; flex-shrink: 0; display: flex; justify-content: flex-end;",
+            div(style = paste0("background: ", bar_colour, "; width: ",
+                               round(pct_remaining * 100), "%; height: 100%; border-radius: 4px;"))
           ),
-          if (nzchar(reset_label)) tags$span(
-            style = "color: #888; font-size: 0.75em; white-space: nowrap;",
-            reset_label
-          ),
-          if (!is.null(final_expiry_val())) tags$span(
-            style = "color: #888; font-size: 0.75em; white-space: nowrap;",
-            paste0("expires ", format(as.Date(final_expiry_val()), "%d/%m/%y"))
+          div(style = "display: flex; flex-direction: column; line-height: 1.25;",
+            tags$span(
+              style = "color: #222; font-size: 0.82em; white-space: nowrap;",
+              paste0(round(pct_remaining * 100), "% remaining")
+            ),
+            if (nzchar(reset_label)) tags$span(
+              style = "color: #888; font-size: 0.75em; white-space: nowrap;",
+              reset_label
+            ),
+            if (!is.null(expiry_str)) tags$span(
+              style = "color: #888; font-size: 0.75em; white-space: nowrap;",
+              expiry_str
+            )
           )
-        )
+        ),
+        actionButton("usage_help", HTML(btn_lines),
+          class = "usage-text-help")
       )
     }
   })
