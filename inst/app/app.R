@@ -1482,8 +1482,10 @@ server <- function(input, output, session) {
     reset_period_val(payload$reset_period)
     final_expiry_val(payload$final_expiry)
     on_success()
-    show_student_disclaimer()
-    options(.classmate_disclaimer_shown = TRUE)
+    if (!isTRUE(getOption(".classmate_disclaimer_shown"))) {
+      show_student_disclaimer()
+      options(.classmate_disclaimer_shown = TRUE)
+    }
   }
 
   observeEvent(input$set_key, {
