@@ -1281,7 +1281,7 @@ ui <- fluidPage(
         disabled(actionButton("save_block", "Save Code Block", class = "btn-primary"))
       )),
       column(6,
-        div(style = "text-align: right; white-space: nowrap;",
+        div(style = "display: flex; justify-content: flex-end; align-items: center; white-space: nowrap;",
           actionButton("about_classmate", "About Classmate",
             style = "margin-right: 8px;"),
           actionButton("help_toggle", "?",
@@ -1290,10 +1290,14 @@ ui <- fluidPage(
             style = "background-color: white; border-color: #bbb; color: #333; margin-right: 14px;"),
           actionButton("clear_workspace", "Clear Workspace",
             style = "background-color: #e67e22; border-color: #ca6f1e; color: white;"),
-          actionButton("new_conversation", "New conversation", class = "btn-danger"),
-          actionButton("quit", "Quit", class = "btn-danger")
-        ),
-        uiOutput("conv_remaining_ui")
+          div(style = "display: inline-flex; flex-direction: column; align-items: flex-start;",
+            div(
+              actionButton("new_conversation", "New conversation", class = "btn-danger"),
+              actionButton("quit", "Quit", class = "btn-danger")
+            ),
+            uiOutput("conv_remaining_ui")
+          )
+        )
       )
     ),
 
@@ -2831,8 +2835,7 @@ server <- function(input, output, session) {
     remaining <- max(max_c - conv_count_rv(), 0L)
     colour <- if (remaining == 0) "#dc3545" else if (remaining == 1) "#fd7e14" else "#888"
     tags$div(
-      style = paste0("text-align: right; font-size: 0.75em; color: ", colour,
-                     "; margin-top: 2px; white-space: nowrap;"),
+      style = paste0("font-size: 0.75em; color: ", colour, "; margin-top: 2px; white-space: nowrap;"),
       paste0(remaining, " new conversation", if (remaining != 1) "s" else "", " remaining")
     )
   })
