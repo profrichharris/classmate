@@ -1281,7 +1281,7 @@ ui <- fluidPage(
         disabled(actionButton("save_block", "Save Code Block", class = "btn-primary"))
       )),
       column(6,
-        div(style = "display: flex; justify-content: flex-end; align-items: center; white-space: nowrap;",
+        div(style = "display: flex; justify-content: flex-end; align-items: flex-start; white-space: nowrap;",
           actionButton("about_classmate", "About Classmate",
             style = "margin-right: 8px;"),
           actionButton("help_toggle", "?",
