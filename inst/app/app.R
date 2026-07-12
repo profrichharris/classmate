@@ -2069,9 +2069,9 @@ server <- function(input, output, session) {
         "Use with care — this cannot be undone."
       ),
       new_conversation = paste(
-        "New Conversation — Starts a completely fresh session, clearing the",
-        "conversation history, past code, and all context. You will first be asked",
-        "whether you want to save your code log."
+        "New Conversation — Starts a fresh session, clearing the Code editor,",
+        "R output, Past code, and Past prompts. The current conversation is saved",
+        "to Past conversations and the code log is saved automatically."
       ),
       quit             = paste(
         "Quit — Closes Classmate. Your code log (.R) and prompt log (.txt) are saved",
@@ -2804,6 +2804,8 @@ server <- function(input, output, session) {
 
   do_new_conversation_reset <- function() {
     save_current_conversation_if_nonempty()
+    # Auto-save code log for this conversation before clearing
+    if (length(all_log_entries()) > 0) do_save_log()
     # Mark new conversation in prompt log
     if (length(prompt_log_rv()) > 0)
       prompt_log_rv(c(prompt_log_rv(), "", "", "--- NEW CONVERSATION STARTED ---", ""))
@@ -2861,39 +2863,14 @@ server <- function(input, output, session) {
       ))
       return()
     }
-    if (length(pending_log_entries()) > 0) {
-      showModal(modalDialog(
-        title = "Save code log?",
-        tags$p("Do you want to save the code log before starting a new conversation?"),
-        tags$p("This will also clear the Code editor, R output, Past code, and Past prompts. The current conversation will be saved to Past conversations."),
-        footer = tagList(
-          modalButton("Cancel"),
-          actionButton("new_conv_skip_log",  "No",  style = "background-color:white; border-color:#bbb; color:#333;"),
-          actionButton("new_conv_save_log",  "Yes", class = "btn-primary")
-        )
-      ))
-    } else {
-      showModal(modalDialog(
-        title = "Start a new conversation?",
-        tags$p("This will clear the Code editor, R output, Past code, and Past prompts. The current conversation will be saved to Past conversations before clearing."),
-        tags$p("There is nothing to save to the code log."),
-        footer = tagList(
-          modalButton("Cancel"),
-          actionButton("confirm_new_conversation", "Yes, start new conversation", class = "btn-danger")
-        )
-      ))
-    }
-  })
-
-  observeEvent(input$new_conv_save_log, {
-    removeModal()
-    do_save_log()
-    do_new_conversation_reset()
-  })
-
-  observeEvent(input$new_conv_skip_log, {
-    removeModal()
-    do_new_conversation_reset()
+    showModal(modalDialog(
+      title = "Start a new conversation?",
+      tags$p("This will clear the Code editor, R output, Past code, and Past prompts. The current conversation will be saved to Past conversations from which previous code and prompts can be recalled. Code will be saved to a Code Log."),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("confirm_new_conversation", "Yes, start new conversation", class = "btn-danger")
+      )
+    ))
   })
 
   observeEvent(input$confirm_new_conversation, {
