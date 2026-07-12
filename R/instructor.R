@@ -77,9 +77,9 @@ classmate_make_key <- function(api_key           = NULL,
 
   if (is.null(max_conversations)) {
     ans <- trimws(readline(
-      "Max conversations per app start [default: 5, 0 = unlimited, max 25]: "
+      "Max conversations per app start [default: 3, 0 = unlimited, max 25]: "
     ))
-    max_conversations <- if (!nzchar(ans)) 5L else {
+    max_conversations <- if (!nzchar(ans)) 3L else {
       v <- suppressWarnings(as.integer(ans))
       if (is.na(v) || v < 0L) {
         message("Invalid — using default of 5.")
