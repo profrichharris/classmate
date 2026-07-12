@@ -41,7 +41,9 @@ ask <- function() {
     stop("Could not locate the classmate app directory. Try reinstalling the package.")
   }
 
-  shiny::runApp(app_dir, launch.browser = TRUE)
+  suppressWarnings(suppressMessages(
+    shiny::runApp(app_dir, launch.browser = TRUE)
+  ))
   invisible(NULL)
 }
 
