@@ -1410,7 +1410,7 @@ ui <- fluidPage(
 
     fluidRow(style = "margin-top: 10px;",
       column(6, div(style = "display: flex; gap: 8px;",
-        disabled(actionButton("save_log",   "Save Code Log",   class = "btn-primary")),
+        uiOutput("code_saved_ui"),
         disabled(actionButton("save_block", "Save Code Block", class = "btn-primary"))
       )),
       column(6,
@@ -1907,12 +1907,13 @@ server <- function(input, output, session) {
     if (length(ph) == 0 && length(rh) == 0) return(invisible(NULL))
     summary <- make_conversation_summary(ph, api_key_val())
     entry <- list(
-      id      = as.numeric(Sys.time()),
-      summary = summary,
-      prompts = ph,
-      codes   = rh,
-      files   = unique(selected_files()),
-      objects = unique(selected_objects())
+      id          = as.numeric(Sys.time()),
+      summary     = summary,
+      prompts     = ph,
+      codes       = rh,
+      log_entries = all_log_entries(),
+      files       = unique(selected_files()),
+      objects     = unique(selected_objects())
     )
     saved_conversations(c(list(entry), saved_conversations()))
     show_past_convs_tab()
@@ -2025,7 +2026,7 @@ server <- function(input, output, session) {
   observe({
     if (ui_busy()) {
       for (btn in c("ask_plain", "ask_code", "explain_code", "fix_code", "run_code",
-                    "load_script", "save_log", "save_block", "help_toggle",
+                    "load_script", "save_block", "help_toggle",
                     "pause_app", "clear_workspace", "new_conversation", "quit"))
         shinyjs::disable(btn)
       return()
@@ -2053,13 +2054,6 @@ server <- function(input, output, session) {
     }
     if (last_run_failed() && !code_running() && !exceeded)
       enable("fix_code") else disable("fix_code")
-    on_log_eligible_tab <- on_code_tab || on_output_tab || on_changes_tab ||
-                           isTRUE(input$main_tabs == "Past code")
-    if (on_log_eligible_tab && !exceeded && length(all_log_entries()) > 0) {
-      enable("save_log")
-    } else {
-      disable("save_log")
-    }
     if (on_code_tab && !exceeded && !is.null(last_run_code())) {
       enable("save_block")
     } else {
@@ -2204,11 +2198,16 @@ server <- function(input, output, session) {
         "from your project folder into the Code editor. Only available on the Code tab.",
         "Scripts longer than the current code-length limit will be refused."
       ),
-      save_log         = paste(
-        "Save Code Log — Saves a timestamped log of all code generated during this",
-        "session to an .R file in your project folder and opens it in RStudio. The log",
-        "accumulates across saves within the same conversation — each new save",
-        "includes everything from earlier ones."
+      code_saved_notebook = paste(
+        "Code saved to Notebook — This message confirms that the code you just ran",
+        "has been added to the Code Log for this conversation.",
+        "The log is saved as an R Notebook (.Rmd file) in your project folder",
+        "and opened in RStudio automatically whenever you start a New Conversation,",
+        "Pause, or Quit the app.",
+        "One notebook is created per conversation: starting a New Conversation",
+        "saves and closes the current notebook and begins a fresh one for the next",
+        "conversation. This means you always have a clean, timestamped record of",
+        "every piece of code that was successfully run in each conversation."
       ),
       save_block       = paste(
         "Save Code Block — Saves the code currently in the editor to a named .R",
@@ -2426,6 +2425,7 @@ server <- function(input, output, session) {
         entry <- h[[i]]
         run_history(c(list(entry), h[-i]))
         updateAceEditor(session, "code_editor", value = entry$code)
+        last_run_code(NULL)
         updateTabsetPanel(session, "main_tabs", selected = "Code")
       }, ignoreInit = TRUE)
     })
@@ -2509,6 +2509,8 @@ server <- function(input, output, session) {
     run_history(recalled$codes)
     selected_files(  recalled$files   %||% character(0))
     selected_objects(recalled$objects %||% character(0))
+    # Restore log entries so the notebook continues from where this conversation left off
+    all_log_entries(recalled$log_entries %||% list())
     # Clear transient state
     hide_changes_tab()
     pending_log_entries(list())
@@ -2517,6 +2519,7 @@ server <- function(input, output, session) {
     last_code_description("")
     loaded_script_name(NULL)
     last_run_failed(FALSE)
+    last_run_code(NULL)
     code_before_fix(NULL)
     console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0))
     # Load most recent code into editor
@@ -2735,6 +2738,7 @@ server <- function(input, output, session) {
   prompt_history       <- reactiveVal(if (!is.null(ps)) ps$prompt_history       else character(0))
   prompt_log_rv        <- reactiveVal(if (!is.null(ps)) ps$prompt_log_rv        else character(0))
   conv_count_rv        <- reactiveVal(if (!is.null(ps)) ps$conv_count_rv        else 1L)
+  prompt_log_dirty     <- reactiveVal(FALSE)
 
   # log_path is generated fresh each time Save Code Log is pressed (date-time stamped)
   make_log_path <- function()
@@ -2964,7 +2968,6 @@ server <- function(input, output, session) {
   if (!is.null(ps)) {
     if (length(ps$selected_files)   > 0) selected_files(ps$selected_files)
     if (length(ps$selected_objects) > 0) selected_objects(ps$selected_objects)
-    if (length(ps$pending_log_entries) > 0) enable("save_log")
     session$onFlushed(function() {
       updateTextAreaInput(session, "prompt",      value = ps$prompt      %||% "")
       updateAceEditor(session, "code_editor", value =ps$code_editor %||% "")
@@ -3006,7 +3009,6 @@ server <- function(input, output, session) {
     updateTextAreaInput(session, "prompt",      value = "")
     updateAceEditor(session, "code_editor", value = "")
     output$run_status <- renderUI(NULL)
-    disable("save_log")
     disable("save_block")
   }
 
@@ -3123,6 +3125,7 @@ server <- function(input, output, session) {
       conversation_history(c(history_so_far, list(list(role = "assistant", content = raw_response))))
       prompt_history(c(current_prompt, prompt_history()))
       prompt_log_rv(c(prompt_log_rv(), current_prompt))
+      prompt_log_dirty(TRUE)
 
       parts <- split_response_into_text_and_code(raw_response)
 
@@ -3281,7 +3284,6 @@ server <- function(input, output, session) {
                       description = captured_parts$description %||% "", source = "ask_plain")
         pending_log_entries(c(pending_log_entries(), list(entry)))
         all_log_entries(c(all_log_entries(), list(entry)))
-        enable("save_log")
       } else {
         last_run_failed(TRUE)
         last_error_msg(sub("^Error running code:\\s*\\n?\\s*", "", run_result$message))
@@ -3733,7 +3735,6 @@ server <- function(input, output, session) {
             last_logged_code(code_text)
             loaded_script_name(NULL)
           }
-          enable("save_log")
         } else {
           last_run_failed(TRUE)
           last_error_msg(sub("^Error running code:\\s*\\n?\\s*", "", run_result$message))
@@ -3851,7 +3852,6 @@ server <- function(input, output, session) {
         last_logged_code(captured_fixed_code)
         new_pkgs <- vapply(extract_pkg_info(captured_fixed_code), `[[`, character(1), "pkg")
         loaded_packages(unique(c(loaded_packages(), new_pkgs)))
-        enable("save_log")
         showModal(modalDialog(
           title  = "Success!",
           tags$p(if (nzchar(captured_expl)) captured_expl
@@ -3926,6 +3926,53 @@ server <- function(input, output, session) {
     }
   }
 
+  # --- Code saved indicator --------------------------------------------------
+  output$code_saved_ui <- renderUI({
+    req(!is.null(last_run_code()))
+    req(!last_run_failed())
+    req(identical(trimws(input$code_editor %||% ""), trimws(last_run_code())))
+    if (isTRUE(help_mode())) {
+      actionButton("code_saved_notebook", "Code saved to Notebook",
+        style = "background-color: #111; color: #fff; border-color: #111;")
+    } else {
+      tags$span("Code saved to Notebook",
+        style = "font-size: 0.9em; color: #555; line-height: 31px;")
+    }
+  })
+
+  observeEvent(input$code_saved_notebook, {
+    showModal(modalDialog(
+      title = "Code saved to Notebook",
+      tags$p(
+        "Each time code runs successfully, it is added to the Code Log for the",
+        "current conversation."
+      ),
+      tags$p(
+        "The log is saved automatically as a timestamped R Notebook (.Rmd file)",
+        "in your project folder, and opened in RStudio, whenever you:"
+      ),
+      tags$ul(
+        tags$li("start a ", tags$strong("New Conversation")),
+        tags$li(tags$strong("Pause"), " the app"),
+        tags$li(tags$strong("Quit"), " the app")
+      ),
+      tags$p(
+        tags$strong("One notebook is created per conversation."),
+        " Starting a New Conversation saves and closes the current notebook,",
+        " and a fresh one begins for the next conversation.",
+        " This gives you a clean, timestamped record of every piece of code",
+        " that was successfully run in each conversation."
+      ),
+      tags$p(
+        "In the notebook you can review and re-run each code chunk individually.",
+        tags$strong(" Remember to Pause or Quit Classmate before running code",
+                    " in the notebook to avoid conflicts.")
+      ),
+      footer = modalButton("Close"),
+      easyClose = TRUE
+    ))
+  })
+
   # --- Save Code Log ---------------------------------------------------------
   do_save_log <- function() {
     entries <- all_log_entries()
@@ -3934,15 +3981,8 @@ server <- function(input, output, session) {
     log_path(p)
     cat(format_log_entries(entries), "\n\n", file = p, append = FALSE, sep = "")
     pending_log_entries(list())   # clear "unsaved" marker; all_log_entries kept for next save
-    disable("save_log")
     open_log_file(p)
-    output$run_status <- renderUI(tags$span(
-      paste0("Code log saved to ", basename(p), "."),
-      style = "color: #888;"
-    ))
   }
-
-  observeEvent(input$save_log, { do_save_log() })
 
   make_prompt_log_path <- function()
     file.path(PROJECT_ROOT,
@@ -3953,6 +3993,7 @@ server <- function(input, output, session) {
     if (length(prompts) == 0) return(invisible(NULL))
     p <- make_prompt_log_path()
     writeLines(paste(prompts, collapse = "\n\n"), p)
+    prompt_log_dirty(FALSE)
     open_log_file(p)
     invisible(p)
   }
@@ -4035,6 +4076,7 @@ server <- function(input, output, session) {
       prompt_log_rv        = prompt_log_rv(),
       conv_count_rv        = conv_count_rv()
     )
+    if (length(all_log_entries()) > 0) do_save_log()
     tryCatch(
       saveRDS(pause_state, PAUSE_FILE),
       error = function(e)
@@ -4079,6 +4121,30 @@ server <- function(input, output, session) {
 
   observeEvent(input$quit,         { show_quit_confirm_modal() })
   observeEvent(input$confirm_quit, { removeModal(); do_quit_with_autosave() })
+
+  # --- Auto-save on unexpected close (browser tab closed, Escape in console) --
+  session$onSessionEnded(function() {
+    # pending_log_entries is cleared by do_save_log; non-empty means unsaved runs exist
+    entries <- isolate(all_log_entries())
+    pending <- isolate(pending_log_entries())
+    if (length(entries) > 0 && length(pending) > 0) {
+      tryCatch({
+        p <- make_log_path()
+        cat(format_log_entries(entries), "\n\n", file = p, append = FALSE, sep = "")
+        open_log_file(p)
+      }, error = function(e) NULL)
+    }
+    if (isolate(prompt_log_dirty())) {
+      tryCatch({
+        prompts <- isolate(prompt_log_rv())
+        if (length(prompts) > 0) {
+          p2 <- make_prompt_log_path()
+          writeLines(paste(prompts, collapse = "\n\n"), p2)
+          open_log_file(p2)
+        }
+      }, error = function(e) NULL)
+    }
+  })
 }
 
 shinyApp(ui, server)
