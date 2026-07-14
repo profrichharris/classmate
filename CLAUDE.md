@@ -212,7 +212,7 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.52 (2026-07-14)  
+**Last released:** 0.5.55 (2026-07-14)  
 **Unreleased changes:** none
 
 ---
@@ -242,3 +242,6 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 | 0.5.50 | Quick Console REPL; Save & Pause rename; CLAUDE.md added |
 | 0.5.51 | watch()/raisehand()/endclass()/reset_key() — console-only mode; interactive key prompt; Quick Console smart-Enter |
 | 0.5.52 | watch() preflight update check; classmate_do_update() parameterised with relaunch target |
+| 0.5.53 | Fix missing NAMESPACE exports (watch/raisehand/endclass/reset_key) |
+| 0.5.54 | NAMESPACE managed by roxygen2; devtools::document() added to release workflow |
+| 0.5.55 | Quick Console plot capture: plots open in dedicated modal; Close returns to console |
