@@ -396,16 +396,12 @@ watch <- function(key = NULL) {
     message("  [classmate] Type raisehand() for help with this error.")
   })
 
-  # Install ??? shortcut: ??? is parsed as ?(??) so we intercept ? in globalenv
-  .watch_env$original_question <- if (exists("?", .GlobalEnv, inherits = FALSE))
-    get("?", .GlobalEnv) else NULL
-  assign("?", function(e) {
-    if (identical(deparse(substitute(e)), "??")) raisehand()
-    else utils::`?`(e)
-  }, envir = .GlobalEnv)
+  # Install rh() shortcut for raisehand()
+  .watch_env$rh_existed <- exists("rh", .GlobalEnv, inherits = FALSE)
+  assign("rh", raisehand, envir = .GlobalEnv)
 
   .watch_env$active <- TRUE
-  message("classmate is watching. Type raisehand() or ??? when you get stuck, endclass() to stop.")
+  message("classmate is watching. Type raisehand() or rh() when you get stuck, endclass() to stop.")
   invisible(NULL)
 }
 
@@ -531,18 +527,15 @@ endclass <- function() {
   }
   options(error = .watch_env$original_error)
   tryCatch(removeTaskCallback(.watch_env$callback_id), error = function(e) NULL)
-  # Restore original ? (or remove if we added it)
-  if (is.null(.watch_env$original_question)) {
-    if (exists("?", .GlobalEnv, inherits = FALSE)) rm(list = "?", envir = .GlobalEnv)
-  } else {
-    assign("?", .watch_env$original_question, envir = .GlobalEnv)
-  }
-  .watch_env$active            <- FALSE
-  .watch_env$api_key           <- NULL
-  .watch_env$last_error        <- NULL
-  .watch_env$history_buffer    <- list()
-  .watch_env$callback_id       <- NULL
-  .watch_env$original_question <- NULL
+  # Remove rh() shortcut unless it existed before watch() was called
+  if (!isTRUE(.watch_env$rh_existed))
+    if (exists("rh", .GlobalEnv, inherits = FALSE)) rm(list = "rh", envir = .GlobalEnv)
+  .watch_env$active         <- FALSE
+  .watch_env$api_key        <- NULL
+  .watch_env$last_error     <- NULL
+  .watch_env$history_buffer <- list()
+  .watch_env$callback_id    <- NULL
+  .watch_env$rh_existed     <- FALSE
   message("classmate has stopped watching.")
   invisible(NULL)
 }
