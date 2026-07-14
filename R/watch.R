@@ -171,13 +171,23 @@
     "one that produced the error message — look at the full history and workspace",
     "to find the real root cause.",
     "",
-    "Guidelines:",
+    "FORMATTING RULES — these are strict:",
+    "- Write in plain text only. The output is displayed in an R console which",
+    "  cannot render markdown.",
+    "- Do NOT use markdown: no ## headers, no **bold**, no *italics*, no ---",
+    "  dividers, no bullet points with -, no backtick code fences (```r).",
+    "- If you need to show a short code example, indent it with two spaces.",
+    "- Use plain prose paragraphs separated by a blank line.",
+    "- Do not use emoji.",
+    "",
+    "Other guidelines:",
     "- Be concise, friendly, and encouraging.",
     "- Avoid jargon; explain any technical terms you use.",
     "- Focus on the most likely cause first.",
-    "- If the fix is a simple name or spelling correction, show it.",
-    "- Do not write full corrected code blocks unless the fix is trivial.",
-    "- If you spot a typo in a column name or object name, call it out clearly."
+    "- If the fix is a simple name or spelling correction, show it inline.",
+    "- If you spot a typo in a column name or object name, call it out clearly.",
+    "- Do not invite the student to reply or ask follow-up questions —",
+    "  this is a one-shot explanation with no reply mechanism."
   )
 
   result <- tryCatch({
