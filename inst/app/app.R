@@ -131,10 +131,13 @@ format_preferences_clause <- function(coding, plotting, mapping, max_lines, comm
     "and feel free to deviate from a preference if it would be unusually awkward, ",
     "inelegant, or unable to do what's being asked - if you do deviate, ",
     "say so briefly in a one-line comment. ",
-    "CODE LENGTH: This app is designed for focused, self-contained code chunks rather ",
-    "than complete scripts. Aim for no more than approximately ", max_lines, " lines of R code ",
-    "(excluding blank lines and comments). If the task genuinely requires more, produce the ",
-    "most concise solution possible and do not pad with boilerplate. ",
+    if (is.infinite(max_lines))
+      "CODE LENGTH: There is no code length limit set. Produce the most concise solution possible and do not pad with boilerplate. "
+    else
+      paste0("CODE LENGTH: This app is designed for focused, self-contained code chunks rather ",
+             "than complete scripts. Aim for no more than approximately ", max_lines, " lines of R code ",
+             "(excluding blank lines and comments). If the task genuinely requires more, produce the ",
+             "most concise solution possible and do not pad with boilerplate. "),
     comment_instruction
   )
 }
@@ -276,19 +279,29 @@ extract_file_schema <- function(path) {
         if (length(schemas) == 1) return(schemas[[1]])
         list(type = "RData", multi = schemas, multi_names = nms)
       },
-      shp = , gpkg = , geojson = , json = , kml = , gml = , fgb = {
+      shp = {
+        # Read column names from the .dbf sidecar — no need to load geometries
+        dbf <- sub("\\.shp$", ".dbf", path, ignore.case = TRUE)
+        if (file.exists(dbf)) {
+          df <- foreign::read.dbf(dbf, as.is = TRUE)
+          list(type = "shapefile", cols = names(df))
+        } else if (requireNamespace("sf", quietly = TRUE)) {
+          schema_from_r_object(sf::st_read(path, quiet = TRUE))
+        }
+      },
+      gpkg = , fgb = {
         if (!requireNamespace("sf", quietly = TRUE)) return(NULL)
-        sf_obj <- tryCatch({
-          lyr <- sf::st_layers(path)$name[1]
-          if (!is.null(lyr) && ext %in% c("gpkg", "fgb", "geopackage")) {
-            sf::st_read(path, layer = lyr,
-                        query = paste0('SELECT * FROM "', lyr, '" LIMIT 0'),
-                        quiet = TRUE)
-          } else {
-            sf::st_read(path, quiet = TRUE)
-          }
-        }, error = function(e) sf::st_read(path, quiet = TRUE))
-        schema_from_r_object(sf_obj)
+        tryCatch({
+          lyr    <- sf::st_layers(path)$name[1]
+          sf_obj <- sf::st_read(path, layer = lyr,
+                                query = paste0('SELECT * FROM "', lyr, '" LIMIT 0'),
+                                quiet = TRUE)
+          schema_from_r_object(sf_obj)
+        }, error = function(e) schema_from_r_object(sf::st_read(path, quiet = TRUE)))
+      },
+      geojson = , json = , kml = , gml = {
+        if (!requireNamespace("sf", quietly = TRUE)) return(NULL)
+        schema_from_r_object(sf::st_read(path, quiet = TRUE))
       },
       sav = {
         if (!requireNamespace("haven", quietly = TRUE)) return(NULL)
@@ -491,8 +504,9 @@ count_code_lines <- function(code) {
   sum(nzchar(trimws(grep("^\\s*#", lines, invert = TRUE, value = TRUE))))
 }
 
-# Return TRUE if code exceeds max_lines by more than 20%
+# Return TRUE if code exceeds max_lines by more than 20% (Inf = unlimited)
 code_too_long <- function(code, max_lines) {
+  if (is.infinite(max_lines)) return(FALSE)
   count_code_lines(code) > floor(max_lines * 1.2)
 }
 
@@ -927,6 +941,22 @@ active_cfg_path  <- function() {
   d <- tools::R_user_dir("classmate", "config")
   dir.create(d, showWarnings = FALSE, recursive = TRUE)
   file.path(d, "active_config.rds")
+}
+
+prefs_path <- function() {
+  d <- tools::R_user_dir("classmate", "config")
+  dir.create(d, showWarnings = FALSE, recursive = TRUE)
+  file.path(d, "user_prefs.rds")
+}
+
+load_saved_prefs <- function() {
+  p <- prefs_path()
+  if (!file.exists(p)) return(list())
+  tryCatch(readRDS(p), error = function(e) list())
+}
+
+save_prefs <- function(prefs_list) {
+  tryCatch(saveRDS(prefs_list, prefs_path()), error = function(e) NULL)
 }
 
 read_usage_log <- function() {
@@ -1409,8 +1439,8 @@ ui <- fluidPage(
     uiOutput("run_status"),
 
     fluidRow(style = "margin-top: 10px;",
-      column(6, div(style = "display: flex; gap: 8px;",
-        uiOutput("code_saved_ui"),
+      column(6, div(style = "display: flex; align-items: center; gap: 8px;",
+        div(style = "min-width: 175px;", uiOutput("code_saved_ui")),
         disabled(actionButton("save_block", "Save Code Block", class = "btn-primary"))
       )),
       column(6,
@@ -1419,7 +1449,9 @@ ui <- fluidPage(
             style = "margin-right: 8px;"),
           actionButton("help_toggle", "?",
             style = "margin-right: 8px;"),
-          actionButton("pause_app", "Pause App",
+          actionButton("quick_console", "Quick Console",
+            style = "background-color: white; border-color: #bbb; color: #333; margin-right: 8px;"),
+          actionButton("pause_app", "Save & Pause",
             style = "background-color: white; border-color: #bbb; color: #333; margin-right: 14px;"),
           div(style = "display: inline-flex; flex-direction: column; align-items: flex-start;",
             div(
@@ -2027,7 +2059,7 @@ server <- function(input, output, session) {
     if (ui_busy()) {
       for (btn in c("ask_plain", "ask_code", "explain_code", "fix_code", "run_code",
                     "load_script", "save_block", "help_toggle",
-                    "pause_app", "clear_workspace", "new_conversation", "quit"))
+                    "quick_console", "pause_app", "clear_workspace", "new_conversation", "quit"))
         shinyjs::disable(btn)
       return()
     }
@@ -2214,10 +2246,19 @@ server <- function(input, output, session) {
         "file in your project folder (using the code description as the filename) and",
         "opens it in RStudio."
       ),
+      quick_console    = paste(
+        "Quick Console — Opens a small R console inside the app where you can run",
+        "R code directly, inspect objects, or create new variables — all within the",
+        "same workspace as the main app. The rest of the app is frozen while the",
+        "Quick Console is open. Close it when you are done to return to the app.",
+        "Note: typing q() or quit() will just close the Quick Console, not end your R session."
+      ),
       pause_app        = paste(
-        "Pause App — Saves your entire session — conversation history, code,",
-        "context, and preferences — and closes Classmate. Reopen the app to pick up",
-        "exactly where you left off."
+        "Save & Pause — Saves your entire session — conversation history, code,",
+        "context, and preferences — and closes Classmate. Reopen the app with ask()",
+        "to pick up exactly where you left off.",
+        "Use this if you want to take a longer break and return to the same conversation later.",
+        "For a quick step out to run some R code, use Quick Console instead."
       ),
       clear_workspace  = paste(
         "Clear Workspace — Removes all R objects from your global environment",
@@ -2230,7 +2271,7 @@ server <- function(input, output, session) {
         "to Past conversations and the code log is saved automatically."
       ),
       quit             = paste(
-        "Quit — Closes Classmate. Your code log (.R) and prompt log (.txt) are saved",
+        "Quit — Closes Classmate. Your code notebook (.Rmd) is saved",
         "automatically and opened in your editor. Your R workspace is not affected."
       ),
       file_select      = paste(
@@ -2603,6 +2644,9 @@ server <- function(input, output, session) {
         ),
         tags$p("The script has not been loaded. Please select a shorter excerpt ",
                "or paste just the section you want to work with."),
+        if (app_mode() != "student") tags$p(em(
+          "You can increase or remove the code-length limit in Preferences."
+        )),
         footer    = modalButton("OK"),
         easyClose = FALSE
       ))
@@ -2736,9 +2780,7 @@ server <- function(input, output, session) {
   all_log_entries      <- reactiveVal(if (!is.null(ps)) ps$all_log_entries      else list())
   last_logged_code     <- reactiveVal(if (!is.null(ps)) ps$last_logged_code     else "")
   prompt_history       <- reactiveVal(if (!is.null(ps)) ps$prompt_history       else character(0))
-  prompt_log_rv        <- reactiveVal(if (!is.null(ps)) ps$prompt_log_rv        else character(0))
   conv_count_rv        <- reactiveVal(if (!is.null(ps)) ps$conv_count_rv        else 1L)
-  prompt_log_dirty     <- reactiveVal(FALSE)
 
   # log_path is generated fresh each time Save Code Log is pressed (date-time stamped)
   make_log_path <- function()
@@ -2876,16 +2918,23 @@ server <- function(input, output, session) {
   })
 
   # --- Preferences -----------------------------------------------------------
+  # Priority: pause state > persisted user prefs > built-in defaults
+  .saved_prefs <- load_saved_prefs()
+  pref_val <- function(key, default) {
+    if (!is.null(ps$prefs[[key]])) ps$prefs[[key]]
+    else if (!is.null(.saved_prefs[[key]])) .saved_prefs[[key]]
+    else default
+  }
   prefs <- reactiveValues(
-    coding          = if (!is.null(ps$prefs$coding))          ps$prefs$coding          else "tidyverse",
-    plotting        = if (!is.null(ps$prefs$plotting))        ps$prefs$plotting        else "ggplot2",
-    mapping         = if (!is.null(ps$prefs$mapping))         ps$prefs$mapping         else "tmap",
-    model           = if (!is.null(ps$prefs$model))           ps$prefs$model           else MODEL_SONNET,
-    img_format      = if (!is.null(ps$prefs$img_format))      ps$prefs$img_format      else "png",
-    img_quality     = if (!is.null(ps$prefs$img_quality))     ps$prefs$img_quality     else "Medium",
-    img_size        = if (!is.null(ps$prefs$img_size))        ps$prefs$img_size        else "Journal double col. (180x120 mm)",
-    max_lines       = if (!is.null(ps$prefs$max_lines))       ps$prefs$max_lines       else 50,
-    comment_density = if (!is.null(ps$prefs$comment_density)) ps$prefs$comment_density else "Minimal"
+    coding          = pref_val("coding",          "tidyverse"),
+    plotting        = pref_val("plotting",         "ggplot2"),
+    mapping         = pref_val("mapping",          "tmap"),
+    model           = pref_val("model",            MODEL_SONNET),
+    img_format      = pref_val("img_format",       "png"),
+    img_quality     = pref_val("img_quality",      "Medium"),
+    img_size        = pref_val("img_size",         "Journal double col. (180x120 mm)"),
+    max_lines       = pref_val("max_lines",        50),
+    comment_density = pref_val("comment_density",  "Minimal")
   )
 
   model_choices <- c("Claude Sonnet" = MODEL_SONNET)
@@ -2934,7 +2983,10 @@ server <- function(input, output, session) {
       fluidRow(
         column(6,
           selectInput("pref_max_lines", "Maximum code length (lines):",
-            choices  = c("50 lines" = 50, "100 lines" = 100),
+            choices = if (isolate(app_mode()) == "student")
+              c("50 lines" = 50, "100 lines" = 100)
+            else
+              c("50 lines" = 50, "100 lines" = 100, "Unlimited" = Inf),
             selected = prefs$max_lines)
         ),
         column(6,
@@ -2962,8 +3014,89 @@ server <- function(input, output, session) {
   observeEvent(input$pref_img_format,      { prefs$img_format      <- input$pref_img_format })
   observeEvent(input$pref_img_quality,     { prefs$img_quality     <- input$pref_img_quality })
   observeEvent(input$pref_img_size,        { prefs$img_size        <- input$pref_img_size })
-  observeEvent(input$pref_max_lines,       { prefs$max_lines       <- as.integer(input$pref_max_lines) })
-  observeEvent(input$pref_comment_density, { prefs$comment_density <- input$pref_comment_density })
+  observeEvent(input$pref_max_lines, {
+    v <- input$pref_max_lines
+    prefs$max_lines <- if (v == "Inf") Inf else as.integer(v)
+  })
+  observeEvent(input$pref_comment_density, {
+    old_density <- prefs$comment_density
+    new_density <- input$pref_comment_density
+    prefs$comment_density <- new_density
+    if (old_density != new_density) {
+      current_code <- isolate(input$code_editor %||% "")
+      if (nzchar(trimws(current_code)) && !isTRUE(ui_busy())) {
+        comment_instruction <- switch(new_density,
+          None    = paste(
+            "Remove all comments from this R code.",
+            "Delete every line that consists only of a # comment.",
+            "Also remove any trailing inline comments (# ...) from code lines.",
+            "Do not change any code logic, names, values, or structure."
+          ),
+          Minimal = paste(
+            "Adjust the comments in this R code so that it has only brief",
+            "section-marker comments dividing major logical steps",
+            "(e.g. '# Load data', '# Fit model', '# Plot results').",
+            "Remove any inline comments and any over-detailed explanatory comments.",
+            "Do not change any code logic, names, values, or structure."
+          ),
+          Most    = paste(
+            "Adjust the comments in this R code so that it has section-marker comments",
+            "dividing major logical steps, plus brief inline notes (≤ 8 words each)",
+            "on any lines that would not be immediately obvious to a typical student.",
+            "Do not comment every line — only add inline notes to genuinely non-obvious choices.",
+            "Do not change any code logic, names, values, or structure."
+          )
+        )
+        removeModal()
+        output$run_status <- renderUI(tags$span(
+          "Adjusting comments...", style = "color: #888;"
+        ))
+        tryCatch({
+          result <- call_claude(
+            messages = list(list(
+              role    = "user",
+              content = paste0(
+                comment_instruction,
+                "\n\nReturn ONLY the modified R code with no explanation,",
+                " introduction, or markdown code fences.\n\n",
+                current_code
+              )
+            )),
+            model         = MODEL_HAIKU,
+            max_tokens    = 2000,
+            system_prompt = paste(
+              "You are a code comment editor for R code.",
+              "Your only task is to adjust comment lines to the requested level.",
+              "Never change any executable code. Return only the raw R code."
+            ),
+            api_key      = api_key_val(),
+            cache_system = FALSE
+          )
+          new_code <- trimws(result$text)
+          # Strip accidental fences if model wraps them anyway
+          new_code <- gsub("^```(?:r|R)?\\s*\n?", "", new_code, perl = TRUE)
+          new_code <- gsub("\n?```\\s*$",           "", new_code, perl = TRUE)
+          if (nzchar(new_code)) {
+            updateAceEditor(session, "code_editor", value = new_code)
+            output$run_status <- renderUI(tags$span(
+              "Comments updated.", style = "color: #888;"
+            ))
+          } else {
+            output$run_status <- renderUI(NULL)
+          }
+        }, error = function(e) {
+          output$run_status <- renderUI(tags$span(
+            "Could not update comments.", style = "color: #b22222;"
+          ))
+        })
+      }
+    }
+  })
+
+  # Persist prefs to disk whenever any value changes
+  observe({
+    save_prefs(reactiveValuesToList(prefs))
+  })
 
   if (!is.null(ps)) {
     if (length(ps$selected_files)   > 0) selected_files(ps$selected_files)
@@ -2984,9 +3117,6 @@ server <- function(input, output, session) {
     save_current_conversation_if_nonempty()
     # Auto-save code log for this conversation before clearing
     if (length(all_log_entries()) > 0) do_save_log()
-    # Mark new conversation in prompt log
-    if (length(prompt_log_rv()) > 0)
-      prompt_log_rv(c(prompt_log_rv(), "", "", "--- NEW CONVERSATION STARTED ---", ""))
     conv_count_rv(conv_count_rv() + 1L)
     hide_changes_tab()
     conversation_history(list())
@@ -3043,7 +3173,7 @@ server <- function(input, output, session) {
     }
     showModal(modalDialog(
       title = "Start a new conversation?",
-      tags$p("This will clear the Code editor, R output, Past code, and Past prompts. The current conversation will be saved to Past conversations from which previous code and prompts can be recalled. Code will be saved to a Code Log."),
+      tags$p("This will clear the Code editor, R output, Past code, and Past prompts. The current conversation will be saved to Past conversations from which previous code and prompts can be recalled. The code notebook for this conversation will be saved automatically."),
       footer = tagList(
         modalButton("Cancel"),
         actionButton("confirm_new_conversation", "Yes, start new conversation", class = "btn-danger")
@@ -3054,6 +3184,136 @@ server <- function(input, output, session) {
   observeEvent(input$confirm_new_conversation, {
     removeModal()
     do_new_conversation_reset()
+  })
+
+  # --- Quick Console ---------------------------------------------------------
+  qc_history <- reactiveVal(list())  # list of list(input, output, is_error)
+
+  run_in_qc <- function(code) {
+    warnings_seen  <- character(0)
+    console_output <- character(0)
+    # Temporarily shadow q/quit/stopApp/ask in globalenv to intercept them
+    shadow <- list(
+      q        = if (exists("q",        .GlobalEnv, inherits = FALSE)) get("q",        .GlobalEnv) else NULL,
+      quit     = if (exists("quit",     .GlobalEnv, inherits = FALSE)) get("quit",     .GlobalEnv) else NULL,
+      stopApp  = if (exists("stopApp",  .GlobalEnv, inherits = FALSE)) get("stopApp",  .GlobalEnv) else NULL,
+      ask      = if (exists("ask",      .GlobalEnv, inherits = FALSE)) get("ask",      .GlobalEnv) else NULL
+    )
+    assign("q",       function(...) stop("__QC_QUIT__"),          envir = .GlobalEnv)
+    assign("quit",    function(...) stop("__QC_QUIT__"),          envir = .GlobalEnv)
+    assign("stopApp", function(...) stop("__QC_STOPAPP__"),       envir = .GlobalEnv)
+    assign("ask",     function(...) message("Classmate is already running."), envir = .GlobalEnv)
+    on.exit({
+      for (nm in names(shadow)) {
+        if (is.null(shadow[[nm]])) {
+          if (exists(nm, .GlobalEnv, inherits = FALSE)) rm(list = nm, envir = .GlobalEnv)
+        } else {
+          assign(nm, shadow[[nm]], envir = .GlobalEnv)
+        }
+      }
+    })
+    result <- tryCatch({
+      setTimeLimit(elapsed = 30, transient = TRUE)
+      on.exit({ setTimeLimit(elapsed = Inf, transient = FALSE) }, add = TRUE)
+      console_output <- capture.output({
+        withCallingHandlers(
+          source(textConnection(code), local = FALSE, print.eval = TRUE),
+          warning = function(w) {
+            warnings_seen <<- c(warnings_seen, conditionMessage(w))
+            invokeRestart("muffleWarning")
+          }
+        )
+      })
+      out <- strip_ansi(console_output)
+      if (length(warnings_seen) > 0)
+        out <- c(out, paste0("Warning: ", warnings_seen))
+      list(output = paste(out, collapse = "\n"), is_error = FALSE)
+    }, error = function(e) {
+      msg <- conditionMessage(e)
+      if (grepl("__QC_QUIT__", msg))
+        return(list(output = "(q() / quit() is not available here — close the Quick Console to return to Classmate)", is_error = FALSE))
+      if (grepl("__QC_STOPAPP__", msg))
+        return(list(output = "(stopApp() is not available inside the Quick Console)", is_error = FALSE))
+      if (grepl("reached elapsed time limit", msg))
+        return(list(output = "Timed out after 30 seconds. The operation was interrupted.", is_error = TRUE))
+      list(output = strip_ansi(msg), is_error = TRUE)
+    })
+    result
+  }
+
+  output$qc_output_ui <- renderUI({
+    hist <- qc_history()
+    if (length(hist) == 0)
+      return(tags$div(
+        style = "color: #888; font-size: 0.85em; font-style: italic;",
+        "Type R code below and press Run (or Ctrl+Enter)."
+      ))
+    items <- lapply(hist, function(h) {
+      tags$div(
+        tags$div(
+          style = "color: #2c5f8a; font-family: monospace; font-size: 0.85em; margin-top: 6px; white-space: pre-wrap;",
+          paste0("> ", gsub("\n", "\n  ", trimws(h$input)))
+        ),
+        if (nzchar(trimws(h$output)))
+          tags$div(
+            style = paste0("font-family: monospace; font-size: 0.85em; white-space: pre-wrap; ",
+                           if (h$is_error) "color: #b22222;" else "color: #333;"),
+            trimws(h$output)
+          )
+      )
+    })
+    tags$div(items)
+  })
+
+  observeEvent(input$quick_console, {
+    qc_history(list())
+    showModal(modalDialog(
+      title = "Quick Console",
+      size  = "l",
+      tags$div(
+        style = paste0("height: 280px; overflow-y: auto; background: #fafafa;",
+                       " border: 1px solid #ddd; border-radius: 4px;",
+                       " padding: 8px; margin-bottom: 8px;"),
+        uiOutput("qc_output_ui")
+      ),
+      shinyAce::aceEditor(
+        "qc_input", value = "", mode = "r", theme = "chrome",
+        height = "90px", fontSize = 13,
+        showLineNumbers = FALSE, highlightActiveLine = FALSE,
+        hotkeys = list(run_key = list(win = "Ctrl-Return", mac = "Command-Return"))
+      ),
+      tags$p(em(style = "font-size:0.8em; color:#888;",
+        "Same workspace as the main app. 30-second timeout. ",
+        "q() and quit() close the Quick Console, not your R session.")),
+      footer = tagList(
+        actionButton("qc_run",   "Run",         class = "btn-success"),
+        actionButton("qc_clear", "Clear output", style = "margin-left: 4px;"),
+        tags$span(style = "flex: 1;"),
+        modalButton("Close")
+      ),
+      easyClose = FALSE
+    ))
+  })
+
+  observeEvent(input$qc_run, {
+    code <- isolate(input$qc_input %||% "")
+    if (!nzchar(trimws(code))) return()
+    result <- run_in_qc(code)
+    qc_history(c(qc_history(), list(list(input = code, output = result$output, is_error = result$is_error))))
+    shinyAce::updateAceEditor(session, "qc_input", value = "")
+  })
+
+  # Also allow Ctrl+Enter hotkey from the Ace editor
+  observeEvent(input$qc_input_run_key, {
+    code <- isolate(input$qc_input %||% "")
+    if (!nzchar(trimws(code))) return()
+    result <- run_in_qc(code)
+    qc_history(c(qc_history(), list(list(input = code, output = result$output, is_error = result$is_error))))
+    shinyAce::updateAceEditor(session, "qc_input", value = "")
+  })
+
+  observeEvent(input$qc_clear, {
+    qc_history(list())
   })
 
   # --- Ask for Code ----------------------------------------------------------
@@ -3124,9 +3384,6 @@ server <- function(input, output, session) {
       record_usage(api_result$cost_usd)
       conversation_history(c(history_so_far, list(list(role = "assistant", content = raw_response))))
       prompt_history(c(current_prompt, prompt_history()))
-      prompt_log_rv(c(prompt_log_rv(), current_prompt))
-      prompt_log_dirty(TRUE)
-
       parts <- split_response_into_text_and_code(raw_response)
 
       if (nzchar(trimws(parts$code)) && code_too_long(parts$code, prefs$max_lines)) {
@@ -3139,6 +3396,9 @@ server <- function(input, output, session) {
           tags$p("Try breaking it into smaller steps — for example, load the data first, ",
                  "then build the analysis, then visualise the results, one prompt at a time. ",
                  "The code has not been added to the editor."),
+          if (app_mode() != "student") tags$p(em(
+            "You can increase or remove the code-length limit in Preferences."
+          )),
           footer    = modalButton("OK"),
           easyClose = FALSE
         ))
@@ -3241,8 +3501,6 @@ server <- function(input, output, session) {
     record_usage(api_result$cost_usd)
     conversation_history(c(history_so_far, list(list(role = "assistant", content = raw_response))))
     prompt_history(c(current_prompt, prompt_history()))
-    prompt_log_rv(c(prompt_log_rv(), current_prompt))
-
     parts <- split_response_into_text_and_code(raw_response)
     last_prompt_for_code(current_prompt)
     last_extracted_code(parts$code)
@@ -3263,6 +3521,9 @@ server <- function(input, output, session) {
         ),
         tags$p("Try breaking it into smaller steps — for example, load the data first, ",
                "then build the analysis, then visualise the results, one prompt at a time."),
+        if (app_mode() != "student") tags$p(em(
+          "You can increase or remove the code-length limit in Preferences."
+        )),
         footer    = modalButton("OK"),
         easyClose = FALSE
       ))
@@ -3984,20 +4245,6 @@ server <- function(input, output, session) {
     open_log_file(p)
   }
 
-  make_prompt_log_path <- function()
-    file.path(PROJECT_ROOT,
-      paste0("classmate_prompts_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".txt"))
-
-  do_save_prompt_log <- function() {
-    prompts <- prompt_log_rv()
-    if (length(prompts) == 0) return(invisible(NULL))
-    p <- make_prompt_log_path()
-    writeLines(paste(prompts, collapse = "\n\n"), p)
-    prompt_log_dirty(FALSE)
-    open_log_file(p)
-    invisible(p)
-  }
-
   observeEvent(input$save_block, {
     code_text <- isolate(input$code_editor %||% "")
     req(nzchar(trimws(code_text)))
@@ -4017,11 +4264,11 @@ server <- function(input, output, session) {
     ))
   })
 
-  # --- Pause App -------------------------------------------------------------
+  # --- Save & Pause ----------------------------------------------------------
   observeEvent(input$pause_app, {
     showModal(modalDialog(
-      title = "Pause app",
-      tags$p(tags$strong("You are about to pause the app.")),
+      title = "Save & Pause",
+      tags$p(tags$strong("Save your session and pause Classmate.")),
       tags$p(paste(
         "The current session — prompt, code, context files and objects,",
         "conversation history, and preferences — will be saved and restored",
@@ -4031,11 +4278,11 @@ server <- function(input, output, session) {
         "The API key is not saved; it will be picked up from the R environment automatically."
       )),
       tags$p(paste(
-        "To quit without saving anything to return to, use the Quit button instead."
+        "To close without saving a restore point, use the Quit button instead."
       )),
       footer = tagList(
         modalButton("Cancel"),
-        actionButton("confirm_pause_app", "OK, pause", class = "btn-primary"),
+        actionButton("confirm_pause_app", "Save & Pause", class = "btn-primary"),
         actionButton("quit_from_pause", "Quit", class = "btn-danger")
       )
     ))
@@ -4073,7 +4320,6 @@ server <- function(input, output, session) {
       last_prompt_for_code = last_prompt_for_code(),
       last_logged_code     = last_logged_code(),
       prompt_history       = prompt_history(),
-      prompt_log_rv        = prompt_log_rv(),
       conv_count_rv        = conv_count_rv()
     )
     if (length(all_log_entries()) > 0) do_save_log()
@@ -4088,26 +4334,15 @@ server <- function(input, output, session) {
 
   # --- Quit ------------------------------------------------------------------
   do_quit_with_autosave <- function() {
-    # Always auto-save code log if there is anything to save
     if (length(all_log_entries()) > 0) do_save_log()
-    # Always auto-save prompt log if there are any prompts
-    do_save_prompt_log()
     do_quit()
   }
 
   show_quit_confirm_modal <- function() {
-    has_log     <- length(all_log_entries()) > 0
-    has_prompts <- length(prompt_log_rv()) > 0
-    save_note <- if (has_log || has_prompts) {
-      items <- c(
-        if (has_log)     "code log (.R)" else NULL,
-        if (has_prompts) "prompt log (.txt)" else NULL
-      )
-      paste0("Your ", paste(items, collapse = " and "),
-             " will be saved automatically and opened in your editor.")
-    } else {
+    save_note <- if (length(all_log_entries()) > 0)
+      "Your code notebook will be saved automatically and opened in RStudio."
+    else
       "There is nothing to save."
-    }
     showModal(modalDialog(
       title = "Quit Classmate?",
       tags$p("Are you sure you want to quit? Your R workspace will not be cleared."),
@@ -4132,16 +4367,6 @@ server <- function(input, output, session) {
         p <- make_log_path()
         cat(format_log_entries(entries), "\n\n", file = p, append = FALSE, sep = "")
         open_log_file(p)
-      }, error = function(e) NULL)
-    }
-    if (isolate(prompt_log_dirty())) {
-      tryCatch({
-        prompts <- isolate(prompt_log_rv())
-        if (length(prompts) > 0) {
-          p2 <- make_prompt_log_path()
-          writeLines(paste(prompts, collapse = "\n\n"), p2)
-          open_log_file(p2)
-        }
       }, error = function(e) NULL)
     }
   })
