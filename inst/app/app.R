@@ -3217,86 +3217,9 @@ server <- function(input, output, session) {
   })
 
   # --- Quick Console ---------------------------------------------------------
-  qc_history <- reactiveVal(list())  # list of list(input, output, is_error)
+  qc_history <- reactiveVal(list())  # list of list(input, output, is_error, plot_path)
 
-  run_in_qc <- function(code) {
-    warnings_seen  <- character(0)
-    console_output <- character(0)
-    # Temporarily shadow q/quit/stopApp/ask in globalenv to intercept them
-    shadow <- list(
-      q        = if (exists("q",        .GlobalEnv, inherits = FALSE)) get("q",        .GlobalEnv) else NULL,
-      quit     = if (exists("quit",     .GlobalEnv, inherits = FALSE)) get("quit",     .GlobalEnv) else NULL,
-      stopApp  = if (exists("stopApp",  .GlobalEnv, inherits = FALSE)) get("stopApp",  .GlobalEnv) else NULL,
-      ask      = if (exists("ask",      .GlobalEnv, inherits = FALSE)) get("ask",      .GlobalEnv) else NULL
-    )
-    assign("q",       function(...) stop("__QC_QUIT__"),          envir = .GlobalEnv)
-    assign("quit",    function(...) stop("__QC_QUIT__"),          envir = .GlobalEnv)
-    assign("stopApp", function(...) stop("__QC_STOPAPP__"),       envir = .GlobalEnv)
-    assign("ask",     function(...) message("Classmate is already running."), envir = .GlobalEnv)
-    on.exit({
-      for (nm in names(shadow)) {
-        if (is.null(shadow[[nm]])) {
-          if (exists(nm, .GlobalEnv, inherits = FALSE)) rm(list = nm, envir = .GlobalEnv)
-        } else {
-          assign(nm, shadow[[nm]], envir = .GlobalEnv)
-        }
-      }
-    })
-    result <- tryCatch({
-      setTimeLimit(elapsed = 30, transient = TRUE)
-      on.exit({ setTimeLimit(elapsed = Inf, transient = FALSE) }, add = TRUE)
-      console_output <- capture.output({
-        withCallingHandlers(
-          source(textConnection(code), local = FALSE, print.eval = TRUE),
-          warning = function(w) {
-            warnings_seen <<- c(warnings_seen, conditionMessage(w))
-            invokeRestart("muffleWarning")
-          }
-        )
-      })
-      out <- strip_ansi(console_output)
-      if (length(warnings_seen) > 0)
-        out <- c(out, paste0("Warning: ", warnings_seen))
-      list(output = paste(out, collapse = "\n"), is_error = FALSE)
-    }, error = function(e) {
-      msg <- conditionMessage(e)
-      if (grepl("__QC_QUIT__", msg))
-        return(list(output = "(q() / quit() is not available here — close the Quick Console to return to Classmate)", is_error = FALSE))
-      if (grepl("__QC_STOPAPP__", msg))
-        return(list(output = "(stopApp() is not available inside the Quick Console)", is_error = FALSE))
-      if (grepl("reached elapsed time limit", msg))
-        return(list(output = "Timed out after 30 seconds. The operation was interrupted.", is_error = TRUE))
-      list(output = strip_ansi(msg), is_error = TRUE)
-    })
-    result
-  }
-
-  output$qc_output_ui <- renderUI({
-    hist <- qc_history()
-    if (length(hist) == 0)
-      return(tags$div(
-        style = "color: #888; font-size: 0.85em; font-style: italic;",
-        "Type R code below and press Run (or Ctrl+Enter)."
-      ))
-    items <- lapply(hist, function(h) {
-      tags$div(
-        tags$div(
-          style = "color: #2c5f8a; font-family: monospace; font-size: 0.85em; margin-top: 6px; white-space: pre-wrap;",
-          paste0("> ", gsub("\n", "\n  ", trimws(h$input)))
-        ),
-        if (nzchar(trimws(h$output)))
-          tags$div(
-            style = paste0("font-family: monospace; font-size: 0.85em; white-space: pre-wrap; ",
-                           if (h$is_error) "color: #b22222;" else "color: #333;"),
-            trimws(h$output)
-          )
-      )
-    })
-    tags$div(items)
-  })
-
-  observeEvent(input$quick_console, {
-    qc_history(list())
+  show_qc_modal <- function() {
     showModal(modalDialog(
       title = "Quick Console",
       size  = "l",
@@ -3341,23 +3264,131 @@ server <- function(input, output, session) {
         });
       }, 300);
     ')
+  }
+
+  run_in_qc <- function(code) {
+    warnings_seen  <- character(0)
+    console_output <- character(0)
+    # Temporarily shadow q/quit/stopApp/ask in globalenv to intercept them
+    shadow <- list(
+      q        = if (exists("q",        .GlobalEnv, inherits = FALSE)) get("q",        .GlobalEnv) else NULL,
+      quit     = if (exists("quit",     .GlobalEnv, inherits = FALSE)) get("quit",     .GlobalEnv) else NULL,
+      stopApp  = if (exists("stopApp",  .GlobalEnv, inherits = FALSE)) get("stopApp",  .GlobalEnv) else NULL,
+      ask      = if (exists("ask",      .GlobalEnv, inherits = FALSE)) get("ask",      .GlobalEnv) else NULL
+    )
+    assign("q",       function(...) stop("__QC_QUIT__"),          envir = .GlobalEnv)
+    assign("quit",    function(...) stop("__QC_QUIT__"),          envir = .GlobalEnv)
+    assign("stopApp", function(...) stop("__QC_STOPAPP__"),       envir = .GlobalEnv)
+    assign("ask",     function(...) message("Classmate is already running."), envir = .GlobalEnv)
+    on.exit({
+      for (nm in names(shadow)) {
+        if (is.null(shadow[[nm]])) {
+          if (exists(nm, .GlobalEnv, inherits = FALSE)) rm(list = nm, envir = .GlobalEnv)
+        } else {
+          assign(nm, shadow[[nm]], envir = .GlobalEnv)
+        }
+      }
+    })
+    # Capture plot output to a temp PNG
+    plot_file   <- tempfile(fileext = ".png")
+    dev_before  <- dev.cur()
+    png(plot_file, width = 900, height = 650, res = 96)
+    dev_qc <- dev.cur()
+    on.exit({ if (dev.cur() == dev_qc) dev.off() }, add = TRUE)
+    result <- tryCatch({
+      setTimeLimit(elapsed = 30, transient = TRUE)
+      on.exit({ setTimeLimit(elapsed = Inf, transient = FALSE) }, add = TRUE)
+      console_output <- capture.output({
+        withCallingHandlers(
+          source(textConnection(code), local = FALSE, print.eval = TRUE),
+          warning = function(w) {
+            warnings_seen <<- c(warnings_seen, conditionMessage(w))
+            invokeRestart("muffleWarning")
+          }
+        )
+      })
+      if (dev.cur() == dev_qc) dev.off()
+      out <- strip_ansi(console_output)
+      if (length(warnings_seen) > 0)
+        out <- c(out, paste0("Warning: ", warnings_seen))
+      plot_path <- if (file.exists(plot_file) && file.info(plot_file)$size > 0)
+        plot_file else NULL
+      list(output = paste(out, collapse = "\n"), is_error = FALSE, plot_path = plot_path)
+    }, error = function(e) {
+      if (dev.cur() == dev_qc) tryCatch(dev.off(), error = function(e) NULL)
+      msg <- conditionMessage(e)
+      if (grepl("__QC_QUIT__", msg))
+        return(list(output = "(q() / quit() is not available here — close the Quick Console to return to Classmate)", is_error = FALSE, plot_path = NULL))
+      if (grepl("__QC_STOPAPP__", msg))
+        return(list(output = "(stopApp() is not available inside the Quick Console)", is_error = FALSE, plot_path = NULL))
+      if (grepl("reached elapsed time limit", msg))
+        return(list(output = "Timed out after 30 seconds. The operation was interrupted.", is_error = TRUE, plot_path = NULL))
+      list(output = strip_ansi(msg), is_error = TRUE, plot_path = NULL)
+    })
+    result
+  }
+
+  output$qc_output_ui <- renderUI({
+    hist <- qc_history()
+    if (length(hist) == 0)
+      return(tags$div(
+        style = "color: #888; font-size: 0.85em; font-style: italic;",
+        "Type R code below and press Run (or Ctrl+Enter)."
+      ))
+    items <- lapply(hist, function(h) {
+      tags$div(
+        tags$div(
+          style = "color: #2c5f8a; font-family: monospace; font-size: 0.85em; margin-top: 6px; white-space: pre-wrap;",
+          paste0("> ", gsub("\n", "\n  ", trimws(h$input)))
+        ),
+        if (nzchar(trimws(h$output)))
+          tags$div(
+            style = paste0("font-family: monospace; font-size: 0.85em; white-space: pre-wrap; ",
+                           if (h$is_error) "color: #b22222;" else "color: #333;"),
+            trimws(h$output)
+          )
+      )
+    })
+    tags$div(items)
   })
 
-  observeEvent(input$qc_run, {
+  observeEvent(input$quick_console, {
+    qc_history(list())
+    show_qc_modal()
+  })
+
+  do_qc_run <- function() {
     code <- isolate(input$qc_input %||% "")
     if (!nzchar(trimws(code))) return()
     result <- run_in_qc(code)
-    qc_history(c(qc_history(), list(list(input = code, output = result$output, is_error = result$is_error))))
+    qc_history(c(qc_history(), list(list(
+      input     = code,
+      output    = result$output,
+      is_error  = result$is_error,
+      plot_path = result$plot_path
+    ))))
     shinyAce::updateAceEditor(session, "qc_input", value = "")
-  })
+    if (!is.null(result$plot_path)) {
+      plot_src <- paste0("classmate_plots/", basename(result$plot_path))
+      showModal(modalDialog(
+        title = "Plot",
+        size  = "l",
+        tags$div(
+          style = "text-align: center;",
+          tags$img(src = plot_src, style = "max-width: 100%; height: auto;")
+        ),
+        footer = actionButton("qc_plot_close", "Close", class = "btn-primary"),
+        easyClose = FALSE
+      ))
+    }
+  }
 
-  # Also allow Ctrl+Enter hotkey from the Ace editor
-  observeEvent(input$qc_input_run_key, {
-    code <- isolate(input$qc_input %||% "")
-    if (!nzchar(trimws(code))) return()
-    result <- run_in_qc(code)
-    qc_history(c(qc_history(), list(list(input = code, output = result$output, is_error = result$is_error))))
-    shinyAce::updateAceEditor(session, "qc_input", value = "")
+  observeEvent(input$qc_run,          { do_qc_run() })
+  observeEvent(input$qc_input_run_key, { do_qc_run() })
+
+  observeEvent(input$qc_plot_close, {
+    removeModal()
+    show_qc_modal()
   })
 
   observeEvent(input$qc_clear, {
