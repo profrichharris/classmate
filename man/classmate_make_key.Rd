@@ -8,6 +8,8 @@ classmate_make_key(
   api_key = NULL,
   cost_limit = NULL,
   reset_period = NULL,
+  final_expiry = NULL,
+  max_conversations = NULL,
   output_file = "classmate.key"
 )
 }

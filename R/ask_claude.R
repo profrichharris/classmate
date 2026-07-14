@@ -1,3 +1,7 @@
+`%||%` <- function(x, y) if (is.null(x)) y else x
+
+CLASSMATE_GITHUB_REPO <- "profrichharris/classmate"
+
 #' Launch the Classmate AI assistant Shiny app
 #'
 #' Opens a Shiny front-end that connects students to Claude AI directly from
@@ -14,10 +18,6 @@
 #' \dontrun{
 #' ask()
 #' }
-`%||%` <- function(x, y) if (is.null(x)) y else x
-
-CLASSMATE_GITHUB_REPO <- "profrichharris/classmate"
-
 ask <- function() {
 
   # --- Dependency checks and installation ------------------------------------
