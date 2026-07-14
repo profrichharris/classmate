@@ -1096,6 +1096,36 @@ ui <- fluidPage(
       }
       Shiny.setInputValue('explain_selection', '', {priority: 'event'});
     });
+
+    // R expression completeness check for Quick Console smart-Enter
+    function isCompleteR(code) {
+      var depth_paren = 0, depth_brace = 0, depth_bracket = 0;
+      var in_string = false, string_char = 0;
+      for (var i = 0; i < code.length; i++) {
+        var c = code[i], cc = code.charCodeAt(i);
+        if (in_string) {
+          if (c === '\\\\') { i++; continue; }
+          if (cc === string_char) { in_string = false; }
+          continue;
+        }
+        // 34 = double-quote, 39 = single-quote
+        if (cc === 34 || cc === 39) { in_string = true; string_char = cc; continue; }
+        if (c === '#') { while (i < code.length && code[i] !== '\\n') i++; continue; }
+        if      (c === '(') depth_paren++;
+        else if (c === ')') depth_paren--;
+        else if (c === '{') depth_brace++;
+        else if (c === '}') depth_brace--;
+        else if (c === '[') depth_bracket++;
+        else if (c === ']') depth_bracket--;
+      }
+      if (depth_paren !== 0 || depth_brace !== 0 || depth_bracket !== 0 || in_string) return false;
+      // Strip comments, then check for trailing continuation operators
+      var trimmed = code.replace(/#[^\\n]*/gm, '').replace(/\\s+$/, '');
+      if (!trimmed) return false;
+      if (/[+\\-*\\/^|&~=,]$/.test(trimmed))        return false;
+      if (/(\\|>|%>%|<-|->|%%|\\$)$/.test(trimmed)) return false;
+      return true;
+    }
   ")),
 
   # Side-by-side diff styling
@@ -3283,7 +3313,7 @@ server <- function(input, output, session) {
         hotkeys = list(run_key = list(win = "Ctrl-Return", mac = "Command-Return"))
       ),
       tags$p(em(style = "font-size:0.8em; color:#888;",
-        "Same workspace as the main app. 30-second timeout. ",
+        "Same workspace as the main app. ",
         "q() and quit() close the Quick Console, not your R session.")),
       footer = tagList(
         actionButton("qc_run",   "Run",         class = "btn-success"),
@@ -3293,6 +3323,24 @@ server <- function(input, output, session) {
       ),
       easyClose = FALSE
     ))
+    shinyjs::runjs('
+      setTimeout(function() {
+        var ed = ace.edit("qc_input");
+        if (!ed) return;
+        ed.commands.addCommand({
+          name: "smartEnter",
+          bindKey: {win: "Return", mac: "Return"},
+          exec: function(ed) {
+            var code = ed.getValue();
+            if (isCompleteR(code.trim())) {
+              Shiny.setInputValue("qc_run", Math.random(), {priority: "event"});
+            } else {
+              ed.insert("\\n");
+            }
+          }
+        });
+      }, 300);
+    ')
   })
 
   observeEvent(input$qc_run, {
