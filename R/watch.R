@@ -396,8 +396,16 @@ watch <- function(key = NULL) {
     message("  [classmate] Type raisehand() for help with this error.")
   })
 
+  # Install ??? shortcut: ??? is parsed as ?(??) so we intercept ? in globalenv
+  .watch_env$original_question <- if (exists("?", .GlobalEnv, inherits = FALSE))
+    get("?", .GlobalEnv) else NULL
+  assign("?", function(e) {
+    if (identical(deparse(substitute(e)), "??")) raisehand()
+    else utils::`?`(e)
+  }, envir = .GlobalEnv)
+
   .watch_env$active <- TRUE
-  message("classmate is watching. Type raisehand() when you get stuck, endclass() to stop.")
+  message("classmate is watching. Type raisehand() or ??? when you get stuck, endclass() to stop.")
   invisible(NULL)
 }
 
@@ -523,11 +531,18 @@ endclass <- function() {
   }
   options(error = .watch_env$original_error)
   tryCatch(removeTaskCallback(.watch_env$callback_id), error = function(e) NULL)
-  .watch_env$active         <- FALSE
-  .watch_env$api_key        <- NULL
-  .watch_env$last_error     <- NULL
-  .watch_env$history_buffer <- list()
-  .watch_env$callback_id    <- NULL
+  # Restore original ? (or remove if we added it)
+  if (is.null(.watch_env$original_question)) {
+    if (exists("?", .GlobalEnv, inherits = FALSE)) rm(list = "?", envir = .GlobalEnv)
+  } else {
+    assign("?", .watch_env$original_question, envir = .GlobalEnv)
+  }
+  .watch_env$active            <- FALSE
+  .watch_env$api_key           <- NULL
+  .watch_env$last_error        <- NULL
+  .watch_env$history_buffer    <- list()
+  .watch_env$callback_id       <- NULL
+  .watch_env$original_question <- NULL
   message("classmate has stopped watching.")
   invisible(NULL)
 }
