@@ -52,7 +52,7 @@ ask <- function() {
 # Returns TRUE if a new version was installed and a fresh ask() was launched.
 # Returns FALSE (silently) in every other case, including all error paths.
 # ---------------------------------------------------------------------------
-classmate_preflight <- function() {
+classmate_preflight <- function(relaunch = "ask") {
 
   # Already checked this session, or this is a post-update re-entry
   if (isTRUE(getOption("classmate.update_checked"))) return(FALSE)
@@ -91,15 +91,17 @@ classmate_preflight <- function() {
   if (length(tarball) == 0) return(FALSE)
   download_url <- tarball[[1]]$browser_download_url
 
-  classmate_do_update(latest_version, download_url)
+  classmate_do_update(latest_version, download_url, relaunch)
 }
 
 # ---------------------------------------------------------------------------
-# Downloads and installs the new version silently, then re-launches the app.
+# Downloads and installs the new version silently, then relaunches.
+# relaunch = "ask"   → calls classmate::ask()
+# relaunch = "watch" → calls classmate::watch()
 # Returns TRUE on success, FALSE if anything goes wrong (caller continues
 # with the existing version in that case).
 # ---------------------------------------------------------------------------
-classmate_do_update <- function(latest_version, download_url) {
+classmate_do_update <- function(latest_version, download_url, relaunch = "ask") {
 
   success <- tryCatch({
     tmp <- tempfile(fileext = ".tar.gz")
@@ -125,14 +127,20 @@ classmate_do_update <- function(latest_version, download_url) {
     return(FALSE)
   }
 
+  relaunch_fn  <- if (relaunch == "watch") "watch" else "ask"
+  relaunch_msg <- if (relaunch == "watch")
+    paste0("Classmate updated to v", latest_version, ". Please call watch() to continue.")
+  else
+    paste0("Classmate updated to v", latest_version, ". Please call ask() to launch.")
+
   tryCatch({
     if ("package:classmate" %in% search())
       detach("package:classmate", unload = TRUE, force = TRUE)
     library(classmate)
-    classmate::ask()
+    do.call(getExportedValue("classmate", relaunch_fn), list())
     return(TRUE)
   }, error = function(e) {
-    message("Classmate updated to v", latest_version, ". Please call ask() to launch.")
+    message(relaunch_msg)
     return(TRUE)
   })
 }

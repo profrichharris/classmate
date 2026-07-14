@@ -277,6 +277,10 @@ watch <- function(key = NULL) {
     return(invisible(NULL))
   }
 
+  # --- Preflight update check ------------------------------------------------
+  updated <- classmate_preflight(relaunch = "watch")
+  if (isTRUE(updated)) return(invisible(NULL))
+
   # --- Resolve API key -------------------------------------------------------
   api_key <- NULL
 
