@@ -208,13 +208,8 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.49  
-**Unreleased changes since 0.5.49:**
-
-- Rename "Pause App" → "Save & Close" (button ID `pause_app` unchanged)
-- Add Quick Console button and full REPL implementation
-- Updated help text for both buttons
-- (All prior changes from 0.5.28–0.5.49 are in git history)
+**Last released:** 0.5.50 (2026-07-14)  
+**Unreleased changes:** none
 
 ---
 
@@ -240,4 +235,4 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 | 0.5.28–0.5.35 | Button gating (Save Log, Save Block, New Conversation, Remove buttons); schema extraction for files in context; COLUMN NAME RULE in system prompt |
 | 0.5.36–0.5.42 | Code log as R Notebook (.Rmd); prompts embedded above code chunks; auto-save on browser close; Save Code Log replaced by "Code saved to Notebook" indicator |
 | 0.5.43–0.5.49 | Comment density rewrite via Haiku on pref change; persistent preferences via `tools::R_user_dir`; unlimited code length in non-student mode; informative error messages mentioning Preferences; .dbf sidecar for shapefile schema; removed prompt log (prompts in Notebook already) |
-| Unreleased | Quick Console REPL; Save & Pause rename (formerly "Pause App", then briefly "Save & Close") |
+| 0.5.50 | Quick Console REPL; Save & Pause rename (formerly "Pause App"); CLAUDE.md added |
