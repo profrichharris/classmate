@@ -209,7 +209,7 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.51 (2026-07-14)  
+**Last released:** 0.5.52 (2026-07-14)  
 **Unreleased changes:** none
 
 ---
@@ -238,3 +238,4 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 | 0.5.43–0.5.49 | Comment density rewrite via Haiku on pref change; persistent preferences via `tools::R_user_dir`; unlimited code length in non-student mode; informative error messages mentioning Preferences; .dbf sidecar for shapefile schema; removed prompt log (prompts in Notebook already) |
 | 0.5.50 | Quick Console REPL; Save & Pause rename; CLAUDE.md added |
 | 0.5.51 | watch()/raisehand()/endclass()/reset_key() — console-only mode; interactive key prompt; Quick Console smart-Enter |
+| 0.5.52 | watch() preflight update check; classmate_do_update() parameterised with relaunch target |
