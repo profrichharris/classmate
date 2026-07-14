@@ -209,10 +209,8 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.50 (2026-07-14)  
-**Unreleased changes:**
-- `watch()` / `raisehand()` / `endclass()` / `reset_key()` — lightweight console-only mode (R/watch.R)
-- Quick Console smart-Enter (Enter runs complete expressions; incomplete → newline)
+**Last released:** 0.5.51 (2026-07-14)  
+**Unreleased changes:** none
 
 ---
 
@@ -239,4 +237,4 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 | 0.5.36–0.5.42 | Code log as R Notebook (.Rmd); prompts embedded above code chunks; auto-save on browser close; Save Code Log replaced by "Code saved to Notebook" indicator |
 | 0.5.43–0.5.49 | Comment density rewrite via Haiku on pref change; persistent preferences via `tools::R_user_dir`; unlimited code length in non-student mode; informative error messages mentioning Preferences; .dbf sidecar for shapefile schema; removed prompt log (prompts in Notebook already) |
 | 0.5.50 | Quick Console REPL; Save & Pause rename; CLAUDE.md added |
-| Unreleased | watch()/raisehand()/endclass()/reset_key() — console-only lightweight mode; Quick Console smart-Enter |
+| 0.5.51 | watch()/raisehand()/endclass()/reset_key() — console-only mode; interactive key prompt; Quick Console smart-Enter |
