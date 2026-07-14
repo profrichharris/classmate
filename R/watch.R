@@ -18,11 +18,11 @@
 .watch_env$original_error <- NULL
 
 .WATCH_BUFFER_SIZE <- 30L
-.WATCH_MODEL       <- "claude-sonnet-4-6"
+.WATCH_MODEL       <- "claude-haiku-4-5-20251001"
 
-# Input token price per million (Sonnet 4.6)
-.WATCH_PRICE_IN  <- 3.00 / 1e6
-.WATCH_PRICE_OUT <- 15.00 / 1e6
+# Input token price per million (Haiku 4.5)
+.WATCH_PRICE_IN  <- 1.00 / 1e6
+.WATCH_PRICE_OUT <- 5.00 / 1e6
 
 # ---------------------------------------------------------------------------
 # Shared path helpers (identical to those in app.R so files are the same)
@@ -393,7 +393,7 @@ watch <- function(key = NULL) {
       time      = Sys.time()
     )
 
-    message("  [classmate] Type raisehand() for help with this error.")
+    message("  [classmate] Type raisehand() or rh() for help with this error.")
   })
 
   # Install rh() shortcut for raisehand()
