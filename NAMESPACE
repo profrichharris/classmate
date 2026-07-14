@@ -1,3 +1,7 @@
 export(ask)
 export(classmate_make_key)
 export(classmate_config_show)
+export(watch)
+export(raisehand)
+export(endclass)
+export(reset_key)
