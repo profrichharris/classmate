@@ -109,6 +109,7 @@ Key rules passed to Claude with every request:
 5. **CODE DESCRIPTION RULE** — first line of any response with code must be `DESCRIPTION: <8-word summary>`.
 6. **SCOPE RULE** — if the request has no R angle, respond with exactly `OUT_OF_SCOPE`.
 7. **PACKAGE LOADING RULE** — always `library()` every package used; skip already-loaded ones; use `# github: user/repo` comment for non-CRAN packages.
+8. **CLARITY RULE** — if the prompt cannot be grounded in the student's actual data/objects (no context, or context exists but specific variables cannot be identified), respond with `NEEDS_CLARIFICATION` / `REASON:` / `SUGGESTIONS:` instead of code. Do not trigger for unspecified plot/model type if data and variables are clear — pick a sensible default.
 
 Model used: `claude-sonnet-4-6` (Sonnet). Haiku (`claude-haiku-4-5-20251001`) is used only for comment-density rewrites (fast, low-stakes task).
 
@@ -212,8 +213,10 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.55 (2026-07-14)  
-**Unreleased changes:** none
+**Last released:** 0.5.59 (2026-07-14)  
+**Current version:** 0.5.60 (unreleased)
+
+**Unreleased changes (0.5.60):** Please Clarify modal — when the AI determines the prompt is too vague to write grounded code (NEEDS_CLARIFICATION response), a modal is shown with the reason and suggestions. "Modify Prompt" restores the prompt text and closes the modal. No quota consumed, no conversation history recorded.
 
 ---
 
@@ -245,3 +248,5 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 | 0.5.53 | Fix missing NAMESPACE exports (watch/raisehand/endclass/reset_key) |
 | 0.5.54 | NAMESPACE managed by roxygen2; devtools::document() added to release workflow |
 | 0.5.55 | Quick Console plot capture: plots open in dedicated modal; Close returns to console |
+| 0.5.56–0.5.59 | watch() preflight update check; rh() shortcut; raisehand() uses Haiku with plain-text system prompt; NAMESPACE managed by roxygen2 |
+| 0.5.60 | Please Clarify modal: NEEDS_CLARIFICATION response triggers a modal with reason + suggestions; Modify Prompt button restores prompt and focuses input |

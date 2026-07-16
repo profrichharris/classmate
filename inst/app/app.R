@@ -179,6 +179,24 @@ scope_rule <- paste(
   "When in doubt, answer normally."
 )
 
+clarity_rule <- paste(
+  "CLARITY RULE: Before generating code, ask: can I write code that directly uses",
+  "this student's actual named objects, files, or variables — not generic placeholder",
+  "code (e.g. df, x, y, your_data, myfile)? If yes, proceed — even if the exact",
+  "plot type or model type has not been specified; pick the most sensible default.",
+  "Only respond with NEEDS_CLARIFICATION if: (a) there is no context at all and",
+  "the prompt cannot be grounded in any real data or object; (b) the intent is",
+  "clear but you cannot identify which specific variable or object to work with; or",
+  "(c) the prompt is so ambiguous that any code you write would use placeholder",
+  "names unconnected to the student's actual data.",
+  "Do NOT trigger clarification just because a plot type or model type is unspecified",
+  "— if the data and variables are discernible, pick a sensible default and proceed.",
+  "When clarification IS needed, respond with exactly this format and nothing else:",
+  "NEEDS_CLARIFICATION",
+  "REASON: <plain English explanation of what is missing and why it prevents grounded code>",
+  "SUGGESTIONS: <brief guidance on what the student should add to the prompt>"
+)
+
 build_system_prompt <- function(coding, plotting, mapping, img_format, img_quality, img_size,
                                 max_lines = 50, comment_density = "Minimal",
                                 loaded_pkgs = character(0)) {
@@ -204,12 +222,23 @@ build_system_prompt <- function(coding, plotting, mapping, img_format, img_quali
     format_preferences_clause(coding, plotting, mapping, max_lines, comment_density),
     format_image_preferences_clause(img_format, img_quality, img_size),
     code_description_rule,
-    scope_rule
+    scope_rule,
+    clarity_rule
   )
   paste(blocks, collapse = "\n\n")
 }
 
 # --- Pure helper functions ---------------------------------------------------
+
+parse_needs_clarification <- function(text) {
+  lines  <- strsplit(trimws(text), "\n")[[1]]
+  reason <- ""; suggestions <- ""
+  for (ln in lines) {
+    if (grepl("^REASON:",      ln)) reason      <- trimws(sub("^REASON:",      "", ln))
+    if (grepl("^SUGGESTIONS:", ln)) suggestions <- trimws(sub("^SUGGESTIONS:", "", ln))
+  }
+  list(reason = reason, suggestions = suggestions)
+}
 
 take_last_n <- function(lst, n) {
   if (length(lst) <= n) return(lst)
@@ -2818,6 +2847,8 @@ server <- function(input, output, session) {
       paste0("classmate_log_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".Rmd"))
   log_path <- reactiveVal(file.path(PROJECT_ROOT, "classmate_log.Rmd"))  # placeholder
 
+  clarify_restore_prompt <- reactiveVal("")
+
   selected_files   <- reactiveVal(character(0))
   selected_objects <- reactiveVal(character(0))
   file_schema_cache <- reactiveVal(list())
@@ -3460,6 +3491,21 @@ server <- function(input, output, session) {
         return(invisible(NULL))
       }
 
+      # Clarity check: prompt too vague to write grounded code
+      if (grepl("^NEEDS_CLARIFICATION", trimws(raw_response), ignore.case = TRUE)) {
+        nc <- parse_needs_clarification(raw_response)
+        clarify_restore_prompt(current_prompt)
+        showModal(modalDialog(
+          title     = "Please Clarify",
+          tags$p(if (nzchar(nc$reason)) nc$reason else
+            "The prompt is too general to write code using your actual data or objects."),
+          if (nzchar(nc$suggestions)) tags$p(em(nc$suggestions)),
+          easyClose = FALSE,
+          footer    = actionButton("clarify_modify_prompt", "Modify Prompt", class = "btn-primary")
+        ))
+        return(invisible(NULL))
+      }
+
       record_usage(api_result$cost_usd)
       conversation_history(c(history_so_far, list(list(role = "assistant", content = raw_response))))
       prompt_history(c(current_prompt, prompt_history()))
@@ -3577,6 +3623,22 @@ server <- function(input, output, session) {
       return(invisible(NULL))
     }
 
+    # Clarity check: prompt too vague to write grounded code
+    if (grepl("^NEEDS_CLARIFICATION", trimws(raw_response), ignore.case = TRUE)) {
+      ui_busy(FALSE); enable("ask_code"); enable("ask_plain")
+      nc <- parse_needs_clarification(raw_response)
+      clarify_restore_prompt(current_prompt)
+      showModal(modalDialog(
+        title     = "Please Clarify",
+        tags$p(if (nzchar(nc$reason)) nc$reason else
+          "The prompt is too general to write code using your actual data or objects."),
+        if (nzchar(nc$suggestions)) tags$p(em(nc$suggestions)),
+        easyClose = FALSE,
+        footer    = actionButton("clarify_modify_prompt", "Modify Prompt", class = "btn-primary")
+      ))
+      return(invisible(NULL))
+    }
+
     record_usage(api_result$cost_usd)
     conversation_history(c(history_so_far, list(list(role = "assistant", content = raw_response))))
     prompt_history(c(current_prompt, prompt_history()))
@@ -3640,6 +3702,12 @@ server <- function(input, output, session) {
   observeEvent(input$oos_ok_plain, {
     removeModal()
     updateTextAreaInput(session, "prompt", value = "")
+  })
+
+  observeEvent(input$clarify_modify_prompt, {
+    removeModal()
+    updateTextAreaInput(session, "prompt", value = clarify_restore_prompt())
+    shinyjs::runjs('setTimeout(function(){ document.getElementById("prompt").focus(); }, 100);')
   })
 
   # --- Explain button --------------------------------------------------------
