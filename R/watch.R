@@ -437,7 +437,7 @@ helpdesk <- function(key = NULL) {
   assign("rh", raisehand, envir = .GlobalEnv)
 
   .watch_env$active <- TRUE
-  message("classmate helpdesk is running. Type raisehand() or rh() when you get stuck, endclass() to stop.")
+  message("classmate helpdesk is running. Type raisehand() or rh() if your code generates an error, or endclass() to stop.")
   invisible(NULL)
 }
 

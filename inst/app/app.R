@@ -1469,6 +1469,9 @@ ui <- fluidPage(
   div(style = paste0(
         "display: flex; align-items: center; justify-content: space-between;",
         "padding: 10px 0 4px 0; border-bottom: 1px solid #e3e3e3; margin-bottom: 12px;"),
+    div(style = "display: flex; align-items: center; gap: 10px;",
+      tags$img(src = "logo.png", height = "52px",
+        style = "mix-blend-mode: multiply; flex-shrink: 0;"),
     div(style = "display: flex; flex-direction: column; gap: 1px;",
       div(style = "display: flex; align-items: baseline; gap: 8px;",
         tags$h3("Classmate", style = "margin: 0;"),
@@ -1480,6 +1483,7 @@ ui <- fluidPage(
       tags$span(id = "student-mode-label",
         style = "color: #888; font-size: 0.75em; display: none;",
         "Student mode")
+    )
     ),
     tags$h3(id = "help-mode-label", "Help Mode",
             style = "margin: 0; display: none;"),
@@ -2318,6 +2322,10 @@ server <- function(input, output, session) {
       document.getElementById('clear_prompt').style.borderColor = '';
       document.getElementById('clear_prompt').style.color = '';
     ")
+    for (btn in c("help_toggle", "quick_console", "pause_app",
+                  "add_objects", "preferences", "change_key", "load_key_file_btn",
+                  "file_select", "load_workspace"))
+      shinyjs::enable(btn)
     if (!exceeded) {
       enable("ask_code")
       enable("ask_plain")

@@ -215,8 +215,8 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.66 (2026-07-17)  
-**Current version:** 0.5.66
+**Last released:** 0.5.67 (2026-07-17)  
+**Current version:** 0.5.67
 
 No unreleased changes.
 
@@ -258,3 +258,4 @@ No unreleased changes.
 | 0.5.64 | Startup disclaimer expanded to include privacy notice: data handling, Anthropic API processing, and AI policy guidance. Prompt box pre-filled with data protection notice on fresh open; Ask buttons frozen until Clear pressed |
 | 0.5.65 | Extended button freeze during protection notice: all buttons frozen except Quit and Clear; Clear highlighted yellow; Clear Workspace shown white during notice period |
 | 0.5.66 | Clear Workspace button changed to default white permanently (was orange); orange colouring removed |
+| 0.5.67 | Classmate logo (pineapple) added to top-left header, left of the Classmate title |
