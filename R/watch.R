@@ -1,11 +1,11 @@
 # ---------------------------------------------------------------------------
-# watch() / raisehand() / endclass() / reset_key()
+# helpdesk() / raisehand() / endclass() / reset_key()
 #
 # A lightweight background watcher that captures R errors and recent command
 # history, then explains them in plain English via Claude when the student
 # calls raisehand().  No Shiny UI — works entirely in the R console.
 #
-# Key sharing: uses the same active_config.rds and usage_log.rds as ask(),
+# Key sharing: uses the same active_config.rds and usage_log.rds as tutor(),
 # so a key loaded in either place is immediately available in the other.
 # ---------------------------------------------------------------------------
 
@@ -302,29 +302,29 @@
 }
 
 # ---------------------------------------------------------------------------
-# watch()
+# helpdesk()
 # ---------------------------------------------------------------------------
 
-#' Start watching for R errors
+#' Start the classmate helpdesk
 #'
 #' Runs silently in the background. After any error, type \code{raisehand()}
-#' for a plain-English explanation. Use \code{endclass()} to stop watching.
+#' for a plain-English explanation. Use \code{endclass()} to stop.
 #'
 #' @param key Path to a \code{.key} file supplied by your instructor, OR a
 #'   raw Anthropic API key string (\code{"sk-ant-..."}). If a key was already
-#'   loaded (in this session, a previous session, or via \code{ask()}), you can
+#'   loaded (in this session, a previous session, or via \code{tutor()}), you can
 #'   omit this argument.
 #' @return Invisible NULL (called for side effects).
 #' @export
-watch <- function(key = NULL) {
+helpdesk <- function(key = NULL) {
 
   if (.watch_env$active) {
-    message("classmate is already watching. Use endclass() to stop.")
+    message("classmate helpdesk is already running. Use endclass() to stop.")
     return(invisible(NULL))
   }
 
   # --- Preflight update check ------------------------------------------------
-  updated <- classmate_preflight(relaunch = "watch")
+  updated <- classmate_preflight(relaunch = "helpdesk")
   if (isTRUE(updated)) return(invisible(NULL))
 
   # --- Resolve API key -------------------------------------------------------
@@ -351,14 +351,14 @@ watch <- function(key = NULL) {
     }
   }
 
-  # 2. Saved student key from active_config.rds (written by ask() or prior watch())
+  # 2. Saved student key from active_config.rds (written by tutor() or prior helpdesk())
   if (is.null(api_key)) {
     cfg <- .watch_load_cfg()
     if (!is.null(cfg) && nzchar(cfg$api_key %||% ""))
       api_key <- cfg$api_key
   }
 
-  # 3. Environment variable (set by ask() for personal/non-student use)
+  # 3. Environment variable (set by tutor() for personal/non-student use)
   if (is.null(api_key)) {
     ev <- Sys.getenv("ANTHROPIC_API_KEY")
     if (nzchar(ev)) api_key <- ev
@@ -437,7 +437,7 @@ watch <- function(key = NULL) {
   assign("rh", raisehand, envir = .GlobalEnv)
 
   .watch_env$active <- TRUE
-  message("classmate is watching. Type raisehand() or rh() when you get stuck, endclass() to stop.")
+  message("classmate helpdesk is running. Type raisehand() or rh() when you get stuck, endclass() to stop.")
   invisible(NULL)
 }
 
@@ -458,7 +458,7 @@ watch <- function(key = NULL) {
 raisehand <- function() {
 
   if (!.watch_env$active) {
-    message("classmate is not watching. Start with watch().")
+    message("classmate helpdesk is not running. Start with helpdesk().")
     return(invisible(NULL))
   }
 
@@ -552,18 +552,18 @@ raisehand <- function() {
 #' Stop watching for R errors
 #'
 #' Removes the error hook and command history callback installed by
-#' \code{watch()}.
+#' \code{helpdesk()}.
 #'
 #' @return Invisible NULL (called for side effects).
 #' @export
 endclass <- function() {
   if (!.watch_env$active) {
-    message("classmate is not currently watching.")
+    message("classmate helpdesk is not currently running.")
     return(invisible(NULL))
   }
   options(error = .watch_env$original_error)
   tryCatch(removeTaskCallback(.watch_env$callback_id), error = function(e) NULL)
-  # Remove rh() shortcut unless it existed before watch() was called
+  # Remove rh() shortcut unless it existed before helpdesk() was called
   if (!isTRUE(.watch_env$rh_existed))
     if (exists("rh", .GlobalEnv, inherits = FALSE)) rm(list = "rh", envir = .GlobalEnv)
   .watch_env$active         <- FALSE
@@ -582,9 +582,9 @@ endclass <- function() {
 
 #' Clear the saved classmate key
 #'
-#' Removes the key file saved by \code{watch()} or \code{ask()} and unsets
+#' Removes the key file saved by \code{helpdesk()} or \code{tutor()} and unsets
 #' the \code{ANTHROPIC_API_KEY} environment variable. The next call to
-#' \code{watch()} or \code{ask()} will prompt for a new key.
+#' \code{helpdesk()} or \code{tutor()} will prompt for a new key.
 #'
 #' @return Invisible NULL (called for side effects).
 #' @export
@@ -607,7 +607,7 @@ reset_key <- function() {
   if (!removed) message("No saved key found.")
 
   if (.watch_env$active)
-    message("Note: classmate is still watching with the previous key until endclass() is called.")
+    message("Note: classmate helpdesk is still running with the previous key until endclass() is called.")
 
   invisible(NULL)
 }

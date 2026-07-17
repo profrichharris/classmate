@@ -11,5 +11,5 @@ Invisible NULL (called for side effects).
 }
 \description{
 Removes the error hook and command history callback installed by
-\code{watch()}.
+\code{helpdesk()}.
 }

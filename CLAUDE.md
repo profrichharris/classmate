@@ -8,7 +8,7 @@ This file is auto-loaded by Claude Code at session start. It captures the design
 
 ## What classmate is
 
-`classmate` is an R Shiny application that acts as an AI teaching assistant for students learning R. It wraps the Claude API (Anthropic) in a UI that runs inside RStudio. Students launch it with `ask()` from their R console.
+`classmate` is an R Shiny application that acts as an AI teaching assistant for students learning R. It wraps the Claude API (Anthropic) in a UI that runs inside RStudio. Students launch it with `tutor()` from their R console.
 
 The package is authored by Richard Harris (profrichharris@gmail.com) and is intended for use in university teaching. It is **not** a general-purpose AI chat tool — it is specifically scoped to helping students write and understand R code.
 
@@ -37,9 +37,9 @@ Help mode is toggled by the `?` button and overlays black help labels on every U
 ```
 classmate/
   R/
-    ask_claude.R        # ask() entry point, preflight update check, %||%
+    ask_claude.R        # tutor() entry point, preflight update check, %||%
     instructor.R        # classmate_make_key(), classmate_config_show()
-    watch.R             # watch() / raisehand() / endclass() / reset_key()
+    watch.R             # helpdesk() / raisehand() / endclass() / reset_key()
   inst/app/
     app.R               # ALL UI + server logic (single large file)
   DESCRIPTION
@@ -82,7 +82,7 @@ Everything interesting is in `inst/app/app.R`. It is a single-file Shiny app.
 - A modal REPL that also runs in `globalenv()` — same workspace, no syncing needed.
 - The main app is frozen (modal open, `shinyjs` disables buttons) while Quick Console is active.
 - `setTimeLimit(elapsed = 30, transient = TRUE)` enforces a 30-second timeout.
-- `q()`, `quit()`, `stopApp()`, and `ask()` are temporarily shadowed in globalenv with informative messages (no harmful side effects).
+- `q()`, `quit()`, `stopApp()`, and `tutor()` are temporarily shadowed in globalenv with informative messages (no harmful side effects).
 - History displayed as blue prompts / coloured output (red for errors).
 - Ctrl+Enter / Cmd+Enter submits from the Ace editor.
 
@@ -215,10 +215,10 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.61 (2026-07-17)  
-**Current version:** 0.5.62 (unreleased)
+**Last released:** 0.5.62 (2026-07-17)  
+**Current version:** 0.5.63 (unreleased)
 
-**Unreleased changes (0.5.62):** Research integrity and disclosure risk rules added to system prompt; `DISCLOSURE_RISK` response sentinel detected and shown as a modal (reuses `clarify_modify_prompt` handler).
+**Unreleased changes (0.5.63):** `ask()` renamed to `tutor()`; `watch()` renamed to `helpdesk()`. NAMESPACE regenerated. DESIGN.md and SECURITY.md added.
 
 ---
 
@@ -254,3 +254,4 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 | 0.5.60 | Please Clarify modal: NEEDS_CLARIFICATION response triggers a modal with reason + suggestions; Modify Prompt button restores prompt and focuses input |
 | 0.5.61 | Data minimisation: workspace objects sent as schema-only (no str() values); console output scrubbed of table rows and str() lines; headerless file detection warns user; same scrubbing in watch()/raisehand() |
 | 0.5.62 | Research integrity rule + disclosure risk rule in system prompt; DISCLOSURE_RISK sentinel triggers modal with Modify Prompt button |
+| 0.5.63 | `ask()` → `tutor()`; `watch()` → `helpdesk()`; DESIGN.md and SECURITY.md added to repo |

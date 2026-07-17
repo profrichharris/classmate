@@ -2,7 +2,7 @@
 
 CLASSMATE_GITHUB_REPO <- "profrichharris/classmate"
 
-#' Launch the Classmate AI assistant Shiny app
+#' Launch the Classmate AI tutor Shiny app
 #'
 #' Opens a Shiny front-end that connects students to Claude AI directly from
 #' their R session. Any missing dependencies (shiny, shinyjs, shinyFiles,
@@ -16,9 +16,9 @@ CLASSMATE_GITHUB_REPO <- "profrichharris/classmate"
 #' @export
 #' @examples
 #' \dontrun{
-#' ask()
+#' tutor()
 #' }
-ask <- function() {
+tutor <- function() {
 
   # --- Dependency checks and installation ------------------------------------
   cran_pkgs <- c("shiny", "shinyjs", "shinyFiles", "callr", "rstudioapi", "httr2")
@@ -31,7 +31,7 @@ ask <- function() {
 
   # --- Preflight: check for updates (once per R session, not after a Pause) -
   updated <- classmate_preflight()
-  if (isTRUE(updated)) return(invisible(NULL))   # new ask() launched inside preflight
+  if (isTRUE(updated)) return(invisible(NULL))   # new tutor() launched inside preflight
 
   # --- Pass the caller's working directory to the app -----------------------
   options(.classmate_project_root = getwd())
@@ -49,10 +49,10 @@ ask <- function() {
 
 # ---------------------------------------------------------------------------
 # Preflight update check
-# Returns TRUE if a new version was installed and a fresh ask() was launched.
+# Returns TRUE if a new version was installed and a fresh tutor() was launched.
 # Returns FALSE (silently) in every other case, including all error paths.
 # ---------------------------------------------------------------------------
-classmate_preflight <- function(relaunch = "ask") {
+classmate_preflight <- function(relaunch = "tutor") {
 
   # Already checked this session, or this is a post-update re-entry
   if (isTRUE(getOption("classmate.update_checked"))) return(FALSE)
@@ -96,12 +96,12 @@ classmate_preflight <- function(relaunch = "ask") {
 
 # ---------------------------------------------------------------------------
 # Downloads and installs the new version silently, then relaunches.
-# relaunch = "ask"   → calls classmate::ask()
-# relaunch = "watch" → calls classmate::watch()
+# relaunch = "tutor"    → calls classmate::tutor()
+# relaunch = "helpdesk" → calls classmate::helpdesk()
 # Returns TRUE on success, FALSE if anything goes wrong (caller continues
 # with the existing version in that case).
 # ---------------------------------------------------------------------------
-classmate_do_update <- function(latest_version, download_url, relaunch = "ask") {
+classmate_do_update <- function(latest_version, download_url, relaunch = "tutor") {
 
   success <- tryCatch({
     tmp <- tempfile(fileext = ".tar.gz")
@@ -127,11 +127,11 @@ classmate_do_update <- function(latest_version, download_url, relaunch = "ask") 
     return(FALSE)
   }
 
-  relaunch_fn  <- if (relaunch == "watch") "watch" else "ask"
-  relaunch_msg <- if (relaunch == "watch")
-    paste0("Classmate updated to v", latest_version, ". Please call watch() to continue.")
+  relaunch_fn  <- if (relaunch == "helpdesk") "helpdesk" else "tutor"
+  relaunch_msg <- if (relaunch == "helpdesk")
+    paste0("Classmate updated to v", latest_version, ". Please call helpdesk() to continue.")
   else
-    paste0("Classmate updated to v", latest_version, ". Please call ask() to launch.")
+    paste0("Classmate updated to v", latest_version, ". Please call tutor() to launch.")
 
   tryCatch({
     if ("package:classmate" %in% search())
