@@ -282,17 +282,20 @@ extract_file_schema <- function(path) {
   tryCatch({
     switch(ext,
       csv = {
-        df <- utils::read.csv(path, nrow = 0, check.names = FALSE)
-        list(type = "CSV", cols = names(df))
+        df   <- utils::read.csv(path, nrow = 0, check.names = FALSE)
+        cols <- names(df)
+        list(type = "CSV", cols = cols, suspicious = detect_suspicious_headers(cols))
       },
       tsv = , txt = {
-        df <- utils::read.delim(path, nrow = 0, check.names = FALSE)
-        list(type = "TSV", cols = names(df))
+        df   <- utils::read.delim(path, nrow = 0, check.names = FALSE)
+        cols <- names(df)
+        list(type = "TSV", cols = cols, suspicious = detect_suspicious_headers(cols))
       },
       xlsx = , xls = {
         if (!requireNamespace("readxl", quietly = TRUE)) return(NULL)
-        df <- readxl::read_excel(path, n_max = 0)
-        list(type = "Excel", cols = names(df))
+        df   <- readxl::read_excel(path, n_max = 0)
+        cols <- names(df)
+        list(type = "Excel", cols = cols, suspicious = detect_suspicious_headers(cols))
       },
       rds = {
         schema_from_r_object(readRDS(path))
@@ -370,20 +373,85 @@ format_schema_line <- function(label, schema, max_cols = 100) {
   omitted  <- max(0L, n_cols - max_cols)
   col_str  <- paste(cols[seq_len(min(n_cols, max_cols))], collapse = ", ")
   if (omitted > 0) col_str <- paste0(col_str, " ... and ", omitted, " more")
-  paste0("- ", label, " [", type_str, ", ", nrow_str, n_cols,
-         " column", if (n_cols != 1) "s" else "", ": ", col_str, "]")
+  line <- paste0("- ", label, " [", type_str, ", ", nrow_str, n_cols,
+                 " column", if (n_cols != 1) "s" else "", ": ", col_str, "]")
+  if (isTRUE(schema$suspicious))
+    line <- paste0(line, " [WARNING: these may be data values, not column headers — file may lack a header row]")
+  line
 }
 
 summarise_workspace_object <- function(obj_name, envir = .GlobalEnv) {
   if (!exists(obj_name, envir = envir, inherits = FALSE))
     return(paste0("`", obj_name, "`: [no longer exists in workspace]"))
-  obj <- get(obj_name, envir = envir, inherits = FALSE)
-  raw_str <- paste(
-    capture.output(str(obj, max.level = 2, give.attr = FALSE, list.len = 20)),
-    collapse = "\n"
-  )
-  if (nchar(raw_str) > 2000) raw_str <- paste0(substr(raw_str, 1, 2000), "\n... [truncated]")
-  paste0("`", obj_name, "`:\n", raw_str)
+  obj    <- get(obj_name, envir = envir, inherits = FALSE)
+  schema <- schema_from_r_object(obj)
+  type_str <- schema$type %||% paste(class(obj), collapse = "/")
+  header <- if (!is.null(schema$nrow)) {
+    paste0("`", obj_name, "` [", type_str, ", ",
+           format(schema$nrow, big.mark = ","), " rows, ",
+           length(schema$cols %||% character(0)), " columns]")
+  } else {
+    paste0("`", obj_name, "` [", type_str, "]")
+  }
+  if (!is.null(schema$cols) && length(schema$cols) > 0) {
+    n       <- length(schema$cols)
+    shown   <- min(n, 50L)
+    col_str <- paste(schema$cols[seq_len(shown)], collapse = ", ")
+    if (n > shown) col_str <- paste0(col_str, " ... and ", n - shown, " more")
+    paste0(header, "\n  columns: ", col_str)
+  } else {
+    header
+  }
+}
+
+scrub_console_output <- function(text) {
+  if (!nzchar(trimws(text))) return(text)
+  lines <- strsplit(text, "\n", fixed = TRUE)[[1]]
+  # Data frame printed rows: line starts with optional whitespace, an integer row
+  # index, then more whitespace and a non-whitespace value.
+  # Exclude lines like "1 warning message:" which begin with an integer but are not data.
+  is_df_row <- grepl("^\\s*\\d+\\s+\\S", lines) &
+               !grepl("^\\s*\\d+\\s+(warning|error|message)s?\\b", lines, ignore.case = TRUE)
+  # str() output lines that show actual values: " $ varname: type val ..."
+  is_str_row <- grepl("^\\s+\\$\\s+\\S+\\s*:", lines)
+
+  result <- character(0)
+  i <- 1L
+  while (i <= length(lines)) {
+    if (is_str_row[i]) {
+      # Find the run of str() lines and suppress the whole block
+      j <- i
+      while (j <= length(lines) && is_str_row[j]) j <- j + 1L
+      n <- j - i
+      result <- c(result, paste0("[", n, " variable", if (n != 1L) "s" else "",
+                                 " — values not shown]"))
+      i <- j
+    } else if (is_df_row[i]) {
+      # Find the run of data rows; suppress only if 2+ consecutive
+      j <- i
+      while (j <= length(lines) && is_df_row[j]) j <- j + 1L
+      n <- j - i
+      if (n >= 2L) {
+        result <- c(result, paste0("[", n, " rows of data — values not shown]"))
+      } else {
+        result <- c(result, lines[i])
+      }
+      i <- j
+    } else {
+      result <- c(result, lines[i])
+      i <- i + 1L
+    }
+  }
+  paste(result, collapse = "\n")
+}
+
+detect_suspicious_headers <- function(cols) {
+  if (length(cols) == 0L) return(FALSE)
+  n_numeric <- sum(grepl("^-?[0-9]+\\.?[0-9]*$", cols))
+  n_date    <- sum(grepl("^\\d{1,2}[/\\-]\\d{1,2}[/\\-]\\d{2,4}$", cols) |
+                   grepl("^\\d{4}[/\\-]\\d{2}[/\\-]\\d{2}$", cols))
+  n_long    <- sum(nchar(cols) > 40L)
+  (n_numeric / length(cols) > 0.5) || (n_date > 0L) || (n_long > 1L)
 }
 
 build_user_message <- function(file_paths, object_names = character(0), current_code,
@@ -419,9 +487,10 @@ build_user_message <- function(file_paths, object_names = character(0), current_
       current_code, "\n```"
     ))
   }
-  # Include the last R console output so Claude can see what the code produced
-  # (e.g. column names, summaries) and use that context in the next reply.
-  console_text <- paste(last_console_output, collapse = "\n")
+  # Include the last R console output so Claude can see what the code produced.
+  # Data values (printed table rows, str() variable lines) are scrubbed first
+  # so that individual records never leave the user's machine.
+  console_text <- scrub_console_output(paste(last_console_output, collapse = "\n"))
   if (nzchar(trimws(console_text))) {
     pieces <- c(pieces, paste0(
       "The R console output from the most recent code run was:\n```\n",
@@ -2860,6 +2929,16 @@ server <- function(input, output, session) {
     if (length(new_paths) > 0) {
       new_schemas <- lapply(new_paths, extract_file_schema)
       names(new_schemas) <- new_paths
+      suspicious <- new_paths[vapply(new_schemas,
+                                     function(s) isTRUE(s$suspicious), logical(1))]
+      for (p in suspicious) {
+        showNotification(
+          paste0("⚠ ", basename(p), " may not have column headers — ",
+                 "the first row looks like data, not variable names. ",
+                 "If so, load it in R with header=FALSE and add the object to the context instead."),
+          type = "warning", duration = 12
+        )
+      }
       cache <- c(cache, new_schemas)
     }
     stale <- setdiff(names(cache), paths)

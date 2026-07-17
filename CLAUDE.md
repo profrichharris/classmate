@@ -213,10 +213,10 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.59 (2026-07-14)  
-**Current version:** 0.5.60 (unreleased)
+**Last released:** 0.5.60 (2026-07-17)  
+**Current version:** 0.5.61 (unreleased)
 
-**Unreleased changes (0.5.60):** Please Clarify modal — when the AI determines the prompt is too vague to write grounded code (NEEDS_CLARIFICATION response), a modal is shown with the reason and suggestions. "Modify Prompt" restores the prompt text and closes the modal. No quota consumed, no conversation history recorded.
+**Unreleased changes (0.5.61):** Data minimisation — table values never sent to API. `summarise_workspace_object()` replaced `str()` with schema-only output (type, dimensions, column names). `scrub_console_output()` filters printed data frame rows and `str()` value lines from console context. Headerless file detection warns user when column names look like data values. Same scrubbing applied to error messages in `watch()` / `raisehand()`.
 
 ---
 
@@ -250,3 +250,4 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 | 0.5.55 | Quick Console plot capture: plots open in dedicated modal; Close returns to console |
 | 0.5.56–0.5.59 | watch() preflight update check; rh() shortcut; raisehand() uses Haiku with plain-text system prompt; NAMESPACE managed by roxygen2 |
 | 0.5.60 | Please Clarify modal: NEEDS_CLARIFICATION response triggers a modal with reason + suggestions; Modify Prompt button restores prompt and focuses input |
+| 0.5.61 | Data minimisation: workspace objects sent as schema-only (no str() values); console output scrubbed of table rows and str() lines; headerless file detection warns user; same scrubbing in watch()/raisehand() |

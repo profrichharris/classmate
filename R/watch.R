@@ -135,6 +135,42 @@
   }
 }
 
+.watch_scrub_error_message <- function(msg) {
+  # Strip any embedded data values from error messages.
+  # Errors like 'value "John Smith" not found' are left intact (the quoted
+  # value is incidental and useful for diagnosis); but multi-line error output
+  # that contains printed table rows is scrubbed.
+  if (!nzchar(trimws(msg))) return(msg)
+  lines      <- strsplit(msg, "\n", fixed = TRUE)[[1]]
+  is_df_row  <- grepl("^\\s*\\d+\\s+\\S", lines) &
+                !grepl("^\\s*\\d+\\s+(warning|error|message)s?\\b", lines,
+                        ignore.case = TRUE)
+  is_str_row <- grepl("^\\s+\\$\\s+\\S+\\s*:", lines)
+  result <- character(0)
+  i <- 1L
+  while (i <= length(lines)) {
+    if (is_str_row[i]) {
+      j <- i; while (j <= length(lines) && is_str_row[j]) j <- j + 1L
+      n <- j - i
+      result <- c(result, paste0("[", n, " variable", if (n != 1L) "s" else "",
+                                 " — values not shown]"))
+      i <- j
+    } else if (is_df_row[i]) {
+      j <- i; while (j <= length(lines) && is_df_row[j]) j <- j + 1L
+      n <- j - i
+      if (n >= 2L) {
+        result <- c(result, paste0("[", n, " rows of data — values not shown]"))
+      } else {
+        result <- c(result, lines[i])
+      }
+      i <- j
+    } else {
+      result <- c(result, lines[i]); i <- i + 1L
+    }
+  }
+  paste(result, collapse = "\n")
+}
+
 .watch_format_workspace <- function(ws) {
   if (length(ws) == 0) return("(workspace is empty)")
   lines <- vapply(names(ws), function(nm) {
@@ -473,7 +509,7 @@ raisehand <- function() {
     "Recent commands (oldest to newest):\n",
     paste(history_lines, collapse = "\n"),
     "\n\nError message:\n",
-    trimws(e$message),
+    .watch_scrub_error_message(trimws(e$message)),
     "\n\nCall stack at time of error:\n",
     tb_lines,
     "\n\nWorkspace at time of error:\n",
