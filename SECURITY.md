@@ -148,7 +148,7 @@ On every fresh launch of the app (not on pause-resume), the prompt input box is 
 >
 > *Press Clear to continue.*
 
-The **Ask** and **Ask for Code** buttons are disabled until the student presses the **Clear** button, removing the notice. This ensures the student actively reads and dismisses the reminder before submitting any prompt. It appears on every fresh launch — not just once — to make data protection awareness a habitual part of the workflow.
+Every button in the app is disabled until the student presses **Clear** — with the sole exception of **Quit**. This includes the Ask, Ask for Code, Run, Explain, Fix, New Conversation, Add files, Add objects, Load Workspace, Clear Workspace, Quick Console, Save &amp; Pause, Preferences, and key-management buttons. During this period, the **Clear** button is highlighted in yellow to draw attention to it, and the **Clear Workspace** button is shown in white (its normal orange colour is suppressed) so that students are not misled into pressing the wrong button. This ensures the student actively reads and dismisses the reminder before doing anything else in the app. It appears on every fresh launch — not just once — to make data protection awareness a habitual part of the workflow.
 
 ---
 
@@ -182,4 +182,4 @@ For universities deploying classmate to students, we recommend the following ste
 | Research integrity | Enforced by AI system prompt rule |
 | Automatic expiry of student access | Yes — encoded in student key |
 | Student awareness — session start | Privacy and AI policy notice displayed; student must acknowledge before proceeding |
-| Student awareness — every prompt | Data protection reminder pre-filled in prompt box; Ask buttons frozen until dismissed |
+| Student awareness — every prompt | Data protection reminder pre-filled in prompt box; all buttons frozen until dismissed (Quit excepted); Clear highlighted yellow |

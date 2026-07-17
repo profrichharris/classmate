@@ -1546,8 +1546,7 @@ ui <- fluidPage(
         shinyFilesButton("load_workspace", "Load Workspace",
           title = "Select a workspace file (.RData / .rda)", multiple = FALSE),
         tags$span(style = "display: inline-block; width: 4px;"),
-        actionButton("clear_workspace", "Clear Workspace",
-          style = "background-color: #e67e22; border-color: #ca6f1e; color: white;")
+        actionButton("clear_workspace", "Clear Workspace")
       ),
       column(4,
         disabled(actionButton("remove_context", "Remove checked")),
@@ -2299,7 +2298,27 @@ server <- function(input, output, session) {
     } else {
       disable("load_script")
     }
-    if (!exceeded && !protection_notice_active()) {
+    if (protection_notice_active()) {
+      for (btn in c("ask_plain", "ask_code", "explain_code", "fix_code", "run_code",
+                    "load_script", "save_block", "help_toggle",
+                    "quick_console", "pause_app", "clear_workspace", "new_conversation",
+                    "add_objects", "remove_context", "remove_all_context",
+                    "preferences", "change_key", "load_key_file_btn",
+                    "file_select", "load_workspace"))
+        shinyjs::disable(btn)
+      shinyjs::runjs("
+        document.getElementById('clear_prompt').style.backgroundColor = '#f1c40f';
+        document.getElementById('clear_prompt').style.borderColor = '#d4ac0d';
+        document.getElementById('clear_prompt').style.color = '#000000';
+      ")
+      return()
+    }
+    shinyjs::runjs("
+      document.getElementById('clear_prompt').style.backgroundColor = '';
+      document.getElementById('clear_prompt').style.borderColor = '';
+      document.getElementById('clear_prompt').style.color = '';
+    ")
+    if (!exceeded) {
       enable("ask_code")
       enable("ask_plain")
     } else {

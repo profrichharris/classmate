@@ -169,7 +169,7 @@ Accessible via the Preferences modal. Persisted to `tools::R_user_dir("classmate
 
 | Button | Frozen when |
 |--------|-------------|
-| Ask / Ask for Code | `ui_busy` is TRUE |
+| Ask / Ask for Code | `ui_busy` is TRUE, or `protection_notice_active` is TRUE |
 | Run | `ui_busy` TRUE, or editor content matches `last_run_code` |
 | Save Code Log | No entries in `all_log_entries` |
 | Save Code Block | Not on Code tab, or `ui_busy` TRUE |
@@ -215,10 +215,10 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.63 (2026-07-17)  
-**Current version:** 0.5.64 (unreleased)
+**Last released:** 0.5.66 (2026-07-17)  
+**Current version:** 0.5.66
 
-**Unreleased changes (0.5.64): Startup disclaimer expanded to include privacy notice — data handling, Anthropic API processing, and AI policy guidance.
+No unreleased changes.
 
 ---
 
@@ -255,4 +255,6 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 | 0.5.61 | Data minimisation: workspace objects sent as schema-only (no str() values); console output scrubbed of table rows and str() lines; headerless file detection warns user; same scrubbing in watch()/raisehand() |
 | 0.5.62 | Research integrity rule + disclosure risk rule in system prompt; DISCLOSURE_RISK sentinel triggers modal with Modify Prompt button |
 | 0.5.63 | `ask()` → `tutor()`; `watch()` → `helpdesk()`; DESIGN.md and SECURITY.md added to repo |
-| 0.5.64 | Startup disclaimer expanded to include privacy notice: data handling, Anthropic API processing, and AI policy guidance |
+| 0.5.64 | Startup disclaimer expanded to include privacy notice: data handling, Anthropic API processing, and AI policy guidance. Prompt box pre-filled with data protection notice on fresh open; Ask buttons frozen until Clear pressed |
+| 0.5.65 | Extended button freeze during protection notice: all buttons frozen except Quit and Clear; Clear highlighted yellow; Clear Workspace shown white during notice period |
+| 0.5.66 | Clear Workspace button changed to default white permanently (was orange); orange colouring removed |
