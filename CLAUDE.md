@@ -215,10 +215,10 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.62 (2026-07-17)  
-**Current version:** 0.5.63 (unreleased)
+**Last released:** 0.5.63 (2026-07-17)  
+**Current version:** 0.5.64 (unreleased)
 
-**Unreleased changes (0.5.63):** `ask()` renamed to `tutor()`; `watch()` renamed to `helpdesk()`. NAMESPACE regenerated. DESIGN.md and SECURITY.md added.
+**Unreleased changes (0.5.64): Startup disclaimer expanded to include privacy notice — data handling, Anthropic API processing, and AI policy guidance.
 
 ---
 
@@ -255,3 +255,4 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 | 0.5.61 | Data minimisation: workspace objects sent as schema-only (no str() values); console output scrubbed of table rows and str() lines; headerless file detection warns user; same scrubbing in watch()/raisehand() |
 | 0.5.62 | Research integrity rule + disclosure risk rule in system prompt; DISCLOSURE_RISK sentinel triggers modal with Modify Prompt button |
 | 0.5.63 | `ask()` → `tutor()`; `watch()` → `helpdesk()`; DESIGN.md and SECURITY.md added to repo |
+| 0.5.64 | Startup disclaimer expanded to include privacy notice: data handling, Anthropic API processing, and AI policy guidance |

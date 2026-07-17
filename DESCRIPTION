@@ -1,6 +1,6 @@
 Package: classmate
 Title: AI Assistant for Teaching R
-Version: 0.5.63
+Version: 0.5.64
 Authors@R:
     person("Richard", "Harris", email = "profrichharris@gmail.com",
            role = c("aut", "cre"))

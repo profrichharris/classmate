@@ -1668,16 +1668,33 @@ server <- function(input, output, session) {
     showModal(modalDialog(
       title = "Before you begin",
       tags$p(
-        "Classmate is intended to support your learning, but not to replace it.",
-        "It is powered by Claude AI and can generate errors.",
-        "Please use it thoughtfully and with appropriate caution."
+        "classmate uses Anthropic's Claude AI (operated by Anthropic, Inc., USA)",
+        "to help you with your R code. Before continuing, please note:"
       ),
-      tags$p(tags$strong("Important:"),
-        "Using this app may, in some circumstances, conflict with your institution's",
-        "requirements on the use of AI in assessment or other tasks.",
-        "If in doubt, please seek guidance.",
-        "Responsibility for appropriate use lies with the user."
+      tags$ul(
+        tags$li(
+          "Your prompts and any R code you write are sent to Anthropic's servers",
+          "for processing. classmate is designed to minimise what is shared —",
+          "only your questions, code, and variable names are transmitted;",
+          "your actual data values are not."
+        ),
+        tags$li(
+          "Do not include personal information about yourself or others in your",
+          "prompts, and avoid working with datasets that contain identifiable",
+          "personal data during this session."
+        ),
+        tags$li(
+          "Use of classmate must comply with your university's policies on the",
+          "use of AI tools in academic work. If you are unsure whether AI",
+          "assistance is permitted for a particular assessment, check with your",
+          "module leader before proceeding."
+        ),
+        tags$li(
+          "Anthropic does not use API interactions to train its models.",
+          "Data is retained for up to 30 days for safety monitoring and then deleted."
+        )
       ),
+      tags$p(tags$em("By continuing, you acknowledge that you have read and understood the above.")),
       footer = div(style = "display: flex; justify-content: space-between; width: 100%;",
         actionButton("disclaimer_ok",   "I understand", class = "btn-primary"),
         actionButton("disclaimer_quit", "Quit",         class = "btn-danger")
