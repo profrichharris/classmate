@@ -1733,6 +1733,19 @@ server <- function(input, output, session) {
     }, once = TRUE)
   }
 
+  # On every fresh open (not a pause-resume), pre-fill the prompt box with the
+  # data-protection notice and freeze Ask/Ask for Code until the student clears it.
+  .PROTECTION_NOTICE <- paste0(
+    "Always prioritise data protection. Never include personal data or information ",
+    "in your prompts, and do not make any reference to real individuals.\n\n",
+    "Press Clear to continue."
+  )
+  if (!.resuming_pause) {
+    session$onFlushed(function() {
+      updateTextAreaInput(session, "prompt", value = .PROTECTION_NOTICE)
+    }, once = TRUE)
+  }
+
   current_spend <- reactive({
     if (app_mode() != "student") return(0)
     period_spend(usage_log_rv(), reset_period_val())
@@ -2243,6 +2256,8 @@ server <- function(input, output, session) {
   last_run_failed <- reactiveVal(FALSE)
   last_run_code   <- reactiveVal(NULL)
   ui_busy         <- reactiveVal(FALSE)
+  # TRUE on a fresh open; FALSE on pause-resume. Cleared when the student presses Clear.
+  protection_notice_active <- reactiveVal(!.resuming_pause)
   observe({
     if (ui_busy()) {
       for (btn in c("ask_plain", "ask_code", "explain_code", "fix_code", "run_code",
@@ -2284,7 +2299,7 @@ server <- function(input, output, session) {
     } else {
       disable("load_script")
     }
-    if (!exceeded) {
+    if (!exceeded && !protection_notice_active()) {
       enable("ask_code")
       enable("ask_plain")
     } else {
@@ -3311,6 +3326,7 @@ server <- function(input, output, session) {
   observeEvent(input$clear_prompt, {
     hide_changes_tab()
     updateTextAreaInput(session, "prompt", value = "")
+    if (protection_notice_active()) protection_notice_active(FALSE)
   })
 
   do_new_conversation_reset <- function() {
