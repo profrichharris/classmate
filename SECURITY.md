@@ -124,6 +124,34 @@ The key file is stored locally on the student's machine in R's standard user con
 
 ---
 
+## Student awareness — built-in prompts
+
+In addition to technical safeguards, classmate includes two in-app prompts designed to keep students aware of their data protection responsibilities.
+
+### Session startup disclaimer
+
+Every time a student opens the app for the first time in an R session, a modal dialog is displayed before they can proceed. It informs them that:
+
+- Their prompts and code are processed by Anthropic's Claude API (Anthropic, Inc., USA)
+- Only questions, code, and variable names are transmitted — data values are not
+- They must not include personal information in their prompts or work with identifiable personal data
+- Use of classmate must comply with the university's AI policies; students should check with their module leader if unsure about a specific assessment
+- Anthropic does not use API interactions for training; data is deleted after 30 days
+
+The student must click **I understand** to proceed, or **Quit** to exit. This dialog does not reappear if the student pauses and resumes the same session.
+
+### Prompt box data protection notice
+
+On every fresh launch of the app (not on pause-resume), the prompt input box is pre-filled with the following text:
+
+> *Always prioritise data protection. Never include personal data or information in your prompts, and do not make any reference to real individuals.*
+>
+> *Press Clear to continue.*
+
+The **Ask** and **Ask for Code** buttons are disabled until the student presses the **Clear** button, removing the notice. This ensures the student actively reads and dismisses the reminder before submitting any prompt. It appears on every fresh launch — not just once — to make data protection awareness a habitual part of the workflow.
+
+---
+
 ## Recommendations for institutional deployment
 
 For universities deploying classmate to students, we recommend the following steps:
@@ -132,13 +160,11 @@ For universities deploying classmate to students, we recommend the following ste
 
 2. **Consider Zero Data Retention.** If your institution's data protection policy requires that personal data not be retained beyond the point of processing, request ZDR as part of the Anthropic enterprise agreement.
 
-3. **Include classmate in your privacy notice.** Students should be informed, via the course privacy notice, that their prompts and code are processed by the Claude API (operated by Anthropic, Inc., USA), and that classmate is designed to minimise the personal data involved in those requests.
+3. **Include classmate in your privacy notice.** Students are already informed within the app itself (see above), but the course privacy notice should also reference the use of Anthropic's Claude API so that students have a record they can refer to outside the app.
 
-4. **Instruct students not to include personal data in prompts.** The technical safeguards described in this document are substantial, but the most robust protection is student awareness. Advise students to work with anonymised or synthetic data during learning exercises, and to avoid referencing real individuals in their prompts.
+4. **Use the student key system.** Do not give students raw Anthropic API keys. The student key system enforces usage limits, enables automatic expiry, and means that students never hold credentials that could be misused beyond the classmate context.
 
-5. **Use the student key system.** Do not give students raw Anthropic API keys. The student key system enforces usage limits, enables automatic expiry, and means that students never hold credentials that could be misused beyond the classmate context.
-
-6. **Use the non-student key for instructor access.** Instructors and developers who need unrestricted access should use their own Anthropic API key directly, not a student key. This keeps student quota separate from instructor use.
+5. **Use the non-student key for instructor access.** Instructors and developers who need unrestricted access should use their own Anthropic API key directly, not a student key. This keeps student quota separate from instructor use.
 
 ---
 
@@ -155,3 +181,5 @@ For universities deploying classmate to students, we recommend the following ste
 | GDPR basis | Data Processing Agreement with Anthropic |
 | Research integrity | Enforced by AI system prompt rule |
 | Automatic expiry of student access | Yes — encoded in student key |
+| Student awareness — session start | Privacy and AI policy notice displayed; student must acknowledge before proceeding |
+| Student awareness — every prompt | Data protection reminder pre-filled in prompt box; Ask buttons frozen until dismissed |
