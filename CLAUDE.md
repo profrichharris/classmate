@@ -110,6 +110,8 @@ Key rules passed to Claude with every request:
 6. **SCOPE RULE** — if the request has no R angle, respond with exactly `OUT_OF_SCOPE`.
 7. **PACKAGE LOADING RULE** — always `library()` every package used; skip already-loaded ones; use `# github: user/repo` comment for non-CRAN packages.
 8. **CLARITY RULE** — if the prompt cannot be grounded in the student's actual data/objects (no context, or context exists but specific variables cannot be identified), respond with `NEEDS_CLARIFICATION` / `REASON:` / `SUGGESTIONS:` instead of code. Do not trigger for unspecified plot/model type if data and variables are clear — pick a sensible default.
+9. **RESEARCH INTEGRITY RULE** — use statistically appropriate methods; report results honestly; never fabricate or misrepresent data; produce truthful visualisations; note concerns briefly if a request would lead to misleading analysis.
+10. **DISCLOSURE RISK RULE** — never generate code that would produce a publishable/exportable output containing named individuals alongside personal attributes. Respond with `DISCLOSURE_RISK` / `REASON:` instead. Console exploration (`head()`, `str()`, `summary()`) is acceptable.
 
 Model used: `claude-sonnet-4-6` (Sonnet). Haiku (`claude-haiku-4-5-20251001`) is used only for comment-density rewrites (fast, low-stakes task).
 
@@ -213,10 +215,10 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.60 (2026-07-17)  
-**Current version:** 0.5.61 (unreleased)
+**Last released:** 0.5.61 (2026-07-17)  
+**Current version:** 0.5.62 (unreleased)
 
-**Unreleased changes (0.5.61):** Data minimisation — table values never sent to API. `summarise_workspace_object()` replaced `str()` with schema-only output (type, dimensions, column names). `scrub_console_output()` filters printed data frame rows and `str()` value lines from console context. Headerless file detection warns user when column names look like data values. Same scrubbing applied to error messages in `watch()` / `raisehand()`.
+**Unreleased changes (0.5.62):** Research integrity and disclosure risk rules added to system prompt; `DISCLOSURE_RISK` response sentinel detected and shown as a modal (reuses `clarify_modify_prompt` handler).
 
 ---
 
@@ -251,3 +253,4 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 | 0.5.56–0.5.59 | watch() preflight update check; rh() shortcut; raisehand() uses Haiku with plain-text system prompt; NAMESPACE managed by roxygen2 |
 | 0.5.60 | Please Clarify modal: NEEDS_CLARIFICATION response triggers a modal with reason + suggestions; Modify Prompt button restores prompt and focuses input |
 | 0.5.61 | Data minimisation: workspace objects sent as schema-only (no str() values); console output scrubbed of table rows and str() lines; headerless file detection warns user; same scrubbing in watch()/raisehand() |
+| 0.5.62 | Research integrity rule + disclosure risk rule in system prompt; DISCLOSURE_RISK sentinel triggers modal with Modify Prompt button |

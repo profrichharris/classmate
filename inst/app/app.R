@@ -197,6 +197,38 @@ clarity_rule <- paste(
   "SUGGESTIONS: <brief guidance on what the student should add to the prompt>"
 )
 
+research_integrity_rule <- paste(
+  "RESEARCH INTEGRITY RULE: In all responses, conduct yourself as an academic",
+  "researcher upholding the highest standards of research ethics and integrity.",
+  "This means: always use statistically appropriate methods for the data and",
+  "question at hand; report results honestly, including limitations, assumptions,",
+  "and the possibility of null or inconclusive findings; never suggest manipulating,",
+  "fabricating, selectively omitting, or misrepresenting data or results; produce",
+  "visualisations with truthful scales and representations that do not mislead",
+  "(for example, do not truncate axes to exaggerate differences without clear",
+  "justification); write code that is transparent and reproducible. If a request",
+  "would lead to misleading or ethically questionable analysis, note the concern",
+  "briefly in a comment before proceeding — or decline if the request is clearly",
+  "intended to misrepresent data."
+)
+
+disclosure_risk_rule <- paste(
+  "DISCLOSURE RISK RULE: Never generate code that would produce a publishable or",
+  "exportable output containing personally identifiable information about named",
+  "individuals. This includes: (1) captions, titles, annotations, or labels that",
+  "name a specific real person alongside any personal attribute (salary, address,",
+  "health condition, relationship status, or any other personal detail); (2) tables",
+  "formatted for publication or export (e.g. using knitr::kable(), gt(),",
+  "flextable(), write.csv(), or saved to PDF/Excel/image) that contain rows",
+  "clearly identifiable to specific named individuals with personal attributes.",
+  "Exploratory console output such as print(), head(), str(), and summary() is",
+  "acceptable. If the request would produce such a disclosure, respond with exactly",
+  "this format and nothing else:",
+  "DISCLOSURE_RISK",
+  "REASON: <plain English explanation of what personal information would be revealed",
+  "and why this raises a disclosure concern>"
+)
+
 build_system_prompt <- function(coding, plotting, mapping, img_format, img_quality, img_size,
                                 max_lines = 50, comment_density = "Minimal",
                                 loaded_pkgs = character(0)) {
@@ -223,7 +255,9 @@ build_system_prompt <- function(coding, plotting, mapping, img_format, img_quali
     format_image_preferences_clause(img_format, img_quality, img_size),
     code_description_rule,
     scope_rule,
-    clarity_rule
+    clarity_rule,
+    research_integrity_rule,
+    disclosure_risk_rule
   )
   paste(blocks, collapse = "\n\n")
 }
@@ -238,6 +272,15 @@ parse_needs_clarification <- function(text) {
     if (grepl("^SUGGESTIONS:", ln)) suggestions <- trimws(sub("^SUGGESTIONS:", "", ln))
   }
   list(reason = reason, suggestions = suggestions)
+}
+
+parse_disclosure_risk <- function(text) {
+  lines  <- strsplit(trimws(text), "\n")[[1]]
+  reason <- ""
+  for (ln in lines) {
+    if (grepl("^REASON:", ln)) reason <- trimws(sub("^REASON:", "", ln))
+  }
+  list(reason = reason)
 }
 
 take_last_n <- function(lst, n) {
@@ -3585,6 +3628,21 @@ server <- function(input, output, session) {
         return(invisible(NULL))
       }
 
+      # Disclosure risk: would produce publishable output revealing personal data
+      if (grepl("^DISCLOSURE_RISK", trimws(raw_response), ignore.case = TRUE)) {
+        dr <- parse_disclosure_risk(raw_response)
+        clarify_restore_prompt(current_prompt)
+        showModal(modalDialog(
+          title = "Disclosure Risk",
+          tags$p(if (nzchar(dr$reason)) dr$reason else
+            "This request would produce output that could disclose personal information about identifiable individuals."),
+          tags$p(em("Please modify the request to avoid including personal information in any publishable or exportable output.")),
+          easyClose = FALSE,
+          footer    = actionButton("clarify_modify_prompt", "Modify Prompt", class = "btn-primary")
+        ))
+        return(invisible(NULL))
+      }
+
       record_usage(api_result$cost_usd)
       conversation_history(c(history_so_far, list(list(role = "assistant", content = raw_response))))
       prompt_history(c(current_prompt, prompt_history()))
@@ -3712,6 +3770,22 @@ server <- function(input, output, session) {
         tags$p(if (nzchar(nc$reason)) nc$reason else
           "The prompt is too general to write code using your actual data or objects."),
         if (nzchar(nc$suggestions)) tags$p(em(nc$suggestions)),
+        easyClose = FALSE,
+        footer    = actionButton("clarify_modify_prompt", "Modify Prompt", class = "btn-primary")
+      ))
+      return(invisible(NULL))
+    }
+
+    # Disclosure risk: would produce publishable output revealing personal data
+    if (grepl("^DISCLOSURE_RISK", trimws(raw_response), ignore.case = TRUE)) {
+      ui_busy(FALSE); enable("ask_code"); enable("ask_plain")
+      dr <- parse_disclosure_risk(raw_response)
+      clarify_restore_prompt(current_prompt)
+      showModal(modalDialog(
+        title = "Disclosure Risk",
+        tags$p(if (nzchar(dr$reason)) dr$reason else
+          "This request would produce output that could disclose personal information about identifiable individuals."),
+        tags$p(em("Please modify the request to avoid including personal information in any publishable or exportable output.")),
         easyClose = FALSE,
         footer    = actionButton("clarify_modify_prompt", "Modify Prompt", class = "btn-primary")
       ))
