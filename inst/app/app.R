@@ -27,6 +27,21 @@ KEY_CHECK_INTERVAL_MS <- 10 * 60 * 1000
 MODEL_SONNET <- "claude-sonnet-4-6"
 MODEL_HAIKU  <- "claude-haiku-4-5-20251001"
 
+CLASSMATE_LANGUAGES <- c(
+  "Afrikaans", "Albanian", "Amharic", "Arabic", "Armenian", "Azerbaijani",
+  "Basque", "Belarusian", "Bengali", "Bosnian", "Bulgarian", "Catalan",
+  "Chinese", "Croatian", "Czech", "Danish", "Dutch", "English",
+  "Estonian", "Finnish", "French", "Galician", "Georgian", "German",
+  "Greek", "Gujarati", "Hebrew", "Hindi", "Hungarian", "Icelandic",
+  "Indonesian", "Irish", "Italian", "Japanese", "Kannada", "Kazakh",
+  "Korean", "Latvian", "Lithuanian", "Macedonian", "Malay", "Malayalam",
+  "Maltese", "Marathi", "Mongolian", "Nepali", "Norwegian", "Pashto",
+  "Persian", "Polish", "Portuguese", "Punjabi", "Romanian", "Russian",
+  "Serbian", "Sinhala", "Slovak", "Slovenian", "Somali", "Spanish",
+  "Swahili", "Swedish", "Tamil", "Telugu", "Thai", "Turkish", "Ukrainian",
+  "Urdu", "Uzbek", "Vietnamese", "Welsh", "Zulu"
+)
+
 # --- System-prompt building blocks -------------------------------------------
 
 r_system_prompt <- paste(
@@ -3257,10 +3272,22 @@ server <- function(input, output, session) {
 
   model_choices <- c("Claude Sonnet" = MODEL_SONNET)
 
-  observeEvent(input$preferences, {
+  show_preferences_modal <- function() {
+    lang         <- prefs$language
+    lang_choices <- if (tolower(lang) == "english") "English" else c(lang, "English")
     showModal(modalDialog(
       title = "Preferences",
       selectInput("pref_model", "Model:", choices = model_choices, selected = prefs$model),
+      hr(),
+      fluidRow(
+        column(8, selectInput("pref_language", "Response language:",
+          choices = lang_choices, selected = lang)),
+        column(4, div(style = "margin-top: 25px;",
+          actionButton("pref_lang_change", "Change", class = "btn-default btn-sm")))
+      ),
+      tags$p(em(
+        "The language classmate uses for explanations. R code is always written in English."
+      )),
       hr(),
       tags$h5("Preferred approach for..."),
       selectInput("pref_coding", "Coding:",
@@ -3321,34 +3348,75 @@ server <- function(input, output, session) {
         "(e.g. '# Load data'); Most: section markers plus short notes on non-obvious lines.",
         "Even at Most, line-by-line commenting is avoided."
       )),
-      hr(),
-      tags$h5("Response language"),
-      selectInput("pref_language", "Language:",
-        choices  = {
-          lang <- prefs$language
-          if (tolower(lang) == "english") "English"
-          else c(lang, "English")
-        },
-        selected = prefs$language),
-      tags$p(em(
-        "The language classmate uses for explanations. R code is always written in English.",
-        "To add a new language, call classmate_speaks(\"French\") — or any other language — ",
-        "from the R console."
-      )),
       footer = modalButton("Close")
     ))
-  })
+  }
 
+  observeEvent(input$preferences, show_preferences_modal())
+
+  # Language dropdown in Preferences: quick switch between English and set language
   observeEvent(input$pref_language, {
     lang <- input$pref_language
     prefs$language <- lang
     config_dir <- tools::R_user_dir("classmate", "config")
     dir.create(config_dir, recursive = TRUE, showWarnings = FALSE)
-    tryCatch(
-      saveRDS(lang, file.path(config_dir, "language.rds")),
-      error = function(e) invisible(NULL)
-    )
+    tryCatch(saveRDS(lang, file.path(config_dir, "language.rds")),
+             error = function(e) invisible(NULL))
   })
+
+  # "Change" button — show filterable language picker
+  observeEvent(input$pref_lang_change, {
+    showModal(modalDialog(
+      title = "Choose response language",
+      textInput("lang_filter", NULL, placeholder = "Type to filter languages…",
+                width = "100%"),
+      div(style = "height: 260px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px;",
+        selectInput("lang_picker_select", NULL,
+          choices   = CLASSMATE_LANGUAGES,
+          selected  = if (prefs$language %in% CLASSMATE_LANGUAGES) prefs$language else "English",
+          size      = 15,
+          selectize = FALSE,
+          width     = "100%")
+      ),
+      tags$p(style = "margin-top: 6px; font-size: 0.85em; color: #888;",
+        "Click a language, then press OK."),
+      footer = tagList(
+        actionButton("lang_picker_ok",     "OK",     class = "btn-primary"),
+        actionButton("lang_picker_cancel", "Cancel", class = "btn-default")
+      ),
+      size      = "s",
+      easyClose = FALSE
+    ))
+  })
+
+  # Filter the language list as the user types
+  observeEvent(input$lang_filter, {
+    filter <- trimws(input$lang_filter %||% "")
+    langs  <- if (nzchar(filter))
+      CLASSMATE_LANGUAGES[grepl(filter, CLASSMATE_LANGUAGES, ignore.case = TRUE)]
+    else
+      CLASSMATE_LANGUAGES
+    current <- prefs$language
+    updateSelectInput(session, "lang_picker_select",
+      choices  = langs,
+      selected = if (current %in% langs) current else if (length(langs) > 0) langs[[1]] else character(0))
+  }, ignoreNULL = FALSE)
+
+  # OK — save selection and return to Preferences
+  observeEvent(input$lang_picker_ok, {
+    lang <- input$lang_picker_select
+    if (!is.null(lang) && nzchar(lang)) {
+      prefs$language <- lang
+      config_dir <- tools::R_user_dir("classmate", "config")
+      dir.create(config_dir, recursive = TRUE, showWarnings = FALSE)
+      tryCatch(saveRDS(lang, file.path(config_dir, "language.rds")),
+               error = function(e) invisible(NULL))
+    }
+    show_preferences_modal()
+  })
+
+  # Cancel — return to Preferences without saving
+  observeEvent(input$lang_picker_cancel, show_preferences_modal())
 
   observeEvent(input$pref_coding,          { prefs$coding          <- input$pref_coding })
   observeEvent(input$pref_plotting,        { prefs$plotting        <- input$pref_plotting })
