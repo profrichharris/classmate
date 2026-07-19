@@ -146,6 +146,78 @@ classmate_do_update <- function(latest_version, download_url, relaunch = "talk")
 }
 
 
+# ---------------------------------------------------------------------------
+# classmate_speaks() / classmate_language()
+# ---------------------------------------------------------------------------
+
+.classmate_known_languages <- c(
+  "Afrikaans", "Albanian", "Amharic", "Arabic", "Armenian", "Azerbaijani",
+  "Basque", "Belarusian", "Bengali", "Bosnian", "Bulgarian", "Catalan",
+  "Chinese", "Croatian", "Czech", "Danish", "Dutch", "English",
+  "Estonian", "Finnish", "French", "Galician", "Georgian", "German",
+  "Greek", "Gujarati", "Hebrew", "Hindi", "Hungarian", "Icelandic",
+  "Indonesian", "Irish", "Italian", "Japanese", "Kannada", "Kazakh",
+  "Korean", "Latvian", "Lithuanian", "Macedonian", "Malay", "Malayalam",
+  "Maltese", "Marathi", "Mongolian", "Nepali", "Norwegian", "Pashto",
+  "Persian", "Polish", "Portuguese", "Punjabi", "Romanian", "Russian",
+  "Serbian", "Sinhala", "Slovak", "Slovenian", "Somali", "Spanish",
+  "Swahili", "Swedish", "Tamil", "Telugu", "Thai", "Turkish", "Ukrainian",
+  "Urdu", "Uzbek", "Vietnamese", "Welsh", "Zulu"
+)
+
+.classmate_lang_path <- function()
+  file.path(tools::R_user_dir("classmate", "config"), "language.rds")
+
+#' Set the language classmate responds in
+#'
+#' Saves a language preference that is applied to all AI responses in both
+#' \code{talk()} and \code{whisper()}. R code is always written in English;
+#' only explanatory text (and optionally code comments) changes language.
+#' Call \code{classmate_speaks("English")} to revert to British English.
+#'
+#' @param language A language name, e.g. \code{"French"}, \code{"Spanish"},
+#'   \code{"Welsh"}. Minor misspellings are accepted.
+#' @return Invisible canonical language name, or invisible NULL on failure.
+#' @export
+classmate_speaks <- function(language) {
+  lang <- trimws(language)
+  if (!nzchar(lang)) {
+    message("Please supply a language name, e.g. classmate_speaks(\"French\").")
+    return(invisible(NULL))
+  }
+  matches <- agrep(lang, .classmate_known_languages,
+                   ignore.case = TRUE, value = TRUE, max.distance = 0.25)
+  if (length(matches) == 0) {
+    message(
+      "classmate does not recognise '", lang, "' as a language.\n",
+      "Examples of supported languages: Arabic, Chinese, Dutch, French, German, ",
+      "Hindi, Italian, Japanese, Korean, Polish, Portuguese, Russian, Spanish, ",
+      "Swahili, Turkish, Ukrainian, Welsh — and many more.\n",
+      "Check the spelling and try again."
+    )
+    return(invisible(NULL))
+  }
+  canonical <- matches[1]
+  config_dir <- tools::R_user_dir("classmate", "config")
+  dir.create(config_dir, recursive = TRUE, showWarnings = FALSE)
+  saveRDS(canonical, .classmate_lang_path())
+  if (tolower(canonical) == "english") {
+    message("classmate will respond in British English.",
+            " Restart talk() or whisper() to apply.")
+  } else {
+    message("classmate will respond in ", canonical, ".",
+            " Restart talk() or whisper() to apply.")
+  }
+  invisible(canonical)
+}
+
+#' @keywords internal
+classmate_language <- function() {
+  path <- .classmate_lang_path()
+  if (!file.exists(path)) return("English")
+  tryCatch(readRDS(path), error = function(e) "English")
+}
+
 #' Chicago city boundary
 #'
 #' An \code{sf} polygon representing the boundary of the city of Chicago.

@@ -195,6 +195,22 @@
 # ---------------------------------------------------------------------------
 
 .watch_call_claude <- function(user_prompt, api_key) {
+  lang     <- classmate_language()
+  lang_clause <- if (tolower(trimws(lang)) == "english") {
+    paste(
+      "LANGUAGE RULE: Write all responses in British English",
+      "(e.g. 'colour' not 'color', 'analyse' not 'analyze', 'centre' not 'center')."
+    )
+  } else {
+    paste0(
+      "LANGUAGE RULE: Write all explanatory text and responses in ", lang, ". ",
+      "Always write R code itself — including all variable names, function names, ",
+      "and object names — in English. ",
+      "You may write # comments within code blocks in ", lang, " if that is ",
+      "natural and helpful for the student. ",
+      "Do not translate R syntax, package names, or argument names."
+    )
+  }
   system_prompt <- paste(
     "You are a friendly teaching assistant helping students who are learning R.",
     "You will receive: (1) a numbered log of the student's recent R commands,",
@@ -223,7 +239,9 @@
     "- If the fix is a simple name or spelling correction, show it inline.",
     "- If you spot a typo in a column name or object name, call it out clearly.",
     "- Do not invite the student to reply or ask follow-up questions —",
-    "  this is a one-shot explanation with no reply mechanism."
+    "  this is a one-shot explanation with no reply mechanism.",
+    "",
+    lang_clause
   )
 
   result <- tryCatch({

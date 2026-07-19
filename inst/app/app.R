@@ -229,9 +229,28 @@ disclosure_risk_rule <- paste(
   "and why this raises a disclosure concern>"
 )
 
+build_language_clause <- function(language) {
+  if (tolower(trimws(language)) == "english") {
+    paste(
+      "LANGUAGE RULE: Write all responses in British English",
+      "(e.g. 'colour' not 'color', 'analyse' not 'analyze', 'centre' not 'center')."
+    )
+  } else {
+    paste0(
+      "LANGUAGE RULE: Write all explanatory text and responses in ", language, ". ",
+      "Always write R code itself — including all variable names, function names, ",
+      "and object names — in English. ",
+      "You may write # comments within code blocks in ", language, " if that is ",
+      "natural and helpful for the student. ",
+      "Do not translate R syntax, package names, or argument names."
+    )
+  }
+}
+
 build_system_prompt <- function(coding, plotting, mapping, img_format, img_quality, img_size,
                                 max_lines = 50, comment_density = "Minimal",
-                                loaded_pkgs = character(0)) {
+                                loaded_pkgs = character(0),
+                                language = "English") {
   library_clause <- paste0(
     "PACKAGE LOADING RULE: Always include an explicit library() call for every ",
     "package your code uses. ",
@@ -253,6 +272,7 @@ build_system_prompt <- function(coding, plotting, mapping, img_format, img_quali
     filename_timestamp_instruction,
     format_preferences_clause(coding, plotting, mapping, max_lines, comment_density),
     format_image_preferences_clause(img_format, img_quality, img_size),
+    build_language_clause(language),
     code_description_rule,
     scope_rule,
     clarity_rule,
@@ -1650,8 +1670,8 @@ ui <- fluidPage(
 
     fluidRow(style = "margin-top: 10px;",
       column(6, div(style = "display: flex; align-items: center; gap: 8px;",
-        div(style = "min-width: 175px;", uiOutput("code_saved_ui")),
-        disabled(actionButton("save_block", "Save Code Block", class = "btn-primary"))
+        disabled(actionButton("save_block", "Save Code Block", class = "btn-primary")),
+        div(style = "min-width: 175px;", uiOutput("code_saved_ui"))
       )),
       column(6,
         div(style = "display: flex; justify-content: flex-end; align-items: flex-start; white-space: nowrap;",
@@ -1791,9 +1811,9 @@ server <- function(input, output, session) {
   # On every fresh open (not a pause-resume), pre-fill the prompt box with the
   # data-protection notice and freeze Ask/Ask for Code until the student clears it.
   .PROTECTION_NOTICE <- paste0(
-    "Always prioritise data protection. Never include personal data or information ",
-    "in your prompts, and do not make any reference to real individuals.\n\n",
-    "Press Clear to continue."
+    "Enter your prompt here. Always prioritise data protection. Never include ",
+    "personal data or information in your prompts, and do not make any reference ",
+    "to real individuals.\n\nPress Clear to continue."
   )
   if (!.resuming_pause) {
     session$onFlushed(function() {
@@ -2298,8 +2318,8 @@ server <- function(input, output, session) {
       results_ui %||% plots_ui %||% warnings_ui
     } else {
       tabs <- list()
-      if (has_text)     tabs <- c(tabs, list(tabPanel("Results",  div(style = "padding-top: 10px;", results_ui))))
       if (has_plots)    tabs <- c(tabs, list(tabPanel("Plots",    div(style = "padding-top: 10px;", plots_ui))))
+      if (has_text)     tabs <- c(tabs, list(tabPanel("Results",  div(style = "padding-top: 10px;", results_ui))))
       if (has_warnings) tabs <- c(tabs, list(tabPanel("Warnings", div(style = "padding-top: 10px;", warnings_ui))))
       do.call(tabsetPanel, c(tabs, list(type = "tabs")))
     }
@@ -3228,7 +3248,8 @@ server <- function(input, output, session) {
     img_quality     = pref_val("img_quality",      "Medium"),
     img_size        = pref_val("img_size",         "Journal double col. (180x120 mm)"),
     max_lines       = pref_val("max_lines",        50),
-    comment_density = pref_val("comment_density",  "Minimal")
+    comment_density = pref_val("comment_density",  "Minimal"),
+    language        = classmate_language()
   )
 
   model_choices <- c("Claude Sonnet" = MODEL_SONNET)
@@ -3297,8 +3318,33 @@ server <- function(input, output, session) {
         "(e.g. '# Load data'); Most: section markers plus short notes on non-obvious lines.",
         "Even at Most, line-by-line commenting is avoided."
       )),
+      hr(),
+      tags$h5("Response language"),
+      selectInput("pref_language", "Language:",
+        choices  = {
+          lang <- prefs$language
+          if (tolower(lang) == "english") "English"
+          else c(lang, "English")
+        },
+        selected = prefs$language),
+      tags$p(em(
+        "The language classmate uses for explanations. R code is always written in English.",
+        "To add a new language, call classmate_speaks(\"French\") — or any other language — ",
+        "from the R console."
+      )),
       footer = modalButton("Close")
     ))
+  })
+
+  observeEvent(input$pref_language, {
+    lang <- input$pref_language
+    prefs$language <- lang
+    config_dir <- tools::R_user_dir("classmate", "config")
+    dir.create(config_dir, recursive = TRUE, showWarnings = FALSE)
+    tryCatch(
+      saveRDS(lang, file.path(config_dir, "language.rds")),
+      error = function(e) invisible(NULL)
+    )
   })
 
   observeEvent(input$pref_coding,          { prefs$coding          <- input$pref_coding })
@@ -3689,7 +3735,7 @@ server <- function(input, output, session) {
           system_prompt = build_system_prompt(prefs$coding, prefs$plotting, prefs$mapping,
                                               prefs$img_format, prefs$img_quality, prefs$img_size,
                                               prefs$max_lines, prefs$comment_density,
-                                              loaded_packages())
+                                              loaded_packages(), prefs$language)
         ),
         error = function(e) list(text = "", stop_reason = "error")
       )
@@ -3841,7 +3887,7 @@ server <- function(input, output, session) {
         system_prompt = build_system_prompt(prefs$coding, prefs$plotting, prefs$mapping,
                                             prefs$img_format, prefs$img_quality, prefs$img_size,
                                             prefs$max_lines, prefs$comment_density,
-                                            loaded_packages())
+                                            loaded_packages(), prefs$language)
       ),
       error = function(e) list(text = "", stop_reason = "error")
     )
