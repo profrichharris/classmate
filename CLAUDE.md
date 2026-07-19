@@ -215,8 +215,8 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.70 (2026-07-19)  
-**Current version:** 0.5.70
+**Last released:** 0.5.74 (2026-07-19)  
+**Current version:** 0.5.74
 
 No unreleased changes.
 
@@ -258,6 +258,8 @@ No unreleased changes.
 | 0.5.68 | `tutor()` → `talk()`; `helpdesk()` → `whisper()`; `endclass()` → `ssshh()`; splash screen on fresh open; footer removed |
 | 0.5.69 | Splash screen capitalisation fix ("Welcome to Classmate"); .GlobalEnv cleanup on session end to prevent "package:X may not be available" workspace-save warning; Quick Console `ask` shadow updated to `talk` |
 | 0.5.70 | classmate_speaks(): language preference saved to language.rds, fuzzy-matched against ~70 known languages; language clause injected into system prompt for both talk() and whisper(); Preferences modal adds language selector (always shows English + any set non-English language); British English enforced by default; R code always in English, # comments may use target language; Save Code Block button moved left of "Code saved to Notebook"; Plots tab shown before Results tab in R output |
+| 0.5.71–0.5.73 | Language clause injected into all five build_*_system_prompt() functions (Fix, output/error/diff/code Explain) and inline Tell me More; language picker modal with filterable scrollable list; pref_lang_change Change button in Preferences; show_preferences_modal() helper extracted |
+| 0.5.74 | Raised Explain max_tokens from 650 to 1200 — fixes false "code too long" error on short code blocks when response is in a non-English language (Chinese etc. tokenise more densely) |
 | 0.5.64 | Startup disclaimer expanded to include privacy notice: data handling, Anthropic API processing, and AI policy guidance. Prompt box pre-filled with data protection notice on fresh open; Ask buttons frozen until Clear pressed |
 | 0.5.65 | Extended button freeze during protection notice: all buttons frozen except Quit and Clear; Clear highlighted yellow; Clear Workspace shown white during notice period |
 | 0.5.66 | Clear Workspace button changed to default white permanently (was orange); orange colouring removed |
