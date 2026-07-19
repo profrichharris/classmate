@@ -846,7 +846,7 @@ run_code <- function(code_text) {
   c(result, list(plot_files = plot_files))
 }
 
-build_fix_system_prompt <- function() {
+build_fix_system_prompt <- function(language = "English") {
   paste(
     "You are an expert R programming assistant helping a student fix broken R code.",
     "The student will give you their current code and the error message it produced.",
@@ -865,12 +865,14 @@ build_fix_system_prompt <- function() {
     "```",
     "",
     "Do not include any other text, commentary, or markdown outside this format.",
-    "The EXPLANATION must be concise — suitable for displaying in a small pop-up window."
+    "The EXPLANATION must be concise — suitable for displaying in a small pop-up window.",
+    "",
+    build_language_clause(language)
   )
 }
 
 # Builds the system prompt for the Explain feature.
-build_output_explain_system_prompt <- function() {
+build_output_explain_system_prompt <- function(language = "English") {
   paste(
     "You are a clear and helpful R programming tutor explaining what R output means.",
     "The student has run R code and you are shown the resulting output — which may",
@@ -894,6 +896,8 @@ build_output_explain_system_prompt <- function() {
     "",
     "List 2–5 HELP_PAGES entries for functions most relevant to interpreting or",
     "extending this output. No bullet points — one entry per line.",
+    "",
+    build_language_clause(language),
     sep = "\n"
   )
 }
@@ -955,7 +959,7 @@ build_output_explain_content <- function(text_output, plot_files, level,
   content
 }
 
-build_error_explain_system_prompt <- function() {
+build_error_explain_system_prompt <- function(language = "English") {
   paste(
     "You are a friendly R programming tutor helping a student understand why their",
     "code produced errors or warnings.",
@@ -968,11 +972,13 @@ build_error_explain_system_prompt <- function() {
     "",
     "EXPLANATION:",
     "<your plain-language explanation here>",
+    "",
+    build_language_clause(language),
     sep = "\n"
   )
 }
 
-build_diff_explain_system_prompt <- function() {
+build_diff_explain_system_prompt <- function(language = "English") {
   paste(
     "You are a clear and patient R programming tutor.",
     "The student has just had their code modified by an AI assistant and is viewing",
@@ -993,11 +999,13 @@ build_diff_explain_system_prompt <- function() {
     "",
     "The HELP_PAGES section must list only real R functions used in the changes.",
     "List between 1 and 5 entries. No bullet points or numbering.",
+    "",
+    build_language_clause(language),
     sep = "\n"
   )
 }
 
-build_explain_system_prompt <- function() {
+build_explain_system_prompt <- function(language = "English") {
   paste(
     "You are a patient and clear R programming tutor helping students learn R.",
     "When given R code and an explanation level, you explain the code clearly",
@@ -1013,6 +1021,8 @@ build_explain_system_prompt <- function() {
     "The HELP_PAGES section must list only real R functions the student can look up",
     "with ?function or ?package::function. List between 2 and 6 entries. No bullet",
     "points or numbering — one entry per line only.",
+    "",
+    build_language_clause(language),
     sep = "\n"
   )
 }
@@ -4153,7 +4163,9 @@ server <- function(input, output, session) {
             "was already explained. Target approximately 200 words.",
             "Do not begin with a heading or title of any kind — start directly",
             "with the elaboration. Use **bold** for emphasis where helpful but",
-            "do not use ## or ### headers."
+            "do not use ## or ### headers.",
+            "",
+            build_language_clause(prefs$language)
           )
         ),
         error = function(e) list(text = "", cost_usd = 0)
@@ -4199,7 +4211,7 @@ server <- function(input, output, session) {
               ))),
               model         = prefs$model,
               max_tokens    = 400,
-              system_prompt = build_error_explain_system_prompt()
+              system_prompt = build_error_explain_system_prompt(prefs$language)
             ),
             error = function(e) list(text = "", stop_reason = "error", cost_usd = 0)
           )
@@ -4265,7 +4277,7 @@ server <- function(input, output, session) {
                 ))),
               model         = prefs$model,
               max_tokens    = 700,
-              system_prompt = build_output_explain_system_prompt()
+              system_prompt = build_output_explain_system_prompt(prefs$language)
             ),
             error = function(e) list(text = "", stop_reason = "error", cost_usd = 0,
                                      error_msg = conditionMessage(e))
@@ -4325,7 +4337,7 @@ server <- function(input, output, session) {
               messages      = list(list(role = "user", content = user_msg)),
               model         = prefs$model,
               max_tokens    = 600,
-              system_prompt = build_diff_explain_system_prompt()
+              system_prompt = build_diff_explain_system_prompt(prefs$language)
             ),
             error = function(e) list(text = "", stop_reason = "error", cost_usd = 0)
           )
@@ -4401,7 +4413,7 @@ server <- function(input, output, session) {
                                       content = build_explain_prompt(code_text, level))),
             model         = prefs$model,
             max_tokens    = 650,
-            system_prompt = build_explain_system_prompt()
+            system_prompt = build_explain_system_prompt(prefs$language)
           ),
           error = function(e) list(text = "", stop_reason = "error")
         )
@@ -4462,7 +4474,7 @@ server <- function(input, output, session) {
                                       content = build_explain_prompt(code_text, new_level))),
             model         = prefs$model,
             max_tokens    = 650,
-            system_prompt = build_explain_system_prompt()
+            system_prompt = build_explain_system_prompt(prefs$language)
           ),
           error = function(e) list(text = "", stop_reason = "error")
         )
@@ -4577,7 +4589,7 @@ server <- function(input, output, session) {
           ))),
           model         = prefs$model,
           max_tokens    = 800,
-          system_prompt = build_fix_system_prompt(),
+          system_prompt = build_fix_system_prompt(prefs$language),
           cache_system  = FALSE
         ),
         error = function(e) list(text = "", stop_reason = "error", cost_usd = 0)
