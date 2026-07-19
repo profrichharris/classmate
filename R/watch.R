@@ -436,6 +436,17 @@ whisper <- function(key = NULL) {
   .watch_env$rh_existed <- exists("rh", .GlobalEnv, inherits = FALSE)
   assign("rh", raisehand, envir = .GlobalEnv)
 
+  # Remove rh from .GlobalEnv when the R session ends (covers the case where
+  # ssshh() is never called — prevents "package:X may not be available" warning
+  # on workspace save).
+  reg.finalizer(.watch_env, function(e) {
+    tryCatch(
+      if (!isTRUE(e$rh_existed) && exists("rh", .GlobalEnv, inherits = FALSE))
+        rm(list = "rh", envir = .GlobalEnv),
+      error = function(err) invisible(NULL)
+    )
+  }, onexit = TRUE)
+
   .watch_env$active <- TRUE
   message("classmate whisper is running. Type raisehand() or rh() if your code generates an error, or ssshh() to stop.")
   invisible(NULL)

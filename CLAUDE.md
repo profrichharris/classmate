@@ -215,8 +215,8 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.68 (2026-07-19)  
-**Current version:** 0.5.68
+**Last released:** 0.5.69 (2026-07-19)  
+**Current version:** 0.5.69
 
 No unreleased changes.
 
@@ -256,6 +256,7 @@ No unreleased changes.
 | 0.5.62 | Research integrity rule + disclosure risk rule in system prompt; DISCLOSURE_RISK sentinel triggers modal with Modify Prompt button |
 | 0.5.63 | `ask()` → `tutor()`; `watch()` → `helpdesk()`; DESIGN.md and SECURITY.md added to repo |
 | 0.5.68 | `tutor()` → `talk()`; `helpdesk()` → `whisper()`; `endclass()` → `ssshh()`; splash screen on fresh open; footer removed |
+| 0.5.69 | Splash screen capitalisation fix ("Welcome to Classmate"); .GlobalEnv cleanup on session end to prevent "package:X may not be available" workspace-save warning; Quick Console `ask` shadow updated to `talk` |
 | 0.5.64 | Startup disclaimer expanded to include privacy notice: data handling, Anthropic API processing, and AI policy guidance. Prompt box pre-filled with data protection notice on fresh open; Ask buttons frozen until Clear pressed |
 | 0.5.65 | Extended button freeze during protection notice: all buttons frozen except Quit and Clear; Clear highlighted yellow; Clear Workspace shown white during notice period |
 | 0.5.66 | Clear Workspace button changed to default white permanently (was orange); orange colouring removed |

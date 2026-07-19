@@ -1442,7 +1442,7 @@ ui <- fluidPage(
     }
   ")),
   tags$div(id = "classmate-splash",
-    tags$h2("Welcome to classmate"),
+    tags$h2("Welcome to Classmate"),
     tags$img(src = "logo.png", height = "220px",
       style = "mix-blend-mode: multiply;"),
     tags$p("Programmed by Claude. Guided by Richard.")
@@ -1695,6 +1695,20 @@ server <- function(input, output, session) {
   # Personal users keep their own key — only student mode is cleared.
   session$onEnded(function() {
     if (isolate(app_mode()) == "student") Sys.unsetenv("ANTHROPIC_API_KEY")
+    # Remove any package-bound symbols the app may have left in .GlobalEnv
+    # (e.g. q/quit/stopApp/talk shadowed during Quick Console if R was restarted
+    # while the modal was open). Prevents "package:X may not be available" warning
+    # when R auto-saves .RData on exit.
+    for (nm in c("q", "quit", "stopApp", "ask", "talk")) {
+      tryCatch({
+        if (exists(nm, envir = .GlobalEnv, inherits = FALSE)) {
+          fn <- get(nm, envir = .GlobalEnv, inherits = FALSE)
+          if (is.function(fn) && !is.primitive(fn) &&
+              identical(environmentName(environment(fn)), "R_GlobalEnv") == FALSE)
+            rm(list = nm, envir = .GlobalEnv)
+        }
+      }, error = function(e) invisible(NULL))
+    }
   })
 
   show_student_disclaimer <- function() {
@@ -3525,12 +3539,12 @@ server <- function(input, output, session) {
       q        = if (exists("q",        .GlobalEnv, inherits = FALSE)) get("q",        .GlobalEnv) else NULL,
       quit     = if (exists("quit",     .GlobalEnv, inherits = FALSE)) get("quit",     .GlobalEnv) else NULL,
       stopApp  = if (exists("stopApp",  .GlobalEnv, inherits = FALSE)) get("stopApp",  .GlobalEnv) else NULL,
-      ask      = if (exists("ask",      .GlobalEnv, inherits = FALSE)) get("ask",      .GlobalEnv) else NULL
+      talk     = if (exists("talk",     .GlobalEnv, inherits = FALSE)) get("talk",     .GlobalEnv) else NULL
     )
     assign("q",       function(...) stop("__QC_QUIT__"),          envir = .GlobalEnv)
     assign("quit",    function(...) stop("__QC_QUIT__"),          envir = .GlobalEnv)
     assign("stopApp", function(...) stop("__QC_STOPAPP__"),       envir = .GlobalEnv)
-    assign("ask",     function(...) message("Classmate is already running."), envir = .GlobalEnv)
+    assign("talk",    function(...) message("Classmate is already running."), envir = .GlobalEnv)
     on.exit({
       for (nm in names(shadow)) {
         if (is.null(shadow[[nm]])) {
