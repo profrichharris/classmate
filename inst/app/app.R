@@ -4412,7 +4412,7 @@ server <- function(input, output, session) {
             messages      = list(list(role = "user",
                                       content = build_explain_prompt(code_text, level))),
             model         = prefs$model,
-            max_tokens    = 650,
+            max_tokens    = 1200,
             system_prompt = build_explain_system_prompt(prefs$language)
           ),
           error = function(e) list(text = "", stop_reason = "error")
@@ -4473,7 +4473,7 @@ server <- function(input, output, session) {
             messages      = list(list(role = "user",
                                       content = build_explain_prompt(code_text, new_level))),
             model         = prefs$model,
-            max_tokens    = 650,
+            max_tokens    = 1200,
             system_prompt = build_explain_system_prompt(prefs$language)
           ),
           error = function(e) list(text = "", stop_reason = "error")
