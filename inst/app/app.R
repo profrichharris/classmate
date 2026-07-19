@@ -3249,7 +3249,10 @@ server <- function(input, output, session) {
     img_size        = pref_val("img_size",         "Journal double col. (180x120 mm)"),
     max_lines       = pref_val("max_lines",        50),
     comment_density = pref_val("comment_density",  "Minimal"),
-    language        = classmate_language()
+    language        = {
+      .lp <- file.path(tools::R_user_dir("classmate", "config"), "language.rds")
+      if (file.exists(.lp)) tryCatch(readRDS(.lp), error = function(e) "English") else "English"
+    }
   )
 
   model_choices <- c("Claude Sonnet" = MODEL_SONNET)
