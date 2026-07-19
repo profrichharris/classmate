@@ -8,7 +8,7 @@ This file is auto-loaded by Claude Code at session start. It captures the design
 
 ## What classmate is
 
-`classmate` is an R Shiny application that acts as an AI teaching assistant for students learning R. It wraps the Claude API (Anthropic) in a UI that runs inside RStudio. Students launch it with `tutor()` from their R console.
+`classmate` is an R Shiny application that acts as an AI teaching assistant for students learning R. It wraps the Claude API (Anthropic) in a UI that runs inside RStudio. Students launch it with `talk()` from their R console.
 
 The package is authored by Richard Harris (profrichharris@gmail.com) and is intended for use in university teaching. It is **not** a general-purpose AI chat tool — it is specifically scoped to helping students write and understand R code.
 
@@ -37,9 +37,9 @@ Help mode is toggled by the `?` button and overlays black help labels on every U
 ```
 classmate/
   R/
-    ask_claude.R        # tutor() entry point, preflight update check, %||%
+    ask_claude.R        # talk() entry point, preflight update check, %||%
     instructor.R        # classmate_make_key(), classmate_config_show()
-    watch.R             # helpdesk() / raisehand() / endclass() / reset_key()
+    watch.R             # whisper() / raisehand() / ssshh() / reset_key()
   inst/app/
     app.R               # ALL UI + server logic (single large file)
   DESCRIPTION
@@ -82,7 +82,7 @@ Everything interesting is in `inst/app/app.R`. It is a single-file Shiny app.
 - A modal REPL that also runs in `globalenv()` — same workspace, no syncing needed.
 - The main app is frozen (modal open, `shinyjs` disables buttons) while Quick Console is active.
 - `setTimeLimit(elapsed = 30, transient = TRUE)` enforces a 30-second timeout.
-- `q()`, `quit()`, `stopApp()`, and `tutor()` are temporarily shadowed in globalenv with informative messages (no harmful side effects).
+- `q()`, `quit()`, `stopApp()`, and `talk()` are temporarily shadowed in globalenv with informative messages (no harmful side effects).
 - History displayed as blue prompts / coloured output (red for errors).
 - Ctrl+Enter / Cmd+Enter submits from the Ace editor.
 
@@ -215,8 +215,8 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.67 (2026-07-17)  
-**Current version:** 0.5.67
+**Last released:** 0.5.68 (2026-07-19)  
+**Current version:** 0.5.68
 
 No unreleased changes.
 
@@ -245,9 +245,9 @@ No unreleased changes.
 | 0.5.36–0.5.42 | Code log as R Notebook (.Rmd); prompts embedded above code chunks; auto-save on browser close; Save Code Log replaced by "Code saved to Notebook" indicator |
 | 0.5.43–0.5.49 | Comment density rewrite via Haiku on pref change; persistent preferences via `tools::R_user_dir`; unlimited code length in non-student mode; informative error messages mentioning Preferences; .dbf sidecar for shapefile schema; removed prompt log (prompts in Notebook already) |
 | 0.5.50 | Quick Console REPL; Save & Pause rename; CLAUDE.md added |
-| 0.5.51 | watch()/raisehand()/endclass()/reset_key() — console-only mode; interactive key prompt; Quick Console smart-Enter |
+| 0.5.51 | whisper()/raisehand()/ssshh()/reset_key() — console-only mode; interactive key prompt; Quick Console smart-Enter |
 | 0.5.52 | watch() preflight update check; classmate_do_update() parameterised with relaunch target |
-| 0.5.53 | Fix missing NAMESPACE exports (watch/raisehand/endclass/reset_key) |
+| 0.5.53 | Fix missing NAMESPACE exports (whisper/raisehand/ssshh/reset_key) |
 | 0.5.54 | NAMESPACE managed by roxygen2; devtools::document() added to release workflow |
 | 0.5.55 | Quick Console plot capture: plots open in dedicated modal; Close returns to console |
 | 0.5.56–0.5.59 | watch() preflight update check; rh() shortcut; raisehand() uses Haiku with plain-text system prompt; NAMESPACE managed by roxygen2 |
@@ -255,6 +255,7 @@ No unreleased changes.
 | 0.5.61 | Data minimisation: workspace objects sent as schema-only (no str() values); console output scrubbed of table rows and str() lines; headerless file detection warns user; same scrubbing in watch()/raisehand() |
 | 0.5.62 | Research integrity rule + disclosure risk rule in system prompt; DISCLOSURE_RISK sentinel triggers modal with Modify Prompt button |
 | 0.5.63 | `ask()` → `tutor()`; `watch()` → `helpdesk()`; DESIGN.md and SECURITY.md added to repo |
+| 0.5.68 | `tutor()` → `talk()`; `helpdesk()` → `whisper()`; `endclass()` → `ssshh()`; splash screen on fresh open; footer removed |
 | 0.5.64 | Startup disclaimer expanded to include privacy notice: data handling, Anthropic API processing, and AI policy guidance. Prompt box pre-filled with data protection notice on fresh open; Ask buttons frozen until Clear pressed |
 | 0.5.65 | Extended button freeze during protection notice: all buttons frozen except Quit and Clear; Clear highlighted yellow; Clear Workspace shown white during notice period |
 | 0.5.66 | Clear Workspace button changed to default white permanently (was orange); orange colouring removed |

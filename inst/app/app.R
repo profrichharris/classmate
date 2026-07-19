@@ -5,7 +5,7 @@ library(shinyAce)
 library(httr2)
 
 # --- Project root and output paths -------------------------------------------
-# ask() stores the user's working directory in this option before calling
+# talk() stores the user's working directory in this option before calling
 # runApp(), which would otherwise change the wd to this inst/app/ folder.
 # Fall back to getwd() when the app is run directly for development.
 PROJECT_ROOT <- getOption(".classmate_project_root", getwd())
@@ -1422,6 +1422,42 @@ ui <- fluidPage(
     tags$p("You may now close this tab.")
   ),
 
+  # Splash screen — shown on fresh open only (hidden on pause-resume via server)
+  tags$style(HTML("
+    #classmate-splash {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: #fff; z-index: 9999;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; text-align: center;
+      opacity: 1;
+      transition: opacity 0.8s ease;
+    }
+    #classmate-splash.fade-out { opacity: 0; }
+    #classmate-splash.hidden   { display: none; }
+    #classmate-splash h2 {
+      font-size: 2em; margin-bottom: 18px; color: #333; font-weight: 600;
+    }
+    #classmate-splash p {
+      margin-top: 18px; font-size: 1em; color: #888; font-style: italic;
+    }
+  ")),
+  tags$div(id = "classmate-splash",
+    tags$h2("Welcome to classmate"),
+    tags$img(src = "logo.png", height = "220px",
+      style = "mix-blend-mode: multiply;"),
+    tags$p("Programmed by Claude. Guided by Richard.")
+  ),
+  tags$script(HTML("
+    (function() {
+      var splash = document.getElementById('classmate-splash');
+      if (!splash) return;
+      setTimeout(function() {
+        splash.classList.add('fade-out');
+        setTimeout(function() { splash.classList.add('hidden'); }, 850);
+      }, 3000);
+    })();
+  ")),
+
   # Lightbox overlay for plot thumbnails
   tags$div(
     id = "classmate-lb-overlay",
@@ -1640,12 +1676,6 @@ ui <- fluidPage(
       )
     ),
 
-    hr(),
-    div(style = "display: flex; align-items: center; gap: 8px; padding: 4px 0 8px 0;",
-      tags$img(src = "favicon.png", height = "32px", alt = ""),
-      tags$span(style = "font-size: 0.78em; color: #888;",
-        "Programmed by Claude. Guided by Richard.")
-    )
   )
 )
 
@@ -1713,6 +1743,14 @@ server <- function(input, output, session) {
   # Restore student mode from the previously saved config (survives restarts).
   .saved_cfg       <- tryCatch(readRDS(active_cfg_path()), error = function(e) NULL)
   .resuming_pause  <- file.exists(PAUSE_FILE)   # checked before pause state is consumed
+  if (.resuming_pause) {
+    session$onFlushed(function() {
+      shinyjs::runjs("
+        var s = document.getElementById('classmate-splash');
+        if (s) s.classList.add('hidden');
+      ")
+    }, once = TRUE)
+  }
   app_mode        <- reactiveVal(if (!is.null(.saved_cfg)) "student" else "personal")
   # Show student-mode label on startup if already in student mode
   if (!is.null(.saved_cfg)) {
@@ -2485,7 +2523,7 @@ server <- function(input, output, session) {
       ),
       pause_app        = paste(
         "Save & Pause — Saves your entire session — conversation history, code,",
-        "context, and preferences — and closes Classmate. Reopen the app with ask()",
+        "context, and preferences — and closes Classmate. Reopen the app with talk()",
         "to pick up exactly where you left off.",
         "Use this if you want to take a longer break and return to the same conversation later.",
         "For a quick step out to run some R code, use Quick Console instead."

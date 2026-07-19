@@ -1,11 +1,11 @@
 # ---------------------------------------------------------------------------
-# helpdesk() / raisehand() / endclass() / reset_key()
+# whisper() / raisehand() / ssshh() / reset_key()
 #
 # A lightweight background watcher that captures R errors and recent command
 # history, then explains them in plain English via Claude when the student
 # calls raisehand().  No Shiny UI — works entirely in the R console.
 #
-# Key sharing: uses the same active_config.rds and usage_log.rds as tutor(),
+# Key sharing: uses the same active_config.rds and usage_log.rds as talk(),
 # so a key loaded in either place is immediately available in the other.
 # ---------------------------------------------------------------------------
 
@@ -302,29 +302,29 @@
 }
 
 # ---------------------------------------------------------------------------
-# helpdesk()
+# whisper()
 # ---------------------------------------------------------------------------
 
-#' Start the classmate helpdesk
+#' Start the classmate whisper mode
 #'
 #' Runs silently in the background. After any error, type \code{raisehand()}
-#' for a plain-English explanation. Use \code{endclass()} to stop.
+#' for a plain-English explanation. Use \code{ssshh()} to stop.
 #'
 #' @param key Path to a \code{.key} file supplied by your instructor, OR a
 #'   raw Anthropic API key string (\code{"sk-ant-..."}). If a key was already
-#'   loaded (in this session, a previous session, or via \code{tutor()}), you can
+#'   loaded (in this session, a previous session, or via \code{talk()}), you can
 #'   omit this argument.
 #' @return Invisible NULL (called for side effects).
 #' @export
-helpdesk <- function(key = NULL) {
+whisper <- function(key = NULL) {
 
   if (.watch_env$active) {
-    message("classmate helpdesk is already running. Use endclass() to stop.")
+    message("classmate whisper is already running. Use ssshh() to stop.")
     return(invisible(NULL))
   }
 
   # --- Preflight update check ------------------------------------------------
-  updated <- classmate_preflight(relaunch = "helpdesk")
+  updated <- classmate_preflight(relaunch = "whisper")
   if (isTRUE(updated)) return(invisible(NULL))
 
   # --- Resolve API key -------------------------------------------------------
@@ -351,14 +351,14 @@ helpdesk <- function(key = NULL) {
     }
   }
 
-  # 2. Saved student key from active_config.rds (written by tutor() or prior helpdesk())
+  # 2. Saved student key from active_config.rds (written by talk() or prior whisper())
   if (is.null(api_key)) {
     cfg <- .watch_load_cfg()
     if (!is.null(cfg) && nzchar(cfg$api_key %||% ""))
       api_key <- cfg$api_key
   }
 
-  # 3. Environment variable (set by tutor() for personal/non-student use)
+  # 3. Environment variable (set by talk() for personal/non-student use)
   if (is.null(api_key)) {
     ev <- Sys.getenv("ANTHROPIC_API_KEY")
     if (nzchar(ev)) api_key <- ev
@@ -437,7 +437,7 @@ helpdesk <- function(key = NULL) {
   assign("rh", raisehand, envir = .GlobalEnv)
 
   .watch_env$active <- TRUE
-  message("classmate helpdesk is running. Type raisehand() or rh() if your code generates an error, or endclass() to stop.")
+  message("classmate whisper is running. Type raisehand() or rh() if your code generates an error, or ssshh() to stop.")
   invisible(NULL)
 }
 
@@ -458,7 +458,7 @@ helpdesk <- function(key = NULL) {
 raisehand <- function() {
 
   if (!.watch_env$active) {
-    message("classmate helpdesk is not running. Start with helpdesk().")
+    message("classmate whisper is not running. Start with whisper().")
     return(invisible(NULL))
   }
 
@@ -546,24 +546,24 @@ raisehand <- function() {
 }
 
 # ---------------------------------------------------------------------------
-# endclass()
+# ssshh()
 # ---------------------------------------------------------------------------
 
 #' Stop watching for R errors
 #'
 #' Removes the error hook and command history callback installed by
-#' \code{helpdesk()}.
+#' \code{whisper()}.
 #'
 #' @return Invisible NULL (called for side effects).
 #' @export
-endclass <- function() {
+ssshh <- function() {
   if (!.watch_env$active) {
-    message("classmate helpdesk is not currently running.")
+    message("classmate whisper is not currently running.")
     return(invisible(NULL))
   }
   options(error = .watch_env$original_error)
   tryCatch(removeTaskCallback(.watch_env$callback_id), error = function(e) NULL)
-  # Remove rh() shortcut unless it existed before helpdesk() was called
+  # Remove rh() shortcut unless it existed before whisper() was called
   if (!isTRUE(.watch_env$rh_existed))
     if (exists("rh", .GlobalEnv, inherits = FALSE)) rm(list = "rh", envir = .GlobalEnv)
   .watch_env$active         <- FALSE
@@ -582,9 +582,9 @@ endclass <- function() {
 
 #' Clear the saved classmate key
 #'
-#' Removes the key file saved by \code{helpdesk()} or \code{tutor()} and unsets
+#' Removes the key file saved by \code{whisper()} or \code{talk()} and unsets
 #' the \code{ANTHROPIC_API_KEY} environment variable. The next call to
-#' \code{helpdesk()} or \code{tutor()} will prompt for a new key.
+#' \code{whisper()} or \code{talk()} will prompt for a new key.
 #'
 #' @return Invisible NULL (called for side effects).
 #' @export
@@ -607,7 +607,7 @@ reset_key <- function() {
   if (!removed) message("No saved key found.")
 
   if (.watch_env$active)
-    message("Note: classmate helpdesk is still running with the previous key until endclass() is called.")
+    message("Note: classmate whisper is still running with the previous key until ssshh() is called.")
 
   invisible(NULL)
 }

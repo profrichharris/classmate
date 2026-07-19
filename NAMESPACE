@@ -2,8 +2,8 @@
 
 export(classmate_config_show)
 export(classmate_make_key)
-export(endclass)
-export(helpdesk)
 export(raisehand)
 export(reset_key)
-export(tutor)
+export(ssshh)
+export(talk)
+export(whisper)

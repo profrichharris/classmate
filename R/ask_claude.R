@@ -16,9 +16,9 @@ CLASSMATE_GITHUB_REPO <- "profrichharris/classmate"
 #' @export
 #' @examples
 #' \dontrun{
-#' tutor()
+#' talk()
 #' }
-tutor <- function() {
+talk <- function() {
 
   # --- Dependency checks and installation ------------------------------------
   cran_pkgs <- c("shiny", "shinyjs", "shinyFiles", "callr", "rstudioapi", "httr2")
@@ -31,7 +31,7 @@ tutor <- function() {
 
   # --- Preflight: check for updates (once per R session, not after a Pause) -
   updated <- classmate_preflight()
-  if (isTRUE(updated)) return(invisible(NULL))   # new tutor() launched inside preflight
+  if (isTRUE(updated)) return(invisible(NULL))   # new talk() launched inside preflight
 
   # --- Pass the caller's working directory to the app -----------------------
   options(.classmate_project_root = getwd())
@@ -49,10 +49,10 @@ tutor <- function() {
 
 # ---------------------------------------------------------------------------
 # Preflight update check
-# Returns TRUE if a new version was installed and a fresh tutor() was launched.
+# Returns TRUE if a new version was installed and a fresh talk() was launched.
 # Returns FALSE (silently) in every other case, including all error paths.
 # ---------------------------------------------------------------------------
-classmate_preflight <- function(relaunch = "tutor") {
+classmate_preflight <- function(relaunch = "talk") {
 
   # Already checked this session, or this is a post-update re-entry
   if (isTRUE(getOption("classmate.update_checked"))) return(FALSE)
@@ -96,12 +96,12 @@ classmate_preflight <- function(relaunch = "tutor") {
 
 # ---------------------------------------------------------------------------
 # Downloads and installs the new version silently, then relaunches.
-# relaunch = "tutor"    → calls classmate::tutor()
-# relaunch = "helpdesk" → calls classmate::helpdesk()
+# relaunch = "talk"    → calls classmate::talk()
+# relaunch = "whisper" → calls classmate::whisper()
 # Returns TRUE on success, FALSE if anything goes wrong (caller continues
 # with the existing version in that case).
 # ---------------------------------------------------------------------------
-classmate_do_update <- function(latest_version, download_url, relaunch = "tutor") {
+classmate_do_update <- function(latest_version, download_url, relaunch = "talk") {
 
   success <- tryCatch({
     tmp <- tempfile(fileext = ".tar.gz")
@@ -127,11 +127,11 @@ classmate_do_update <- function(latest_version, download_url, relaunch = "tutor"
     return(FALSE)
   }
 
-  relaunch_fn  <- if (relaunch == "helpdesk") "helpdesk" else "tutor"
-  relaunch_msg <- if (relaunch == "helpdesk")
-    paste0("Classmate updated to v", latest_version, ". Please call helpdesk() to continue.")
+  relaunch_fn  <- if (relaunch == "whisper") "whisper" else "talk"
+  relaunch_msg <- if (relaunch == "whisper")
+    paste0("Classmate updated to v", latest_version, ". Please call whisper() to continue.")
   else
-    paste0("Classmate updated to v", latest_version, ". Please call tutor() to launch.")
+    paste0("Classmate updated to v", latest_version, ". Please call talk() to launch.")
 
   tryCatch({
     if ("package:classmate" %in% search())

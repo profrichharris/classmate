@@ -6,7 +6,7 @@ This document describes the security and data-handling arrangements for the clas
 
 ## What classmate does
 
-classmate is an R package for university students learning data analysis and GIS. It provides a teaching interface that connects to Anthropic's Claude AI API to help students write and understand R code. It operates in two modes: a full Shiny application (`tutor()`) and a lightweight console mode (`helpdesk()`).
+classmate is an R package for university students learning data analysis and GIS. It provides a teaching interface that connects to Anthropic's Claude AI API to help students write and understand R code. It operates in two modes: a full Shiny application (`talk()`) and a lightweight console mode (`whisper()`).
 
 The API connection is the only external communication the package makes. There is no telemetry, no analytics, no phone-home behaviour of any kind beyond the API calls that the student explicitly initiates by submitting a prompt.
 
@@ -46,7 +46,7 @@ This filtering applies to:
 
 Scalar outputs (single numbers, single strings), statistical summaries (`summary()`), and error messages pass through unmodified, as these do not contain individual-level data.
 
-The same filter is applied within the helpdesk mode to any error messages that might incidentally contain printed data values.
+The same filter is applied within the whisper mode to any error messages that might incidentally contain printed data values.
 
 ---
 

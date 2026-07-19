@@ -18,9 +18,9 @@ The package is authored by Richard Harris (profrichharris@gmail.com) at a UK uni
 
 ## Two modes of operation
 
-### 1. tutor() — the full Shiny app
+### 1. talk() — the full Shiny app
 
-`tutor()` launches a Shiny application inside RStudio's viewer pane. Students interact with it through a purpose-built UI that includes:
+`talk()` launches a Shiny application inside RStudio's viewer pane. Students interact with it through a purpose-built UI that includes:
 
 - A prompt box for typed questions
 - A code editor showing AI-generated code
@@ -30,15 +30,15 @@ The package is authored by Richard Harris (profrichharris@gmail.com) at a UK uni
 - A Quick Console for running ad-hoc R commands without leaving the app
 - A code log saved as an R Notebook (.Rmd) for submission or review
 
-The tutor app is the primary interface for students doing structured practical work. It guides the AI towards code that works with their actual data, keeps a log of what they asked and what was generated, and enforces all the safeguards described below.
+The talk app is the primary interface for students doing structured practical work. It guides the AI towards code that works with their actual data, keeps a log of what they asked and what was generated, and enforces all the safeguards described below.
 
-### 2. helpdesk() — the lightweight console mode
+### 2. whisper() — the lightweight console mode
 
-`helpdesk()` runs entirely in the background with no Shiny interface. Once called, it silently watches for R errors and records the last 30 commands the student typed. When something goes wrong, the student types `raisehand()` (or the shorthand `rh()`) and receives a plain-English explanation of what went wrong and how to fix it, printed directly to the R console.
+`whisper()` runs entirely in the background with no Shiny interface. Once called, it silently watches for R errors and records the last 30 commands the student typed. When something goes wrong, the student types `raisehand()` (or the shorthand `rh()`) and receives a plain-English explanation of what went wrong and how to fix it, printed directly to the R console.
 
-This mode was designed for students who are working through exercises in the standard R console and do not need the full tutor interface. It is minimal, unobtrusive, and uses the cheaper Haiku model rather than Sonnet, since the explanations are short and the task is lower-stakes.
+This mode was designed for students who are working through exercises in the standard R console and do not need the full talk interface. It is minimal, unobtrusive, and uses the cheaper Haiku model rather than Sonnet, since the explanations are short and the task is lower-stakes.
 
-`endclass()` stops the helpdesk. `reset_key()` clears the saved API key.
+`ssshh()` stops the whisper mode. `reset_key()` clears the saved API key.
 
 ---
 
@@ -51,7 +51,7 @@ Students do not use their own Anthropic API keys. Instead, an instructor generat
 - A `final_expiry` date (typically 15 weeks — the length of a university semester)
 - A mode flag: student, help, or non-student (instructor/developer)
 
-Students load the key once (via the app's key prompt or by calling `helpdesk(key = "path/to/file.key")`). It is saved persistently to the user's R config directory and shared between both modes — a key loaded in `tutor()` is immediately available to `helpdesk()` and vice versa.
+Students load the key once (via the app's key prompt or by calling `whisper(key = "path/to/file.key")`). It is saved persistently to the user's R config directory and shared between both modes — a key loaded in `talk()` is immediately available to `whisper()` and vice versa.
 
 This design means:
 - Students never need an Anthropic account
@@ -64,7 +64,7 @@ The non-student mode (for instructors or developers) uses a raw Anthropic API ke
 
 ## Why a Shiny app rather than a console tool?
 
-The full `tutor()` app runs in Shiny for several reasons:
+The full `talk()` app runs in Shiny for several reasons:
 
 1. **Context management.** A Shiny app can maintain a persistent list of selected files and workspace objects across multiple prompts. A console approach would require the student to re-specify context with every question.
 
@@ -132,9 +132,9 @@ classmate is designed so that as little personal data as possible leaves the stu
 
 ## The preflight update system
 
-When `tutor()` or `helpdesk()` is called for the first time in an R session, `classmate_preflight()` checks the GitHub releases API for a newer version. If one is found, it downloads and installs the tarball silently, then relaunches the appropriate function. This ensures students always run the latest version without any manual intervention.
+When `talk()` or `whisper()` is called for the first time in an R session, `classmate_preflight()` checks the GitHub releases API for a newer version. If one is found, it downloads and installs the tarball silently, then relaunches the appropriate function. This ensures students always run the latest version without any manual intervention.
 
-A session guard (`options(classmate.update_checked = TRUE)`) ensures the check runs at most once per R session, regardless of how many times `tutor()` or `helpdesk()` is called. If both are called in the same session, whichever runs first sets the flag and the second skips the check.
+A session guard (`options(classmate.update_checked = TRUE)`) ensures the check runs at most once per R session, regardless of how many times `talk()` or `whisper()` is called. If both are called in the same session, whichever runs first sets the flag and the second skips the check.
 
 ---
 
@@ -166,7 +166,7 @@ Background package installation uses `callr::r_bg()` to avoid blocking the UI, p
 
 ## The Quick Console
 
-The Quick Console is a modal REPL embedded in the tutor app. Its purpose is to let students run short exploratory commands (check an object, try a transformation) without leaving the app and without those commands being logged to the code notebook.
+The Quick Console is a modal REPL embedded in the talk app. Its purpose is to let students run short exploratory commands (check an object, try a transformation) without leaving the app and without those commands being logged to the code notebook.
 
 Features:
 - Shares the global workspace with the main app
@@ -207,9 +207,9 @@ When comment density changes, the current editor code is automatically rewritten
 
 ## Model choices
 
-- **Main app (tutor):** `claude-sonnet-4-6` — used for all Ask / Ask for Code requests. Haiku was tested but hallucinated non-existent tmap functions; Sonnet only for main calls.
+- **Main app (talk):** `claude-sonnet-4-6` — used for all Ask / Ask for Code requests. Haiku was tested but hallucinated non-existent tmap functions; Sonnet only for main calls.
 - **Comment density rewrite:** `claude-haiku-4-5-20251001` — fast, cheap, appropriate for a purely cosmetic text transformation.
-- **helpdesk / raisehand:** `claude-haiku-4-5-20251001` — responses are short plain-English explanations; Haiku is adequate and approximately 15× cheaper per token than Sonnet.
+- **whisper / raisehand:**" `claude-haiku-4-5-20251001` — responses are short plain-English explanations; Haiku is adequate and approximately 15× cheaper per token than Sonnet.
 
 ---
 
@@ -236,8 +236,8 @@ NAMESPACE is managed by roxygen2. Never edit it manually — add or remove `@exp
 | File | Purpose |
 |------|---------|
 | `inst/app/app.R` | Entire Shiny UI and server logic (single file, ~4500 lines) |
-| `R/ask_claude.R` | `tutor()`, `classmate_preflight()`, `classmate_do_update()`, `%||%` |
-| `R/watch.R` | `helpdesk()`, `raisehand()`, `endclass()`, `reset_key()` and all supporting helpers |
+| `R/ask_claude.R` | `talk()`, `classmate_preflight()`, `classmate_do_update()`, `%||%` |
+| `R/watch.R` | `whisper()`, `raisehand()`, `ssshh()`, `reset_key()` and all supporting helpers |
 | `R/instructor.R` | `classmate_make_key()`, `classmate_config_show()` |
 | `DESCRIPTION` | Package metadata and version |
 | `NAMESPACE` | Generated by roxygen2 — do not edit manually |

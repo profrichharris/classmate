@@ -10,7 +10,7 @@ reset_key()
 Invisible NULL (called for side effects).
 }
 \description{
-Removes the key file saved by \code{helpdesk()} or \code{tutor()} and unsets
+Removes the key file saved by \code{whisper()} or \code{talk()} and unsets
 the \code{ANTHROPIC_API_KEY} environment variable. The next call to
-\code{helpdesk()} or \code{tutor()} will prompt for a new key.
+\code{whisper()} or \code{talk()} will prompt for a new key.
 }
