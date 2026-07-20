@@ -215,12 +215,10 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.74 (2026-07-19)  
+**Last released:** 0.5.75 (2026-07-20)  
 **Current version:** 0.5.75
 
-Unreleased changes in 0.5.75:
-- `classmate_reset()` — new exported function; deletes saved key + language pref, stops whisper() if running, resets update-check flag; refuses if a paused session exists; requires `yes` confirmation at console
-- Quick Console now shadows all user-facing classmate functions (whisper, raisehand, rh, ssshh, reset_key, classmate_reset, classmate_speaks, classmate_make_key, classmate_config_show, talk) with a message directing users to run from their main R console
+No unreleased changes.
 
 ---
 
@@ -262,6 +260,7 @@ Unreleased changes in 0.5.75:
 | 0.5.70 | classmate_speaks(): language preference saved to language.rds, fuzzy-matched against ~70 known languages; language clause injected into system prompt for both talk() and whisper(); Preferences modal adds language selector (always shows English + any set non-English language); British English enforced by default; R code always in English, # comments may use target language; Save Code Block button moved left of "Code saved to Notebook"; Plots tab shown before Results tab in R output |
 | 0.5.71–0.5.73 | Language clause injected into all five build_*_system_prompt() functions (Fix, output/error/diff/code Explain) and inline Tell me More; language picker modal with filterable scrollable list; pref_lang_change Change button in Preferences; show_preferences_modal() helper extracted |
 | 0.5.74 | Raised Explain max_tokens from 650 to 1200 — fixes false "code too long" error on short code blocks when response is in a non-English language (Chinese etc. tokenise more densely) |
+| 0.5.75 | `classmate_reset()` — deletes saved key + language pref, stops whisper() if running, clears update-check flag; refuses if paused session exists; requires yes/no confirmation. Quick Console now blocks all user-facing classmate functions with a redirect message |
 | 0.5.64 | Startup disclaimer expanded to include privacy notice: data handling, Anthropic API processing, and AI policy guidance. Prompt box pre-filled with data protection notice on fresh open; Ask buttons frozen until Clear pressed |
 | 0.5.65 | Extended button freeze during protection notice: all buttons frozen except Quit and Clear; Clear highlighted yellow; Clear Workspace shown white during notice period |
 | 0.5.66 | Clear Workspace button changed to default white permanently (was orange); orange colouring removed |
