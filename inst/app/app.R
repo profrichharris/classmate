@@ -815,6 +815,10 @@ run_code <- function(code_text) {
   console_output <- character(0)
   plot_files     <- character(0)
 
+  # Run in the user's project directory, not the Shiny app directory
+  old_wd <- setwd(PROJECT_ROOT)
+  on.exit(setwd(old_wd), add = TRUE)
+
   # Open a numbered PNG device to capture any plots generated
   tmp_base    <- tempfile("classmate_plot_")
   tmp_pattern <- paste0(tmp_base, "%03d.png")
@@ -3661,6 +3665,9 @@ server <- function(input, output, session) {
   run_in_qc <- function(code) {
     warnings_seen  <- character(0)
     console_output <- character(0)
+    # Run in the user's project directory, not the Shiny app directory
+    old_wd <- setwd(PROJECT_ROOT)
+    on.exit(setwd(old_wd), add = TRUE)
     # Temporarily shadow q/quit/stopApp/ask in globalenv to intercept them
     .qc_classmate_fns <- c("talk", "whisper", "raisehand", "rh", "ssshh",
                            "reset_key", "classmate_reset", "classmate_speaks",
