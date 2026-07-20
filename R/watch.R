@@ -10,12 +10,14 @@
 # ---------------------------------------------------------------------------
 
 .watch_env <- new.env(parent = emptyenv())
-.watch_env$active         <- FALSE
-.watch_env$api_key        <- NULL
-.watch_env$last_error     <- NULL
-.watch_env$history_buffer <- list()
-.watch_env$callback_id    <- NULL
-.watch_env$original_error <- NULL
+.watch_env$active            <- FALSE
+.watch_env$api_key           <- NULL
+.watch_env$last_error        <- NULL
+.watch_env$last_warning      <- NULL
+.watch_env$last_warning_sig  <- NULL
+.watch_env$history_buffer    <- list()
+.watch_env$callback_id       <- NULL
+.watch_env$original_error    <- NULL
 
 .WATCH_BUFFER_SIZE <- 30L
 .WATCH_MODEL       <- "claude-haiku-4-5-20251001"
@@ -194,7 +196,7 @@
 # Claude API call
 # ---------------------------------------------------------------------------
 
-.watch_call_claude <- function(user_prompt, api_key) {
+.watch_call_claude <- function(user_prompt, api_key, mode = "error") {
   lang     <- classmate_language()
   lang_clause <- if (tolower(trimws(lang)) == "english") {
     paste(
@@ -211,18 +213,8 @@
       "Do not translate R syntax, package names, or argument names."
     )
   }
-  system_prompt <- paste(
-    "You are a friendly teaching assistant helping students who are learning R.",
-    "You will receive: (1) a numbered log of the student's recent R commands,",
-    "with [ERROR] marking the command that failed; (2) the error message;",
-    "(3) a summary of their current R workspace showing object names, types,",
-    "dimensions, and column names where available.",
-    "",
-    "Your job is to explain in plain English what went wrong and how to fix it.",
-    "Important: the error may have been caused by an earlier command, not the",
-    "one that produced the error message — look at the full history and workspace",
-    "to find the real root cause.",
-    "",
+
+  formatting_rules <- paste(
     "FORMATTING RULES — these are strict:",
     "- Write in plain text only. The output is displayed in an R console which",
     "  cannot render markdown.",
@@ -235,14 +227,47 @@
     "Other guidelines:",
     "- Be concise, friendly, and encouraging.",
     "- Avoid jargon; explain any technical terms you use.",
-    "- Focus on the most likely cause first.",
-    "- If the fix is a simple name or spelling correction, show it inline.",
-    "- If you spot a typo in a column name or object name, call it out clearly.",
     "- Do not invite the student to reply or ask follow-up questions —",
-    "  this is a one-shot explanation with no reply mechanism.",
-    "",
-    lang_clause
+    "  this is a one-shot explanation with no reply mechanism."
   )
+
+  system_prompt <- if (mode == "warning") {
+    paste(
+      "You are a friendly teaching assistant helping students who are learning R.",
+      "You will receive: (1) a numbered log of the student's recent R commands,",
+      "with [WARNING] marking the command that produced the warning; (2) the warning",
+      "message; (3) a summary of their current R workspace.",
+      "",
+      "Your job is to explain in plain English what the warning means.",
+      "Cover: (a) what triggered it, (b) whether it is serious or can safely be",
+      "ignored in this context, and (c) how to fix it if it matters.",
+      "Keep the explanation short — most warnings are minor.",
+      "",
+      formatting_rules,
+      "",
+      lang_clause
+    )
+  } else {
+    paste(
+      "You are a friendly teaching assistant helping students who are learning R.",
+      "You will receive: (1) a numbered log of the student's recent R commands,",
+      "with [ERROR] marking the command that failed; (2) the error message;",
+      "(3) a summary of their current R workspace showing object names, types,",
+      "dimensions, and column names where available.",
+      "",
+      "Your job is to explain in plain English what went wrong and how to fix it.",
+      "Important: the error may have been caused by an earlier command, not the",
+      "one that produced the error message — look at the full history and workspace",
+      "to find the real root cause.",
+      "",
+      formatting_rules,
+      "- Focus on the most likely cause first.",
+      "- If the fix is a simple name or spelling correction, show it inline.",
+      "- If you spot a typo in a column name or object name, call it out clearly.",
+      "",
+      lang_clause
+    )
+  }
 
   result <- tryCatch({
     resp <- httr2::request("https://api.anthropic.com/v1/messages") |>
@@ -410,7 +435,7 @@ whisper <- function(key = NULL) {
   .watch_env$last_error     <- NULL
   .watch_env$original_error <- getOption("error")
 
-  # Hook 1: rolling command history
+  # Hook 1: rolling command history + warning detection
   cb_id <- addTaskCallback(function(expr, value, ok, visible) {
     cmd <- tryCatch(paste(deparse(expr), collapse = "\n"), error = function(e) "?")
     entry <- list(cmd = cmd, ok = ok, time = Sys.time())
@@ -418,6 +443,32 @@ whisper <- function(key = NULL) {
     if (length(buf) > .WATCH_BUFFER_SIZE)
       buf <- buf[(length(buf) - .WATCH_BUFFER_SIZE + 1L):length(buf)]
     .watch_env$history_buffer <- buf
+
+    # Detect new warnings via .Last.warning (R's native warning store).
+    # Only check on successful expressions — errors are handled separately.
+    if (ok) {
+      lw  <- tryCatch(get(".Last.warning", envir = baseenv()), error = function(e) NULL)
+      if (!is.null(lw) && length(lw) > 0) {
+        sig <- paste0(length(lw), ":",
+                      paste(names(lw),     collapse = "\x1f"),
+                      paste(as.character(unlist(lw)), collapse = "\x1f"))
+        if (!identical(sig, .watch_env$last_warning_sig)) {
+          .watch_env$last_warning_sig <- sig
+          ws_names <- tryCatch(ls(envir = .GlobalEnv), error = function(e) character(0))
+          .watch_env$last_warning <- list(
+            message   = as.character(lw[[length(lw)]]),
+            call      = names(lw)[length(lw)],
+            cmd       = cmd,
+            history   = buf,
+            workspace = lapply(setNames(ws_names, ws_names), function(nm)
+              tryCatch(.watch_schema(get(nm, envir = .GlobalEnv)), error = function(e) NULL)
+            ),
+            time      = Sys.time()
+          )
+          message("  [classmate] Type raisehand() or rh() for help with this warning.")
+        }
+      }
+    }
     TRUE
   }, name = "classmate_watcher")
 
@@ -466,7 +517,7 @@ whisper <- function(key = NULL) {
   }, onexit = TRUE)
 
   .watch_env$active <- TRUE
-  message("classmate whisper is running. Type raisehand() or rh() if your code generates an error, or ssshh() to stop.")
+  message("classmate whisper is running. Type raisehand() or rh() if your code generates an error or warning, or ssshh() to stop.")
   invisible(NULL)
 }
 
@@ -474,13 +525,15 @@ whisper <- function(key = NULL) {
 # raisehand()
 # ---------------------------------------------------------------------------
 
-#' Ask for help with the last R error
+#' Ask for help with the last R error or warning
 #'
-#' Sends the error message, recent command history, and workspace summary to
-#' Claude and prints a plain-English explanation. Also shows your remaining
+#' Sends the error or warning message, recent command history, and workspace
+#' summary to Claude and prints a plain-English explanation. Errors take
+#' priority over warnings if both have been captured. Also shows your remaining
 #' quota if a student key is in use.
 #'
-#' Can also be called without a prior error just to check quota remaining.
+#' Can also be called without a prior error or warning just to check quota
+#' remaining.
 #'
 #' @return Invisible NULL (called for side effects).
 #' @export
@@ -508,10 +561,11 @@ raisehand <- function() {
     }
   }
 
-  # --- No error yet ----------------------------------------------------------
+  # --- Nothing captured yet --------------------------------------------------
   e <- .watch_env$last_error
-  if (is.null(e)) {
-    msg <- "No error has been captured yet."
+  w <- .watch_env$last_warning
+  if (is.null(e) && is.null(w)) {
+    msg <- "No error or warning has been captured yet."
     if (!is.null(quota)) {
       msg <- paste0(msg, sprintf(
         "\nUsage so far: $%.4f of $%.2f (resets %s).",
@@ -522,32 +576,60 @@ raisehand <- function() {
     return(invisible(NULL))
   }
 
-  # --- Build prompt ----------------------------------------------------------
-  history_lines <- vapply(seq_along(e$history), function(i) {
-    h   <- e$history[[i]]
-    flag <- if (!h$ok) " [ERROR]" else ""
-    paste0(i, ". ", h$cmd, flag)
-  }, character(1))
+  # --- Choose most recent, errors taking priority over warnings -------------
+  use_warning <- !is.null(w) && (is.null(e) || w$time > e$time)
 
-  tb_lines <- if (length(e$traceback) > 0)
-    paste(tail(e$traceback, 6L), collapse = "\n")
-  else
-    "(no traceback available)"
+  if (use_warning) {
+    # --- Build warning prompt -----------------------------------------------
+    history_lines <- vapply(seq_along(w$history), function(i) {
+      h    <- w$history[[i]]
+      flag <- if (identical(h$cmd, w$cmd)) " [WARNING]" else ""
+      paste0(i, ". ", h$cmd, flag)
+    }, character(1))
 
-  prompt <- paste0(
-    "Recent commands (oldest to newest):\n",
-    paste(history_lines, collapse = "\n"),
-    "\n\nError message:\n",
-    .watch_scrub_error_message(trimws(e$message)),
-    "\n\nCall stack at time of error:\n",
-    tb_lines,
-    "\n\nWorkspace at time of error:\n",
-    .watch_format_workspace(e$workspace)
-  )
+    warn_call <- if (nzchar(w$call %||% ""))
+      paste0("\nWarning issued by: ", w$call) else ""
 
-  # --- Call Claude -----------------------------------------------------------
-  message("classmate is thinking...")
-  result <- .watch_call_claude(prompt, .watch_env$api_key)
+    prompt <- paste0(
+      "Recent commands (oldest to newest):\n",
+      paste(history_lines, collapse = "\n"),
+      "\n\nWarning message:\n",
+      trimws(w$message),
+      warn_call,
+      "\n\nWorkspace at time of warning:\n",
+      .watch_format_workspace(w$workspace)
+    )
+
+    message("classmate is thinking...")
+    result <- .watch_call_claude(prompt, .watch_env$api_key, mode = "warning")
+
+  } else {
+    # --- Build error prompt --------------------------------------------------
+    history_lines <- vapply(seq_along(e$history), function(i) {
+      h    <- e$history[[i]]
+      flag <- if (!h$ok) " [ERROR]" else ""
+      paste0(i, ". ", h$cmd, flag)
+    }, character(1))
+
+    tb_lines <- if (length(e$traceback) > 0)
+      paste(tail(e$traceback, 6L), collapse = "\n")
+    else
+      "(no traceback available)"
+
+    prompt <- paste0(
+      "Recent commands (oldest to newest):\n",
+      paste(history_lines, collapse = "\n"),
+      "\n\nError message:\n",
+      .watch_scrub_error_message(trimws(e$message)),
+      "\n\nCall stack at time of error:\n",
+      tb_lines,
+      "\n\nWorkspace at time of error:\n",
+      .watch_format_workspace(e$workspace)
+    )
+
+    message("classmate is thinking...")
+    result <- .watch_call_claude(prompt, .watch_env$api_key, mode = "error")
+  }
 
   # --- Display response ------------------------------------------------------
   sep <- strrep("─", 60)
@@ -595,12 +677,14 @@ ssshh <- function() {
   # Remove rh() shortcut unless it existed before whisper() was called
   if (!isTRUE(.watch_env$rh_existed))
     if (exists("rh", .GlobalEnv, inherits = FALSE)) rm(list = "rh", envir = .GlobalEnv)
-  .watch_env$active         <- FALSE
-  .watch_env$api_key        <- NULL
-  .watch_env$last_error     <- NULL
-  .watch_env$history_buffer <- list()
-  .watch_env$callback_id    <- NULL
-  .watch_env$rh_existed     <- FALSE
+  .watch_env$active           <- FALSE
+  .watch_env$api_key          <- NULL
+  .watch_env$last_error       <- NULL
+  .watch_env$last_warning     <- NULL
+  .watch_env$last_warning_sig <- NULL
+  .watch_env$history_buffer   <- list()
+  .watch_env$callback_id      <- NULL
+  .watch_env$rh_existed       <- FALSE
   message("classmate has stopped watching.")
   invisible(NULL)
 }
@@ -713,10 +797,6 @@ classmate_reset <- function() {
     file.remove(lang_path)
     message("Response language reset to English.")
   }
-
-  # --- Clear in-session state -----------------------------------------------
-  options(classmate.update_checked    = NULL)
-  options(classmate.failed_update_version = NULL)
 
   message("classmate has been reset. You can now call talk() or whisper() to start fresh.")
   invisible(NULL)
