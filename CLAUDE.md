@@ -215,8 +215,8 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.77 (2026-07-20)  
-**Current version:** 0.5.77
+**Last released:** 0.5.79 (2026-07-20)  
+**Current version:** 0.5.79
 
 No unreleased changes.
 
@@ -263,6 +263,8 @@ No unreleased changes.
 | 0.5.75 | `classmate_reset()` — deletes saved key + language pref, stops whisper() if running; refuses if paused session exists; requires yes/no confirmation. Quick Console now blocks all user-facing classmate functions with a redirect message |
 | 0.5.76 | whisper() now captures warnings via .Last.warning in the task callback; raisehand() explains the most recent event (error or warning, errors take priority); separate warning system prompt. Fix: classmate_reset() no longer clears classmate.update_checked — doing so caused a "lazyload database corrupt" error if an update was available on the next talk() call |
 | 0.5.77 | Bug fix: Run button and Quick Console were executing code in the Shiny app's package installation directory instead of the user's project directory. Both now setwd(PROJECT_ROOT) before running code and restore on exit |
+| 0.5.78 | talk() now stops whisper() automatically before launching the app; classmate_reset() refuses to run if whisper() is active or a paused talk() session exists |
+| 0.5.79 | raisehand() shows a short friendly message on network/timeout errors instead of raw curl traceback; usage line suppressed when API call fails |
 | 0.5.64 | Startup disclaimer expanded to include privacy notice: data handling, Anthropic API processing, and AI policy guidance. Prompt box pre-filled with data protection notice on fresh open; Ask buttons frozen until Clear pressed |
 | 0.5.65 | Extended button freeze during protection notice: all buttons frozen except Quit and Clear; Clear highlighted yellow; Clear Workspace shown white during notice period |
 | 0.5.66 | Clear Workspace button changed to default white permanently (was orange); orange colouring removed |
