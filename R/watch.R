@@ -640,3 +640,84 @@ reset_key <- function() {
 
   invisible(NULL)
 }
+
+# ---------------------------------------------------------------------------
+# classmate_reset()
+# ---------------------------------------------------------------------------
+
+#' Reset classmate to factory defaults
+#'
+#' Deletes the saved key (student key or API key), resets the response language
+#' to English, and clears the in-session update-check flag so that the next
+#' call to \code{talk()} or \code{whisper()} starts completely fresh.
+#'
+#' If \code{whisper()} is currently running it will be stopped first.
+#'
+#' This function will refuse to run while the app is paused (i.e. after
+#' \emph{Save & Pause} has been used), because the paused session still holds
+#' references to the key.  Quit the app properly first, then call
+#' \code{classmate_reset()}.
+#'
+#' @return Invisible NULL (called for side effects).
+#' @export
+classmate_reset <- function() {
+
+  # --- Refuse if a paused session exists ------------------------------------
+  pause_file <- file.path(
+    getOption(".classmate_project_root", getwd()),
+    "claude_assistant_pause.rds"
+  )
+  if (file.exists(pause_file)) {
+    message(
+      "classmate_reset() cannot run while a paused session exists.\n",
+      "Please open Classmate, then quit the app normally before resetting."
+    )
+    return(invisible(NULL))
+  }
+
+  # --- Confirm with the user ------------------------------------------------
+  message(
+    "classmate_reset() will:\n",
+    "  • Delete the saved key (student key or API key)\n",
+    "  • Reset the response language to English\n",
+    "  • Clear the in-session update check (the next talk() will re-check)\n",
+    "  • Stop whisper() if it is currently running\n"
+  )
+  answer <- trimws(readline("Are you sure you want to reset? (yes/no): "))
+  if (!tolower(answer) %in% c("yes", "y")) {
+    message("Reset cancelled.")
+    return(invisible(NULL))
+  }
+
+  # --- Stop whisper if running ----------------------------------------------
+  if (.watch_env$active) {
+    message("Stopping classmate whisper...")
+    ssshh()
+  }
+
+  # --- Delete saved key ------------------------------------------------------
+  cfg_path <- .watch_cfg_path()
+  if (file.exists(cfg_path)) {
+    file.remove(cfg_path)
+    message("Saved key file removed.")
+  }
+
+  if (nzchar(Sys.getenv("ANTHROPIC_API_KEY"))) {
+    Sys.unsetenv("ANTHROPIC_API_KEY")
+    message("ANTHROPIC_API_KEY cleared from environment.")
+  }
+
+  # --- Reset language to English --------------------------------------------
+  lang_path <- .classmate_lang_path()
+  if (file.exists(lang_path)) {
+    file.remove(lang_path)
+    message("Response language reset to English.")
+  }
+
+  # --- Clear in-session state -----------------------------------------------
+  options(classmate.update_checked    = NULL)
+  options(classmate.failed_update_version = NULL)
+
+  message("classmate has been reset. You can now call talk() or whisper() to start fresh.")
+  invisible(NULL)
+}

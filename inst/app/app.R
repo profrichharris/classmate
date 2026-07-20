@@ -3662,16 +3662,29 @@ server <- function(input, output, session) {
     warnings_seen  <- character(0)
     console_output <- character(0)
     # Temporarily shadow q/quit/stopApp/ask in globalenv to intercept them
-    shadow <- list(
-      q        = if (exists("q",        .GlobalEnv, inherits = FALSE)) get("q",        .GlobalEnv) else NULL,
-      quit     = if (exists("quit",     .GlobalEnv, inherits = FALSE)) get("quit",     .GlobalEnv) else NULL,
-      stopApp  = if (exists("stopApp",  .GlobalEnv, inherits = FALSE)) get("stopApp",  .GlobalEnv) else NULL,
-      talk     = if (exists("talk",     .GlobalEnv, inherits = FALSE)) get("talk",     .GlobalEnv) else NULL
+    .qc_classmate_fns <- c("talk", "whisper", "raisehand", "rh", "ssshh",
+                           "reset_key", "classmate_reset", "classmate_speaks",
+                           "classmate_make_key", "classmate_config_show")
+    shadow <- c(
+      list(
+        q       = if (exists("q",       .GlobalEnv, inherits = FALSE)) get("q",       .GlobalEnv) else NULL,
+        quit    = if (exists("quit",    .GlobalEnv, inherits = FALSE)) get("quit",    .GlobalEnv) else NULL,
+        stopApp = if (exists("stopApp", .GlobalEnv, inherits = FALSE)) get("stopApp", .GlobalEnv) else NULL
+      ),
+      setNames(lapply(.qc_classmate_fns, function(nm)
+        if (exists(nm, .GlobalEnv, inherits = FALSE)) get(nm, .GlobalEnv) else NULL
+      ), .qc_classmate_fns)
     )
-    assign("q",       function(...) stop("__QC_QUIT__"),          envir = .GlobalEnv)
-    assign("quit",    function(...) stop("__QC_QUIT__"),          envir = .GlobalEnv)
-    assign("stopApp", function(...) stop("__QC_STOPAPP__"),       envir = .GlobalEnv)
-    assign("talk",    function(...) message("Classmate is already running."), envir = .GlobalEnv)
+    assign("q",       function(...) stop("__QC_QUIT__"),    envir = .GlobalEnv)
+    assign("quit",    function(...) stop("__QC_QUIT__"),    envir = .GlobalEnv)
+    assign("stopApp", function(...) stop("__QC_STOPAPP__"), envir = .GlobalEnv)
+    .qc_not_here_msg <- paste0(
+      "This function is not available inside Classmate's Quick Console.\n",
+      "Please close or pause Classmate and run it from your main R console."
+    )
+    for (.qc_fn in .qc_classmate_fns)
+      assign(.qc_fn, local({ msg <- .qc_not_here_msg; function(...) message(msg) }), envir = .GlobalEnv)
+    rm(.qc_classmate_fns, .qc_fn, .qc_not_here_msg)
     on.exit({
       for (nm in names(shadow)) {
         if (is.null(shadow[[nm]])) {

@@ -216,9 +216,11 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 ## Current version and recent unreleased changes
 
 **Last released:** 0.5.74 (2026-07-19)  
-**Current version:** 0.5.74
+**Current version:** 0.5.75
 
-No unreleased changes.
+Unreleased changes in 0.5.75:
+- `classmate_reset()` — new exported function; deletes saved key + language pref, stops whisper() if running, resets update-check flag; refuses if a paused session exists; requires `yes` confirmation at console
+- Quick Console now shadows all user-facing classmate functions (whisper, raisehand, rh, ssshh, reset_key, classmate_reset, classmate_speaks, classmate_make_key, classmate_config_show, talk) with a message directing users to run from their main R console
 
 ---
 
