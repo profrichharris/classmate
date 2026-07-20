@@ -20,6 +20,12 @@ CLASSMATE_GITHUB_REPO <- "profrichharris/classmate"
 #' }
 talk <- function() {
 
+  # --- Stop whisper() if running — avoid conflicts with the app -------------
+  if (.watch_env$active) {
+    message("Stopping classmate whisper before launching the app...")
+    ssshh()
+  }
+
   # --- Dependency checks and installation ------------------------------------
   cran_pkgs <- c("shiny", "shinyjs", "shinyFiles", "callr", "rstudioapi", "httr2")
   for (pkg in cran_pkgs) {

@@ -292,7 +292,14 @@
                (usage$output_tokens %||% 0L) * .WATCH_PRICE_OUT
     list(text = text, cost = cost)
   }, error = function(e) {
-    list(text = paste("Could not reach the AI:", conditionMessage(e)), cost = 0)
+    msg <- conditionMessage(e)
+    friendly <- if (grepl("timed? ?out|timeout|time.?out", msg, ignore.case = TRUE))
+      "classmate could not reach the AI — the request timed out. Please try again."
+    else if (grepl("Could not resolve|network|connection", msg, ignore.case = TRUE))
+      "classmate could not reach the AI — please check your internet connection and try again."
+    else
+      "classmate could not reach the AI. Please try again."
+    list(text = friendly, cost = 0, failed = TRUE)
   })
   result
 }
@@ -637,18 +644,19 @@ raisehand <- function() {
   cat(result$text, "\n")
   cat(sep, "\n\n", sep = "")
 
-  # --- Log usage and show quota ----------------------------------------------
-  if (result$cost > 0) .watch_append_usage(result$cost)
-
-  if (!is.null(cfg)) {
-    quota2 <- .watch_quota(cfg)  # re-read after appending
-    if (!is.null(quota2)) {
-      if (!is.null(quota2$limit_usd)) {
-        remaining <- max(0, quota2$limit_usd - quota2$used_usd)
-        cat(sprintf(
-          "[classmate] $%.4f used this period · $%.4f remaining · resets %s\n\n",
-          quota2$used_usd, remaining, quota2$reset_label
-        ))
+  # --- Log usage and show quota (skip entirely if the API call failed) ------
+  if (!isTRUE(result$failed)) {
+    if (result$cost > 0) .watch_append_usage(result$cost)
+    if (!is.null(cfg)) {
+      quota2 <- .watch_quota(cfg)  # re-read after appending
+      if (!is.null(quota2)) {
+        if (!is.null(quota2$limit_usd)) {
+          remaining <- max(0, quota2$limit_usd - quota2$used_usd)
+          cat(sprintf(
+            "[classmate] $%.4f used this period · $%.4f remaining · resets %s\n\n",
+            quota2$used_usd, remaining, quota2$reset_label
+          ))
+        }
       }
     }
   }
@@ -731,30 +739,35 @@ reset_key <- function() {
 
 #' Reset classmate to factory defaults
 #'
-#' Deletes the saved key (student key or API key), resets the response language
-#' to English, and clears the in-session update-check flag so that the next
-#' call to \code{talk()} or \code{whisper()} starts completely fresh.
+#' Deletes the saved key (student key or API key) and resets the response
+#' language to English.
 #'
-#' If \code{whisper()} is currently running it will be stopped first.
-#'
-#' This function will refuse to run while the app is paused (i.e. after
-#' \emph{Save & Pause} has been used), because the paused session still holds
-#' references to the key.  Quit the app properly first, then call
-#' \code{classmate_reset()}.
+#' This function will refuse to run while \code{whisper()} is active or while
+#' a paused \code{talk()} session exists. Stop \code{whisper()} with
+#' \code{ssshh()} first, or quit the app before resetting.
 #'
 #' @return Invisible NULL (called for side effects).
 #' @export
 classmate_reset <- function() {
 
-  # --- Refuse if a paused session exists ------------------------------------
+  # --- Refuse if whisper() is running ----------------------------------------
+  if (.watch_env$active) {
+    message(
+      "classmate_reset() cannot run while whisper() is active.\n",
+      "Please call ssshh() to stop whisper first, then reset."
+    )
+    return(invisible(NULL))
+  }
+
+  # --- Refuse if a paused talk() session exists ------------------------------
   pause_file <- file.path(
     getOption(".classmate_project_root", getwd()),
     "claude_assistant_pause.rds"
   )
   if (file.exists(pause_file)) {
     message(
-      "classmate_reset() cannot run while a paused session exists.\n",
-      "Please open Classmate, then quit the app normally before resetting."
+      "classmate_reset() cannot run while a paused Classmate session exists.\n",
+      "Please open Classmate and quit the app normally before resetting."
     )
     return(invisible(NULL))
   }
@@ -763,20 +776,12 @@ classmate_reset <- function() {
   message(
     "classmate_reset() will:\n",
     "  • Delete the saved key (student key or API key)\n",
-    "  • Reset the response language to English\n",
-    "  • Clear the in-session update check (the next talk() will re-check)\n",
-    "  • Stop whisper() if it is currently running\n"
+    "  • Reset the response language to English\n"
   )
   answer <- trimws(readline("Are you sure you want to reset? (yes/no): "))
   if (!tolower(answer) %in% c("yes", "y")) {
     message("Reset cancelled.")
     return(invisible(NULL))
-  }
-
-  # --- Stop whisper if running ----------------------------------------------
-  if (.watch_env$active) {
-    message("Stopping classmate whisper...")
-    ssshh()
   }
 
   # --- Delete saved key ------------------------------------------------------
