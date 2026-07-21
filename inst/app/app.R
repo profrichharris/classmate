@@ -4838,20 +4838,11 @@ server <- function(input, output, session) {
       tags$p(em(
         "The API key is not saved; it will be picked up from the R environment automatically."
       )),
-      tags$p(paste(
-        "To close without saving a restore point, use the Quit button instead."
-      )),
       footer = tagList(
         modalButton("Cancel"),
-        actionButton("confirm_pause_app", "Save & Pause", class = "btn-primary"),
-        actionButton("quit_from_pause", "Quit", class = "btn-danger")
+        actionButton("confirm_pause_app", "Save & Pause", class = "btn-primary")
       )
     ))
-  })
-
-  observeEvent(input$quit_from_pause, {
-    removeModal()
-    show_quit_confirm_modal()
   })
 
   observeEvent(input$confirm_pause_app, {

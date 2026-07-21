@@ -10,15 +10,11 @@ classmate_reset()
 Invisible NULL (called for side effects).
 }
 \description{
-Deletes the saved key (student key or API key), resets the response language
-to English, and clears the in-session update-check flag so that the next
-call to \code{talk()} or \code{whisper()} starts completely fresh.
+Deletes the saved key (student key or API key) and resets the response
+language to English.
 }
 \details{
-If \code{whisper()} is currently running it will be stopped first.
-
-This function will refuse to run while the app is paused (i.e. after
-\emph{Save & Pause} has been used), because the paused session still holds
-references to the key.  Quit the app properly first, then call
-\code{classmate_reset()}.
+This function will refuse to run while \code{whisper()} is active or while
+a paused \code{talk()} session exists. Stop \code{whisper()} with
+\code{ssshh()} first, or quit the app before resetting.
 }

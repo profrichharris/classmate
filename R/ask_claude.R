@@ -215,31 +215,17 @@ classmate_language <- function() {
   tryCatch(readRDS(path), error = function(e) "English")
 }
 
-#' Chicago city boundary
-#'
-#' An \code{sf} polygon representing the boundary of the city of Chicago.
-#'
-#' @format An \code{sf} object with a \code{NAME} column and a \code{geometry}
-#'   column (MULTIPOLYGON, WGS 84).
-#' @source Derived from the City of Chicago open data portal.
-"chicago_boundary"
-
 #' Chicago census tracts with income data
 #'
-#' An \code{sf} object of census tracts for Chicago with associated income
-#' attributes.
+#' An \code{sf} object of census tracts for Chicago with median household
+#' income attributes.
 #'
-#' @format An \code{sf} object with tract-level variables and a \code{geometry}
-#'   column (MULTIPOLYGON).
+#' @format An \code{sf} object with 856 rows and 4 variables:
+#'   \describe{
+#'     \item{GEOID}{Census tract identifier}
+#'     \item{NAME}{Census tract name}
+#'     \item{median_income}{Median household income (USD)}
+#'     \item{geom}{Multipolygon geometry (WGS 84)}
+#'   }
 #' @source Derived from US Census / ACS data.
-"chicago_tracts_income"
-
-#' Rogers Park residential buildings
-#'
-#' An \code{sf} object of residential building footprints in the Rogers Park
-#' neighbourhood of Chicago.
-#'
-#' @format An \code{sf} object with building-level attributes and a
-#'   \code{geometry} column (MULTIPOLYGON / POLYGON).
-#' @source Derived from the City of Chicago open data portal.
-"chicago_rogerspark_residential_buildings"
+"chicago"
