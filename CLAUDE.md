@@ -215,8 +215,8 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.79 (2026-07-20)  
-**Current version:** 0.5.79
+**Last released:** 0.5.80 (2026-07-21)  
+**Current version:** 0.5.80
 
 No unreleased changes.
 
@@ -265,6 +265,7 @@ No unreleased changes.
 | 0.5.77 | Bug fix: Run button and Quick Console were executing code in the Shiny app's package installation directory instead of the user's project directory. Both now setwd(PROJECT_ROOT) before running code and restore on exit |
 | 0.5.78 | talk() now stops whisper() automatically before launching the app; classmate_reset() refuses to run if whisper() is active or a paused talk() session exists |
 | 0.5.79 | raisehand() shows a short friendly message on network/timeout errors instead of raw curl traceback; usage line suppressed when API call fails |
+| 0.5.80 | Bug fix: auto-update no longer attempts live detach/reload (caused "lazy-load database corrupt" errors); now installs silently and asks the user to restart R |
 | 0.5.64 | Startup disclaimer expanded to include privacy notice: data handling, Anthropic API processing, and AI policy guidance. Prompt box pre-filled with data protection notice on fresh open; Ask buttons frozen until Clear pressed |
 | 0.5.65 | Extended button freeze during protection notice: all buttons frozen except Quit and Clear; Clear highlighted yellow; Clear Workspace shown white during notice period |
 | 0.5.66 | Clear Workspace button changed to default white permanently (was orange); orange colouring removed |
