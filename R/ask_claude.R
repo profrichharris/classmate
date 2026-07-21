@@ -101,9 +101,10 @@ classmate_preflight <- function(relaunch = "talk") {
 }
 
 # ---------------------------------------------------------------------------
-# Downloads and installs the new version silently, then relaunches.
-# relaunch = "talk"    → calls classmate::talk()
-# relaunch = "whisper" → calls classmate::whisper()
+# Downloads and installs the new version silently, then asks the user to
+# restart R.  We do NOT attempt a live detach/reload — that causes the
+# "lazyload database corrupt" error because R still has open file handles
+# to the old .rdb when the new version writes over it.
 # Returns TRUE on success, FALSE if anything goes wrong (caller continues
 # with the existing version in that case).
 # ---------------------------------------------------------------------------
@@ -133,22 +134,12 @@ classmate_do_update <- function(latest_version, download_url, relaunch = "talk")
     return(FALSE)
   }
 
-  relaunch_fn  <- if (relaunch == "whisper") "whisper" else "talk"
-  relaunch_msg <- if (relaunch == "whisper")
-    paste0("Classmate updated to v", latest_version, ". Please call whisper() to continue.")
-  else
-    paste0("Classmate updated to v", latest_version, ". Please call talk() to launch.")
-
-  tryCatch({
-    if ("package:classmate" %in% search())
-      detach("package:classmate", unload = TRUE, force = TRUE)
-    library(classmate)
-    do.call(getExportedValue("classmate", relaunch_fn), list())
-    return(TRUE)
-  }, error = function(e) {
-    message(relaunch_msg)
-    return(TRUE)
-  })
+  relaunch_call <- if (relaunch == "whisper") "whisper()" else "talk()"
+  message(
+    "Classmate has been updated to v", latest_version, ".\n",
+    "Please restart R and then run ", relaunch_call, " to continue."
+  )
+  TRUE
 }
 
 
