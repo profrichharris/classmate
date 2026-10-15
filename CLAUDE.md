@@ -102,6 +102,16 @@ Everything interesting is in `inst/app/app.R`. It is a single-file Shiny app.
 
 ---
 
+## Answer button pipeline (`do_ask_answer`, app.R)
+
+- **Stage 1 (plan)** — `build_answer_system_prompt()`; Claude replies `ANSWER:` (direct, from object/file schema summaries + general knowledge) or `COMPUTE:` + one read-only ```r block. Existing sentinels (OUT_OF_SCOPE, NEEDS_CLARIFICATION, DISCLOSURE_RISK) still apply.
+- **Safety** — `answer_code_violations()` statically rejects writers, setwd, rm/assign/`<<-`, devices/plots, installs, system, network, eval, options etc. before running; `run_answer_code()` runs in `new.env(parent = globalenv())` with a null graphics device and 60 s time limit.
+- **Privacy** — `scrub_results_for_answer()` (= `scrub_console_output()` + 150-line / 6000-char caps) is all that goes back to Claude; if printed rows were scrubbed, Claude is told and retries once with aggregates. One automatic repair attempt on errors. First use per R session shows an "About the Answer button" notice (`.classmate_answer_notice_shown`); the startup disclaimer and SECURITY.md describe it.
+- **Stage 2 (write)** — `build_answer_write_system_prompt()`; final text is escaped and rendered by `answer_to_html()` (AI text is untrusted).
+- **State** — `ask_mode` ("code"/"answer"), `answer_latest`, `answer_hist` (saved with pause state and past-conversation snapshots, reset on New conversation). `set_ask_mode()` shows/hides tabs; `goto_tab()` wraps tab selection so selecting a code-side tab flips back to code view. Answers join `conversation_history` (final text only) but not the code-log notebook.
+
+---
+
 ## System prompt rules (built into every API call)
 
 Key rules passed to Claude with every request:
@@ -173,11 +183,11 @@ Accessible via the Preferences modal. Persisted to `tools::R_user_dir("classmate
 
 | Button | Frozen when |
 |--------|-------------|
-| Ask (no code) / Ask for Code | `ui_busy` is TRUE, or `protection_notice_active` is TRUE |
+| Answer / Ask for Code | `ui_busy` is TRUE, or `protection_notice_active` is TRUE |
 | Run | `ui_busy` TRUE, or editor content matches `last_run_code` |
 | Save Code Log | No entries in `all_log_entries` |
 | Save Code Block | Not on Code tab, or `ui_busy` TRUE |
-| New Conversation | Nothing yet generated (no Ask (no code)/Ask for Code completed) |
+| New Conversation | Nothing yet generated (no Answer/Ask for Code completed) |
 | Remove checked / Remove all | Hidden (and disabled) when no files or objects in context; shown in help mode |
 | Quick Console | `ui_busy` TRUE |
 
@@ -223,10 +233,10 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.86 (2026-10-15)  
-**Current version:** 0.5.86
+**Last released:** 0.5.87 (2026-10-15)  
+**Current version:** 0.5.87
 
-Released in 0.5.86 (no unreleased changes):
+Released in 0.5.86:
 - Import files dialog (was Add files) gains an optional "Filter files by name" box (injected JS in app.R beside the splash script; targets `#file_select-modal`; folders stay visible, files are filtered case-insensitively by substring, re-applied when the list rebuilds).
 - Select objects dialog (was Add objects) gains "Filter by type" (`filter_objects_by_type()` in app.R, local/offline, no API call): accepts formal R classes (sf, integer, lm...) and natural wording via the `.TYPE_CATS` vocabulary (data table, mappable, model, text, number, function, polygons, raster...). Terms separated by commas/or/and are alternatives; typos fuzzy-matched; unrecognised terms produce a hint. Each listed object shows its class; ticks persist while filters change (`obj_pick_sel`).
 - Working directory is now changeable during a session. `PROJECT_ROOT`/`OUTPUTS_DIR`/`PAUSE_FILE` constants replaced by `project_root()`, `outputs_dir()`, `pause_file()` (backed by mutable env `.cm`) and `cm_set_root()` (app.R top). Run, Quick Console, logs, saved scripts, pause file, the AI's save-location instruction and the file dialogs (dynamic "Working directory" root) all follow it. It changes via the new Change Working Directory folder browser in the Quick Console, or by `setwd()` typed in the Quick Console / run code (detected after each run). `cm_set_root()` also calls `rstudioapi::filesPaneNavigate()`; `talk()` calls `setwd()` on the final `.classmate_project_root` after `runApp()` returns (quit or pause) so the R session/RStudio ends in the same folder.
@@ -300,3 +310,4 @@ Released in 0.5.83–0.5.85:
 | 0.5.84 | Student/Personal mode removed; key now sets cost, expiry, conversations and code-length cap; Change API key and paste-a-key removed; `max_lines` added to keys |
 | 0.5.85 | `max_conversations` in `classmate_make_key()` follows the same prompt/NULL-with-confirmation pattern as cost and code length |
 | 0.5.86 | Import files name filter; Select objects type filter (formal classes + plain words); Load Package Data; Load from Web already in 0.5.83; read-only code length from key; language-picker fix; changeable working directory (Change Working Directory + Clear Workspace moved into Quick Console); renamed buttons (Import files, Select objects, Ask (no code), Save, Quit with Code Log); Remove buttons hidden until needed; Help mode audited, moved to `HELP_TEXTS` tables, `tools/check_help.R` added |
+| 0.5.87 | **Answer button** (was Ask (no code)) is now a two-stage answer pipeline: Claude answers directly from object/file summaries or requests a small read-only calculation, which runs in a sandbox and whose scrubbed summary output Claude turns into a plain-English answer. New Answer / Past answers tabs replace Code / R output / Past code while in the Answer view (tabs follow the most recent ask); Run/Explain/Fix/Load Script/Save Code Block are frozen there; "Show my working" reveals code and output; not written to the code-log notebook. |

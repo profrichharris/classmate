@@ -24,11 +24,22 @@ The API connection is the only external communication the package makes. There i
 | Code in the editor | R code text |
 | Run history | Previously executed R code — not its output values |
 | Console output | Filtered (see below) |
+| Calculation results (Answer button only) | Summary output of a short read-only calculation (counts, means, tables), filtered and length-capped; never individual records (see below) |
 | Conversation history | Prior prompts and AI responses in the current session |
+
+### The Answer button
+
+The **Answer** button gives the student a plain-English answer instead of code. For questions that can be answered from the object and file summaries above, nothing further is sent. For questions that need a calculation, Classmate:
+
+1. asks Claude for a short, **read-only** piece of R code (it may not write files, change objects, install packages, change the working directory, use the network, or draw plots — code that does so is refused before it runs, and it runs in a throw-away environment with a time limit);
+2. runs that code locally;
+3. removes any printed data rows or `str()` value lines from the output (the same filter as for console output), caps its length, and sends only the remaining **summary results** back to Claude to write the answer.
+
+Claude is instructed to print aggregates only and never individual records, identifiers or small groups. The student is told about this the first time they use the button in an R session, and the startup disclaimer states it. The code and output are shown to the student under "Show my working".
 
 ### Never sent
 
-- Actual data rows or cell values from any file or workspace object
+- Actual data rows or cell values from any file or workspace object (summary results from the Answer button are the exception described above)
 - File contents (beyond column names)
 - Student name, username, institutional login, or email address
 - The student's file system paths (only filenames are referenced)
@@ -148,7 +159,7 @@ On every fresh launch of the app (not on pause-resume), the prompt input box is 
 >
 > *Press Clear to continue.*
 
-Every button in the app is disabled until the student presses **Clear** — with the sole exception of **Quit with Code Log**. This includes the Ask (no code), Ask for Code, Run, Explain, Fix, New Conversation, Import files, Select objects, Load Workspace, Quick Console (and so its Clear Workspace and Change Working Directory buttons), Save, Preferences, and key-management buttons. During this period, the **Clear** button is highlighted in yellow to draw attention to it. This ensures the student actively reads and dismisses the reminder before doing anything else in the app. It appears on every fresh launch — not just once — to make data protection awareness a habitual part of the workflow.
+Every button in the app is disabled until the student presses **Clear** — with the sole exception of **Quit with Code Log**. This includes the Answer, Ask for Code, Run, Explain, Fix, New Conversation, Import files, Select objects, Load Workspace, Quick Console (and so its Clear Workspace and Change Working Directory buttons), Save, Preferences, and key-management buttons. During this period, the **Clear** button is highlighted in yellow to draw attention to it. This ensures the student actively reads and dismisses the reminder before doing anything else in the app. It appears on every fresh launch — not just once — to make data protection awareness a habitual part of the workflow.
 
 ---
 

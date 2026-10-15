@@ -48,7 +48,7 @@ Each is an `sf` object ready to use with `tmap`, `ggplot2`, etc.
 | Feature | Detail |
 |---|---|
 | **Ask for Code** | Sends your prompt to Claude; extracted R code lands in the editable code box |
-| **Ask (no code)** | Same as above but runs the code immediately — no editor step |
+| **Answer** | Gets a plain-English answer instead of code. Classmate answers from what it knows about your objects, or runs a short read-only calculation behind the scenes and explains the summary results; "Show my working" reveals the code. Summary results (not individual records) are sent to Claude |
 | **Run** | Executes whatever is in the code box in your live R session |
 | **Auto-install** | If code fails with a missing-package error, installs it and reruns (once per package) |
 | **Save Code Log** | Appends all successfully-run code blocks to `claude_session_log.R` in your working directory |

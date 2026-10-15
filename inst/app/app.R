@@ -1933,7 +1933,7 @@ ui <- fluidPage(
     hr(),
     fluidRow(
       column(8,
-        actionButton("ask_plain", "Ask (no code)"),
+        actionButton("ask_plain", "Answer"),
         actionButton("ask_code", "Ask for Code", class = "btn-primary"),
         actionButton("clear_prompt", "Clear"),
         actionButton("load_key_file_btn", "Load key file")
@@ -1961,6 +1961,16 @@ ui <- fluidPage(
       tabPanel("Past code",
         tags$div(style = "margin-top: 8px; min-height: 220px;",
           uiOutput("past_code_ui")
+        )
+      ),
+      tabPanel("Answer",
+        tags$div(style = "margin-top: 8px; min-height: 220px; max-height: 320px; overflow-y: auto;",
+          uiOutput("answer_ui")
+        )
+      ),
+      tabPanel("Past answers",
+        tags$div(style = "margin-top: 8px; min-height: 220px; max-height: 320px; overflow-y: auto;",
+          uiOutput("past_answers_ui")
         )
       ),
     ),
@@ -2098,6 +2108,254 @@ fetch_key_from_web <- function(url) {
 }
 
 # ---------------------------------------------------------------------------
+# Answer button: answer pipeline
+#
+# Stage 1 ("plan"): Claude either answers directly from the object/file
+#   summaries, or asks for a small read-only calculation.
+# Stage 2: the calculation is run in a throw-away environment, its output is
+#   scrubbed of individual records, and Claude writes the answer in plain
+#   English. The student sees only the answer (code and output are available
+#   under "Show my working").
+# ---------------------------------------------------------------------------
+
+answer_mode_rule <- paste(
+  "ANSWER MODE: The student has chosen the 'Answer' button. They want a plain-English",
+  "ANSWER to their question, not code. They will never see any code you write, so",
+  "never refer to 'the code above' or tell them to run anything.",
+  "First decide whether the question can be answered from the information provided —",
+  "the summaries of their objects and files (names, types, dimensions, column names)",
+  "plus your general knowledge of R, statistics and GIS.",
+  "(A) If it can: begin your reply with the line ANSWER: and then give the complete",
+  "answer. Write for a student: short paragraphs or simple lists, refer to their actual",
+  "objects and variable names, and explain any technical term you use. Only include a",
+  "code snippet if they explicitly ask how to do something in R.",
+  "(B) If answering needs a calculation on their actual data (counts, averages, missing",
+  "values, distributions, correlations, model results, 'how many', 'which is largest'):",
+  "begin your reply with the line COMPUTE: then one short sentence saying what you will",
+  "calculate, then exactly one ```r code block. The code is run for you and its summary",
+  "output is returned to you so that you can write the answer.",
+  "Never put ANSWER: and COMPUTE: in the same reply."
+)
+
+answer_compute_rules <- paste(
+  "COMPUTE CODE RULES — strict. Code that breaks them is not run.",
+  "1. Read-only. Do not create, modify, delete or save any file or object that persists:",
+  "no saving or exporting, no plots or graphics devices, no installing packages, and no",
+  "setwd(), rm(), assign(), <<-, sink(), options(), source(), eval(), system(), or network",
+  "access. Ordinary temporary variables with <- are fine.",
+  "2. Summaries only. Print aggregate results: counts, means, medians, quantiles,",
+  "correlations, tables of counts, model coefficients. NEVER print individual records,",
+  "rows, identifiers, names or free-text values: no head(), tail(), str(), View(), and no",
+  "listing of unique names or identifiers. When summarising by group, do not print groups",
+  "with fewer than 5 records.",
+  "3. Print results with cat(), sprintf(), a named vector, table() or summary() — NOT as a",
+  "printed data frame or tibble, because printed data-frame rows are blocked from being",
+  "sent back to you.",
+  "4. For sf objects call sf::st_drop_geometry() before summarising; never print geometries.",
+  "5. Use only the exact column names listed in the context. Call library() for every",
+  "package you use. Keep the code short."
+)
+
+answer_column_rule <- paste(
+  "COLUMN NAME RULE: When files or objects are provided with a known schema (listed as",
+  "columns: ... in the context), use only those exact column names. Do not guess,",
+  "abbreviate, or paraphrase column names. If the student refers to a variable by a name",
+  "that does not exactly match a listed column, use the closest actual match."
+)
+
+answer_clarity_rule <- paste(
+  "CLARITY RULE: If the question depends on the student's own data or objects (for example",
+  "'this data' or 'my model') but no object or file has been provided in the context, or",
+  "you cannot tell which one they mean, respond with exactly this format and nothing else:",
+  "NEEDS_CLARIFICATION",
+  "REASON: <plain English explanation of what is missing>",
+  "SUGGESTIONS: <for example: use Select objects or Import files to add the data first>",
+  "Otherwise do not ask for clarification — choose the most sensible interpretation."
+)
+
+build_answer_system_prompt <- function(language = "English") {
+  paste(c(
+    "You are a friendly teaching assistant helping a student who is learning R, statistics and GIS.",
+    answer_mode_rule,
+    answer_compute_rules,
+    answer_column_rule,
+    build_language_clause(language),
+    answer_clarity_rule,
+    scope_rule,
+    research_integrity_rule,
+    disclosure_risk_rule
+  ), collapse = "\n\n")
+}
+
+build_answer_write_system_prompt <- function(language = "English") {
+  paste(c(
+    "You are a friendly teaching assistant helping a student who is learning R, statistics and GIS.",
+    paste(
+      "You ran a calculation on the student's data to answer their question, and its summary",
+      "output is supplied. Now write the final answer.",
+      "Answer in plain English in a few short paragraphs or a simple list. Lead with the direct",
+      "answer, then add brief context or caveats. Interpret the numbers rather than just repeating",
+      "them, and round sensibly. Do not mention code, R output, 'the console' or how the numbers",
+      "were computed unless it is needed to explain a caveat (the student can open 'Show my",
+      "working' to see that). Do not include code blocks. If the results are incomplete, truncated,",
+      "or do not actually answer the question, say so plainly rather than guessing. Talk about groups",
+      "and summaries only — never reproduce or guess values for individual people or records.",
+      "Do not invite follow-up replies; this is a one-shot answer."
+    ),
+    build_language_clause(language),
+    research_integrity_rule
+  ), collapse = "\n\n")
+}
+
+# Splits a stage-1 reply into list(type = "answer"/"compute", text, code)
+parse_answer_plan <- function(raw) {
+  txt <- trimws(raw)
+  if (grepl("^COMPUTE:", txt)) {
+    parts <- split_response_into_text_and_code(sub("^COMPUTE:[ \t]*", "", txt))
+    if (nzchar(trimws(parts$code)))
+      return(list(type = "compute", text = parts$explanation, code = parts$code))
+    return(list(type = "answer", text = trimws(parts$explanation), code = ""))
+  }
+  list(type = "answer", text = trimws(sub("^ANSWER:[ \t]*\n?", "", txt)), code = "")
+}
+
+# Functions that code run by the Answer button may not call. The code is written by the AI
+# from the student's data context, so this is a guard against accidents and
+# against instructions smuggled in through object or column names.
+.ANSWER_BLOCKED_EXACT <- c(
+  "setwd", "rm", "remove", "assign", "delayedAssign", "makeActiveBinding", "lockBinding",
+  "unlockBinding", "attach", "detach", "sink", "options", "Sys.setenv", "Sys.setlocale",
+  "Sys.chmod", "Sys.setFileTime", "source", "sys.source", "eval", "evalq", "system",
+  "system2", "shell", "shell.exec", "file.create", "file.remove", "file.rename",
+  "file.copy", "file.append", "file.symlink", "unlink", "dir.create", "dput", "dump",
+  "png", "pdf", "jpeg", "tiff", "bmp", "svg", "postscript", "cairo_pdf", "dev.copy",
+  "dev.print", "ggsave", "tmap_save", "url", "download.file", "browseURL", "curl",
+  "request", "req_perform", "GET", "POST", "readline", "scan", "menu", "View", "edit",
+  "fix", "browser", "debug", "quit", "q", "stopApp", "install_github", "install_cran",
+  "<<-", "->>"
+)
+.ANSWER_BLOCKED_PATTERN <- "^(write|save|install|remove\\.packages|update\\.packages|download)"
+
+answer_code_violations <- function(code) {
+  exprs <- tryCatch(parse(text = code, keep.source = FALSE), error = function(e) NULL)
+  if (is.null(exprs)) return("code that does not parse")
+  found <- character(0)
+  walk <- function(x) {
+    if (is.call(x)) {
+      f <- x[[1]]
+      nm <- if (is.name(f)) as.character(f)
+            else if (is.call(f) && length(f) == 3 && as.character(f[[1]]) %in% c("::", ":::"))
+              as.character(f[[3]])
+            else ""
+      if (nzchar(nm) && (nm %in% .ANSWER_BLOCKED_EXACT || grepl(.ANSWER_BLOCKED_PATTERN, nm)))
+        found <<- c(found, nm)
+      if (nm %in% c("cat", "print", "message", "writeLines") && !is.null(names(x)) &&
+          any(c("file", "append") %in% names(x)))
+        found <<- c(found, paste0(nm, "(file =)"))
+      for (i in seq_along(x)) {
+        if (identical(x[[i]], quote(expr = ))) next
+        walk(x[[i]])
+      }
+    } else if (is.pairlist(x) || is.expression(x)) {
+      for (i in seq_along(x)) {
+        if (identical(x[[i]], quote(expr = ))) next
+        walk(x[[i]])
+      }
+    }
+  }
+  for (e in exprs) walk(e)
+  unique(found)
+}
+
+# Runs the Answer button's code in a throw-away environment, with graphics going
+# nowhere. Returns list(success, message, output, warnings).
+run_answer_code <- function(code, timeout = 60) {
+  old_wd <- setwd(project_root())
+  on.exit(setwd(old_wd), add = TRUE)
+  env <- new.env(parent = globalenv())
+  warnings_seen <- character(0)
+  out <- character(0)
+  grDevices::pdf(NULL)
+  dev_now <- grDevices::dev.cur()
+  on.exit({
+    if (dev_now %in% grDevices::dev.list())
+      tryCatch(grDevices::dev.off(dev_now), error = function(e) invisible(NULL))
+  }, add = TRUE)
+  con <- textConnection(code)
+  on.exit(close(con), add = TRUE)
+  setTimeLimit(elapsed = timeout, transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = FALSE), add = TRUE)
+  res <- tryCatch({
+    out <- utils::capture.output(withCallingHandlers(
+      source(con, local = env, print.eval = TRUE),
+      warning = function(w) {
+        warnings_seen <<- c(warnings_seen, strip_ansi(conditionMessage(w)))
+        invokeRestart("muffleWarning")
+      }
+    ))
+    list(success = TRUE, message = "")
+  }, error = function(e) list(success = FALSE, message = strip_ansi(conditionMessage(e))))
+  c(res, list(output = strip_ansi(out), warnings = warnings_seen))
+}
+
+# What may be sent back to Claude: printed records/str() lines are removed (the
+# same scrubbing used elsewhere), then length is capped.
+scrub_results_for_answer <- function(output, warnings = character(0),
+                                     max_chars = 6000L, max_lines = 150L) {
+  txt   <- scrub_console_output(paste(output, collapse = "\n"))
+  lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
+  if (length(lines) > max_lines)
+    lines <- c(lines[seq_len(max_lines)],
+               sprintf("[... %d further lines not shown]", length(lines) - max_lines))
+  txt <- paste(lines, collapse = "\n")
+  if (nchar(txt) > max_chars) txt <- paste0(substr(txt, 1, max_chars), "\n[... output truncated]")
+  if (length(warnings) > 0)
+    txt <- paste0(txt, "\nWarnings: ", paste(utils::head(unique(warnings), 5), collapse = "; "))
+  txt
+}
+
+# Text from the AI is untrusted: escape it, then apply light formatting
+# (paragraphs, bullet/numbered lists, **bold**, `code`, ``` fenced blocks ```).
+answer_to_html <- function(text) {
+  esc <- function(x) {
+    x <- gsub("&", "&amp;", x, fixed = TRUE)
+    x <- gsub("<", "&lt;", x, fixed = TRUE)
+    gsub(">", "&gt;", x, fixed = TRUE)
+  }
+  inline <- function(x) {
+    x <- esc(x)
+    x <- gsub("\\*\\*([^*]+)\\*\\*", "<strong>\\1</strong>", x)
+    gsub("`([^`]+)`", "<code>\\1</code>", x)
+  }
+  text_block <- function(seg) {
+    paras <- trimws(strsplit(seg, "\n{2,}")[[1]])
+    paras <- paras[nzchar(paras)]
+    vapply(paras, function(p) {
+      lines <- trimws(strsplit(p, "\n", fixed = TRUE)[[1]])
+      if (all(grepl("^[-*] ", lines)))
+        return(paste0("<ul>", paste0("<li>", inline(sub("^[-*] ", "", lines)), "</li>", collapse = ""), "</ul>"))
+      if (all(grepl("^[0-9]+[.)] ", lines)))
+        return(paste0("<ol>", paste0("<li>", inline(sub("^[0-9]+[.)] ", "", lines)), "</li>", collapse = ""), "</ol>"))
+      if (length(lines) == 1 && grepl("^#+ ", lines))
+        return(paste0("<p><strong>", inline(sub("^#+ ", "", lines)), "</strong></p>"))
+      paste0("<p>", paste(inline(lines), collapse = "<br>"), "</p>")
+    }, character(1), USE.NAMES = FALSE)
+  }
+  pat <- "```[A-Za-z]*[ \t]*\n[\\s\\S]*?```"
+  blocks <- regmatches(text, gregexpr(pat, text, perl = TRUE))[[1]]
+  rest   <- regmatches(text, gregexpr(pat, text, perl = TRUE), invert = TRUE)[[1]]
+  out <- character(0)
+  for (i in seq_along(rest)) {
+    out <- c(out, text_block(rest[i]))
+    if (i <= length(blocks)) {
+      body <- sub("```$", "", sub("^```[A-Za-z]*[ \t]*\n", "", blocks[i], perl = TRUE))
+      out <- c(out, paste0("<pre>", esc(trimws(body, which = "right")), "</pre>"))
+    }
+  }
+  paste(out, collapse = "\n")
+}
+
+# ---------------------------------------------------------------------------
 # Help mode text
 #
 # HELP_TEXTS     — one entry per button id that is visible on the main screen.
@@ -2115,11 +2373,14 @@ HELP_TEXTS <- list(
     "Press the ? button again to return to normal."
   ),
   ask_plain = paste(
-    "Ask (no code) — Send a prompt to the AI when you want the answer or the result",
-    "rather than the code. If the response includes R code, it is run immediately and",
-    "the output appears in the R output tab; the code is saved to your code log but is",
-    "not placed in the editor. Use it for quick one-step tasks. If you would like to",
-    "see and edit the code first, use Ask for Code instead."
+    "Answer — Ask a question and get a plain-English answer rather than code.",
+    "Classmate answers from what it knows about your objects and files where it can; for",
+    "questions that need a calculation it runs one behind the scenes, reads the summary",
+    "results and explains them to you. The answer appears in the Answer tab, and \"Show my",
+    "working\" under it reveals the code and output used. The Code, R output and Past code",
+    "tabs are replaced by Answer and Past answers while you use it, and Run, Explain, Fix,",
+    "Load Script and Save Code Block are switched off. Use Ask for Code to get them back.",
+    "To produce its answer, summary results (not individual records) are sent to Claude."
   ),
   ask_code = paste(
     "Ask for Code — Send a prompt to the AI and have the generated code placed",
@@ -2181,28 +2442,31 @@ HELP_TEXTS <- list(
   run_code = paste(
     "Run — Executes the code currently in the editor. Results and any plots",
     "appear in the R output tab. If the code runs successfully it is added to",
-    "Past Code and your code log."
+    "Past Code and your code log. (Not available while the Answer view is showing.)"
   ),
   explain_code = paste(
     "Explain — Asks the AI to explain the current code or R output. On the",
     "Code tab it explains what the code does; on the R output tab it interprets",
     "what the results mean. If you have highlighted a passage in an explanation",
-    "window, it unpacks that specific part in more detail."
+    "window, it unpacks that specific part in more detail. (Not available while the",
+    "Answer view is showing.)"
   ),
   fix_code = paste(
     "Fix — Available after a failed run. Asks the AI to diagnose the error and",
     "produce corrected code. The fix is applied to the editor and run automatically.",
-    "If the fix does not work you can try again, or cancel to restore the original code."
+    "If the fix does not work you can try again, or cancel to restore the original code.",
+    "(Not available while the Answer view is showing.)"
   ),
   load_script = paste(
     "Load Script — Opens a file browser so you can load an existing R script",
     "from your project folder into the Code editor. Only available on the Code tab.",
-    "Scripts longer than the code-length limit set by your key will be refused."
+    "Scripts longer than the code-length limit set by your key will be refused.",
+    "(Not available while the Answer view is showing.)"
   ),
   save_block = paste(
     "Save Code Block — Saves the code currently in the editor to a named .R",
     "file in your project folder (using the code description as the filename) and",
-    "opens it in RStudio."
+    "opens it in RStudio. (Not available while the Answer view is showing.)"
   ),
   code_saved_notebook = paste(
     "Code saved to Notebook — This message confirms that the code you just ran",
@@ -2271,7 +2535,7 @@ HELP_TEXTS <- list(
 HELP_TAB_TEXTS <- list(
   "Your prompt" = paste(
     "Your Prompt tab — This is where you type your question or instruction for the AI.",
-    "Once submitted with Ask (no code) or Ask for Code, the prompt box clears ready for the next step."
+    "Once submitted with Answer or Ask for Code, the prompt box clears ready for the next step."
   ),
   "Past prompts" = paste(
     "Past Prompts tab — Shows a history of all the prompts you have sent to the AI",
@@ -2296,6 +2560,16 @@ HELP_TAB_TEXTS <- list(
     "Past Code tab — A record of every code block that has been run successfully in",
     "this conversation. Use the Repeat button next to any entry to reload that code",
     "into the editor."
+  ),
+  "Answer" = paste(
+    "Answer tab — Shows the plain-English answer to your last question asked with the Answer button.",
+    "Open \"Show my working\" under the answer to see the code Classmate ran and what it",
+    "produced. This tab replaces Code, R output and Past code until you use Ask for Code."
+  ),
+  "Past answers" = paste(
+    "Past Answers tab — Appears once you have asked more than one question with the",
+    "Answer button, and lists the earlier questions and answers from this conversation,",
+    "newest first."
   ),
   "Changes" = paste(
     "Changes tab — Appears when the AI makes targeted edits to existing code.",
@@ -2373,7 +2647,10 @@ server <- function(input, output, session) {
           "Your prompts and any R code you write are sent to Anthropic's servers",
           "for processing. classmate is designed to minimise what is shared —",
           "only your questions, code, and variable names are transmitted;",
-          "your actual data values are not."
+          "your actual data values are not. The one exception is the Answer button:",
+          "to write its answer, Classmate may run a short calculation on your data",
+          "and send the summary results (such as counts or averages, never individual",
+          "records) to Claude."
         ),
         tags$li(
           "Do not include personal information about yourself or others in your",
@@ -2737,13 +3014,13 @@ server <- function(input, output, session) {
         target = "Past code", position = "after", select = FALSE)
       changes_tab_shown(TRUE)
     }
-    updateTabsetPanel(session, "main_tabs", selected = "Changes")
+    goto_tab("Changes")
   }
 
   hide_changes_tab <- function() {
     if (changes_tab_shown()) {
       if (isTRUE(isolate(input$main_tabs) == "Changes"))
-        updateTabsetPanel(session, "main_tabs", selected = "Code")
+        goto_tab("Code")
       removeTab("main_tabs", "Changes")
       changes_tab_shown(FALSE)
     }
@@ -2822,7 +3099,9 @@ server <- function(input, output, session) {
       codes       = rh,
       log_entries = all_log_entries(),
       files       = unique(selected_files()),
-      objects     = unique(selected_objects())
+      objects     = unique(selected_objects()),
+      answer_latest = answer_latest(),
+      answer_hist   = answer_hist()
     )
     saved_conversations(c(list(entry), saved_conversations()))
     show_past_convs_tab()
@@ -2944,11 +3223,12 @@ server <- function(input, output, session) {
     }
     has_code   <- nzchar(trimws(input$code_editor %||% ""))
     exceeded   <- isTRUE(quota_exceeded())
+    answer_view <- identical(ask_mode(), "answer")
     on_code_tab     <- is.null(input$main_tabs) || isTRUE(input$main_tabs == "Code")
     on_changes_tab  <- isTRUE(input$main_tabs == "Changes")
     has_unrun_code  <- is.null(last_run_code()) ||
                        !identical(trimws(input$code_editor %||% ""), trimws(last_run_code()))
-    if (has_code && has_unrun_code && !code_running() && !exceeded && (on_code_tab || on_changes_tab)) {
+    if (!answer_view && has_code && has_unrun_code && !code_running() && !exceeded && (on_code_tab || on_changes_tab)) {
       enable("run_code")
     } else {
       disable("run_code")
@@ -2956,21 +3236,21 @@ server <- function(input, output, session) {
     # Explain: Code or Changes tab with code, R output tab with content, or after a failed run
     on_output_tab  <- isTRUE(input$main_tabs == "R output")
     has_run_output <- length(console_output_rv()) > 0 || length(plot_files_rv()) > 0 || length(warnings_rv()) > 0
-    if (!code_running() && !exceeded &&
+    if (!answer_view && !code_running() && !exceeded &&
         ((has_code && (on_code_tab || on_changes_tab)) || last_run_failed() ||
          (on_output_tab && has_run_output))) {
       enable("explain_code")
     } else {
       disable("explain_code")
     }
-    if (last_run_failed() && !code_running() && !exceeded)
+    if (!answer_view && last_run_failed() && !code_running() && !exceeded)
       enable("fix_code") else disable("fix_code")
-    if (on_code_tab && !exceeded && !is.null(last_run_code())) {
+    if (!answer_view && on_code_tab && !exceeded && !is.null(last_run_code())) {
       enable("save_block")
     } else {
       disable("save_block")
     }
-    if (on_code_tab && !exceeded) {
+    if (!answer_view && on_code_tab && !exceeded) {
       enable("load_script")
     } else {
       disable("load_script")
@@ -3215,7 +3495,7 @@ server <- function(input, output, session) {
         run_history(c(list(entry), h[-i]))
         updateAceEditor(session, "code_editor", value = entry$code)
         last_run_code(NULL)
-        updateTabsetPanel(session, "main_tabs", selected = "Code")
+        goto_tab("Code")
       }, ignoreInit = TRUE)
     })
   })
@@ -3319,7 +3599,10 @@ server <- function(input, output, session) {
     else
       updateAceEditor(session, "code_editor", value = "")
     output$run_status <- renderUI(NULL)
-    updateTabsetPanel(session, "main_tabs", selected = "Code")
+    answer_latest(recalled$answer_latest)
+    answer_hist(recalled$answer_hist %||% list())
+    goto_tab("Code")
+    if (length(recalled$codes) == 0 && !is.null(recalled$answer_latest)) set_ask_mode("answer")
     if (current_is_blank) conv_count_rv(max(conv_count_rv() - 1L, 1L))
   })
 
@@ -3399,7 +3682,7 @@ server <- function(input, output, session) {
     }
     loaded_script_name(fname)
     updateAceEditor(session, "code_editor", value = script_text)
-    updateTabsetPanel(session, "main_tabs", selected = "Code")
+    goto_tab("Code")
   })
 
   # --- Load Package Data -------------------------------------------------------
@@ -3629,6 +3912,48 @@ server <- function(input, output, session) {
     saved
   } else NULL
 
+  # --- Answer view state ------------------------------------------------
+  # The tabs follow the most recent kind of ask: "code" shows Code / R output /
+  # Past code; "answer" shows Answer (and Past answers once there are earlier ones).
+  ask_mode      <- reactiveVal(if (!is.null(ps) && identical(ps$ask_mode, "answer")) "answer" else "code")
+  answer_latest <- reactiveVal(if (!is.null(ps)) ps$answer_latest else NULL)
+  answer_hist   <- reactiveVal(if (!is.null(ps)) (ps$answer_hist %||% list()) else list())
+  CODE_SIDE_TABS <- c("Code", "R output", "Past code", "Changes")
+
+  refresh_ask_tabs <- function() {
+    answer_view <- identical(isolate(ask_mode()), "answer")
+    for (t in c("Code", "R output", "Past code"))
+      if (answer_view) hideTab("main_tabs", t, session = session)
+      else showTab("main_tabs", t, session = session)
+    if (answer_view) {
+      showTab("main_tabs", "Answer", session = session)
+      if (length(isolate(answer_hist())) > 0) showTab("main_tabs", "Past answers", session = session)
+      else hideTab("main_tabs", "Past answers", session = session)
+    } else {
+      hideTab("main_tabs", "Answer", session = session)
+      hideTab("main_tabs", "Past answers", session = session)
+    }
+  }
+  set_ask_mode <- function(mode) {
+    if (identical(mode, "answer")) hide_changes_tab()   # before the flip, so it cannot flip back
+    ask_mode(mode)
+    refresh_ask_tabs()
+    if (identical(mode, "answer")) {
+      updateTabsetPanel(session, "main_tabs", selected = "Answer")
+    } else if (!isTRUE(isolate(input$main_tabs) %in% CODE_SIDE_TABS)) {
+      updateTabsetPanel(session, "main_tabs", selected = "Code")
+    }
+  }
+  goto_tab <- function(tab) {
+    if (tab %in% CODE_SIDE_TABS && identical(isolate(ask_mode()), "answer")) set_ask_mode("code")
+    updateTabsetPanel(session, "main_tabs", selected = tab)
+  }
+  session$onFlushed(function() {
+    refresh_ask_tabs()
+    if (identical(isolate(ask_mode()), "answer"))
+      updateTabsetPanel(session, "main_tabs", selected = "Answer")
+  }, once = TRUE)
+
   # --- Conversation + run-history state --------------------------------------
   conversation_history  <- reactiveVal(if (!is.null(ps)) ps$conversation_history  else list())
   saved_conversations   <- reactiveVal(if (!is.null(ps)) ps$saved_conversations   else list())
@@ -3785,7 +4110,7 @@ server <- function(input, output, session) {
       }
       last_run_failed(TRUE)
       last_error_msg(paste(combined, collapse = "\n"))
-      updateTabsetPanel(session, "main_tabs", selected = "R output")
+      goto_tab("R output")
       ui_busy(FALSE)
     }
   })
@@ -4074,6 +4399,9 @@ server <- function(input, output, session) {
     hide_changes_tab()
     conversation_history(list())
     run_history(list())
+    answer_latest(NULL)
+    answer_hist(list())
+    set_ask_mode("code")
     pending_log_entries(list())
     all_log_entries(list())
     loaded_packages(character(0))
@@ -4604,7 +4932,7 @@ server <- function(input, output, session) {
       diff_rv(d)
       if (!is.null(d)) show_changes_tab() else {
         hide_changes_tab()
-        updateTabsetPanel(session, "main_tabs", selected = "Code")
+        goto_tab("Code")
       }
     }, finally = { enable("ask_code"); enable("ask_plain") })
   }
@@ -4619,16 +4947,31 @@ server <- function(input, output, session) {
     updateTextAreaInput(session, "prompt", value = "")
   })
 
-  # --- Ask (auto-run) --------------------------------------------------------
-  do_ask_plain <- function(current_prompt) {
+  # --- Answer button -----------------------------------------------------------
+  # Stage 1: Claude either answers directly or asks for a small read-only
+  # calculation. Stage 2: the calculation is run in a throw-away environment,
+  # its output is scrubbed of individual records, and Claude writes the answer.
+  do_ask_answer <- function(current_prompt) {
     if (isTRUE(quota_exceeded())) { show_quota_modal(); return(invisible(NULL)) }
     ui_busy(TRUE)
     hide_changes_tab()
     updateTextAreaInput(session, "prompt", value = "")
-    console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); diff_rv(NULL)
     disable("ask_code"); disable("ask_plain")
 
-    # --- Synchronous part: call Claude -----------------------------------------
+    finish <- function() { ui_busy(FALSE); enable("ask_code"); enable("ask_plain") }
+    fail <- function(msg) {
+      finish()
+      updateTextAreaInput(session, "prompt", value = current_prompt)
+      output$run_status <- renderUI(tags$span(msg, style = "color: #b22222;"))
+      invisible(NULL)
+    }
+    call_ai <- function(messages, system_prompt, max_tokens)
+      tryCatch(
+        call_claude(messages = messages, model = prefs$model,
+                    max_tokens = max_tokens, system_prompt = system_prompt),
+        error = function(e) list(text = "", stop_reason = "error", cost_usd = 0)
+      )
+
     user_message <- build_user_message(
       file_paths          = selected_files(),
       object_names        = selected_objects(),
@@ -4639,41 +4982,28 @@ server <- function(input, output, session) {
       last_console_output = console_output_rv(),
       file_schemas        = file_schema_cache()
     )
-    new_user_turn   <- list(role = "user", content = user_message)
-    history_so_far  <- c(conversation_history(), list(new_user_turn))
-    windowed_prompt <- c(take_last_n(conversation_history(), MAX_HISTORY_TURNS - 1), list(new_user_turn))
+    new_user_turn  <- list(role = "user", content = user_message)
+    history_so_far <- c(conversation_history(), list(new_user_turn))
+    windowed       <- c(take_last_n(conversation_history(), MAX_HISTORY_TURNS - 1), list(new_user_turn))
+    plan_prompt    <- build_answer_system_prompt(prefs$language)
 
-    api_result <- tryCatch(
-      call_claude(
-        messages      = windowed_prompt,
-        model         = prefs$model,
-        max_tokens    = 800,
-        system_prompt = build_system_prompt(prefs$coding, prefs$plotting, prefs$mapping,
-                                            prefs$img_format, prefs$img_quality, prefs$img_size,
-                                            prefs$max_lines, prefs$comment_density,
-                                            loaded_packages(), prefs$language)
-      ),
-      error = function(e) list(text = "", stop_reason = "error")
-    )
-    raw_response <- api_result$text
-
-    if (!nzchar(trimws(raw_response))) {
-      ui_busy(FALSE); enable("ask_code"); enable("ask_plain")
-      output$run_status <- renderUI(tags$span(
-        "No response from Claude. Check your API key and try again.",
-        style = "color: #b22222;"))
-      return(invisible(NULL))
-    }
-    if (identical(api_result$stop_reason, "max_tokens")) {
-      ui_busy(FALSE); enable("ask_code"); enable("ask_plain")
+    r1  <- withProgress(message = "Thinking...", value = 0.3,
+                        call_ai(windowed, plan_prompt, 1500))
+    raw <- r1$text
+    if (!nzchar(trimws(raw)))
+      return(fail("No response from Claude. Check your API key and try again."))
+    if (identical(r1$stop_reason, "max_tokens")) {
+      finish()
       showModal(modalDialog(
-        title = "Prompt too complex",
-        "The response was cut short. Try asking for a simpler or smaller piece of code, or split the task into steps.",
+        title = "Answer too long",
+        "The answer was cut short. Try asking a narrower question, or split it into steps.",
         easyClose = FALSE, footer = modalButton("OK")))
       return(invisible(NULL))
     }
-    if (grepl("^OUT_OF_SCOPE", trimws(raw_response), ignore.case = TRUE)) {
-      ui_busy(FALSE); enable("ask_code"); enable("ask_plain")
+
+    trimmed <- trimws(raw)
+    if (grepl("^OUT_OF_SCOPE", trimmed, ignore.case = TRUE)) {
+      finish()
       showModal(modalDialog(
         title = "Out of scope",
         "Sorry, this request is out of scope. Classmate is here to help with R programming, data analysis, and GIS tasks.",
@@ -4681,27 +5011,23 @@ server <- function(input, output, session) {
         footer = actionButton("oos_ok_plain", "OK", class = "btn-primary")))
       return(invisible(NULL))
     }
-
-    # Clarity check: prompt too vague to write grounded code
-    if (grepl("^NEEDS_CLARIFICATION", trimws(raw_response), ignore.case = TRUE)) {
-      ui_busy(FALSE); enable("ask_code"); enable("ask_plain")
-      nc <- parse_needs_clarification(raw_response)
+    if (grepl("^NEEDS_CLARIFICATION", trimmed, ignore.case = TRUE)) {
+      finish()
+      nc <- parse_needs_clarification(raw)
       clarify_restore_prompt(current_prompt)
       showModal(modalDialog(
         title     = "Please Clarify",
         tags$p(if (nzchar(nc$reason)) nc$reason else
-          "The prompt is too general to write code using your actual data or objects."),
+          "The question is too general to answer using your actual data or objects."),
         if (nzchar(nc$suggestions)) tags$p(em(nc$suggestions)),
         easyClose = FALSE,
         footer    = actionButton("clarify_modify_prompt", "Modify Prompt", class = "btn-primary")
       ))
       return(invisible(NULL))
     }
-
-    # Disclosure risk: would produce publishable output revealing personal data
-    if (grepl("^DISCLOSURE_RISK", trimws(raw_response), ignore.case = TRUE)) {
-      ui_busy(FALSE); enable("ask_code"); enable("ask_plain")
-      dr <- parse_disclosure_risk(raw_response)
+    if (grepl("^DISCLOSURE_RISK", trimmed, ignore.case = TRUE)) {
+      finish()
+      dr <- parse_disclosure_risk(raw)
       clarify_restore_prompt(current_prompt)
       showModal(modalDialog(
         title = "Disclosure Risk",
@@ -4714,61 +5040,154 @@ server <- function(input, output, session) {
       return(invisible(NULL))
     }
 
-    record_usage(api_result$cost_usd)
-    conversation_history(c(history_so_far, list(list(role = "assistant", content = raw_response))))
-    prompt_history(c(current_prompt, prompt_history()))
-    parts <- split_response_into_text_and_code(raw_response)
-    last_prompt_for_code(current_prompt)
-    last_extracted_code(parts$code)
+    record_usage(r1$cost_usd %||% 0)
+    plan <- parse_answer_plan(raw)
 
-    if (!nzchar(trimws(parts$code))) {
-      ui_busy(FALSE); enable("ask_code"); enable("ask_plain")
+    finalize <- function(answer_text, code = "", results_text = "") {
+      prev <- answer_latest()
+      if (!is.null(prev)) answer_hist(c(list(prev), answer_hist()))
+      answer_latest(list(question = current_prompt, answer = answer_text,
+                         code = code, results = results_text))
+      conversation_history(c(history_so_far,
+                             list(list(role = "assistant", content = answer_text))))
+      prompt_history(c(current_prompt, prompt_history()))
       output$run_status <- renderUI(NULL)
-      return(invisible(NULL))
+      set_ask_mode("answer")
+      finish()
+      invisible(NULL)
     }
 
-    if (code_too_long(parts$code, prefs$max_lines)) {
-      ui_busy(FALSE); enable("ask_code"); enable("ask_plain")
-      showModal(modalDialog(
-        title = "Response too complex",
-        tags$p(
-          "The code Claude generated exceeds the current code-length limit (",
-          prefs$max_lines, " lines). This usually means the prompt covered too much at once."
-        ),
-        tags$p("Try breaking it into smaller steps — for example, load the data first, ",
-               "then build the analysis, then visualise the results, one prompt at a time."),
-        footer    = modalButton("OK"),
-        easyClose = FALSE
-      ))
-      return(invisible(NULL))
-    }
+    if (identical(plan$type, "answer")) return(finalize(plan$text))
 
-    # --- Possibly async part: check packages then run --------------------------
-    captured_parts <- parts
-    check_and_install_if_needed(parts$code, function() {
-      run_result <- withProgress(message = "Running code...", value = 0.5,
-                                 run_code(captured_parts$code))
-      last_run_code(captured_parts$code)
-      handle_run_result(run_result)
-      if (run_result$success) {
-        last_run_failed(FALSE); last_error_msg("")
-        new_pkgs <- vapply(extract_pkg_info(captured_parts$code), `[[`, character(1), "pkg")
-        loaded_packages(unique(c(loaded_packages(), new_pkgs)))
-        entry <- list(prompt = current_prompt, code = captured_parts$code,
-                      description = captured_parts$description %||% "", source = "ask_plain")
-        pending_log_entries(c(pending_log_entries(), list(entry)))
-        all_log_entries(c(all_log_entries(), list(entry)))
-      } else {
-        last_run_failed(TRUE)
-        last_error_msg(sub("^Error running code:\\s*\\n?\\s*", "", run_result$message))
+    # --- Calculation needed -----------------------------------------------------
+    unsafe_msg <- function(bad) paste0(
+      "Classmate could not answer this safely without using: ", paste(bad, collapse = ", "),
+      ". Try Ask for Code instead.")
+    bad <- answer_code_violations(plan$code)
+    if (length(bad) > 0) return(fail(unsafe_msg(bad)))
+    if (code_too_long(plan$code, max(prefs$max_lines, 40)))
+      return(fail(paste("This question needs a longer calculation than the Answer button handles.",
+                        "Try splitting it into smaller questions, or use Ask for Code.")))
+
+    code_cur <- plan$code
+    raw_cur  <- raw
+    check_and_install_if_needed(code_cur, function() {
+      res <- NULL; scrubbed <- ""; usable <- FALSE
+      for (attempt in 1:2) {
+        res <- withProgress(message = "Working on your answer...", value = 0.6,
+                            run_answer_code(code_cur))
+        scrubbed <- scrub_results_for_answer(res$output, res$warnings)
+        hidden   <- grepl("values not shown", scrubbed, fixed = TRUE)
+        usable   <- isTRUE(res$success) && !hidden && nzchar(trimws(scrubbed))
+        if (usable || attempt == 2) break
+        problem <- if (!isTRUE(res$success)) {
+          paste0("The code failed with this error:\n", res$message)
+        } else if (hidden) {
+          paste("Your output was hidden because it looked like individual records (printed",
+                "data-frame rows). Re-run, printing only aggregated results with cat(), a",
+                "named vector, table() or summary().")
+        } else "The code printed no results. Re-run, printing the results you need."
+        r_fix <- withProgress(message = "Trying again...", value = 0.6, call_ai(
+          c(windowed, list(list(role = "assistant", content = raw_cur),
+                           list(role = "user", content = paste0(problem,
+            "\nReply with COMPUTE: and one corrected ```r block following the same rules,",
+            " or ANSWER: if no calculation is needed.")))),
+          plan_prompt, 1500))
+        if (!nzchar(trimws(r_fix$text))) break
+        record_usage(r_fix$cost_usd %||% 0)
+        plan2 <- parse_answer_plan(r_fix$text)
+        if (identical(plan2$type, "answer")) return(finalize(plan2$text))
+        bad2 <- answer_code_violations(plan2$code)
+        if (length(bad2) > 0) return(fail(unsafe_msg(bad2)))
+        code_cur <- plan2$code
+        raw_cur  <- r_fix$text
       }
-      ui_busy(FALSE); enable("ask_code"); enable("ask_plain")
+      if (!usable)
+        return(fail(paste("Classmate could not work this out automatically. Try rephrasing the",
+                          "question, or use Ask for Code to work through it step by step.")))
+
+      results_msg <- paste0(
+        "Here are the results of running that code (summary output only):\n```\n",
+        scrubbed, "\n```\nNow write the answer to my original question in plain English. ",
+        "Do not include code.")
+      r2 <- withProgress(message = "Writing the answer...", value = 0.8, call_ai(
+        c(windowed, list(list(role = "assistant", content = raw_cur),
+                         list(role = "user", content = results_msg))),
+        build_answer_write_system_prompt(prefs$language), 1200))
+      if (!nzchar(trimws(r2$text)))
+        return(fail("No response from Claude when writing the answer. Please try again."))
+      record_usage(r2$cost_usd %||% 0)
+
+      new_pkgs <- vapply(extract_pkg_info(code_cur), `[[`, character(1), "pkg")
+      loaded_packages(unique(c(loaded_packages(), new_pkgs)))
+      shown <- strsplit(paste(res$output, collapse = "\n"), "\n", fixed = TRUE)[[1]]
+      if (length(shown) > 200)
+        shown <- c(shown[1:200], sprintf("[... %d further lines not shown]", length(shown) - 200))
+      finalize(trimws(sub("^\\s*ANSWER:\\s*", "", r2$text)),
+               code = code_cur, results_text = paste(shown, collapse = "\n"))
     })
   }
 
   observeEvent(input$ask_plain, {
     req(input$prompt)
-    do_ask_plain(input$prompt)
+    if (!isTRUE(getOption(".classmate_answer_notice_shown"))) {
+      showModal(modalDialog(
+        title = "About the Answer button",
+        tags$p("The Answer button gives you a plain-English answer instead of code."),
+        tags$p("To answer some questions, Classmate runs a short calculation on your data",
+               "and sends the summary results (for example counts or averages, never",
+               "individual records) to Claude, which writes the answer. Please do not use it",
+               "with data that must not be summarised outside your computer."),
+        tags$p(em("You will only see this message once in this R session.")),
+        footer = tagList(
+          modalButton("Cancel"),
+          actionButton("answer_notice_ok", "Continue", class = "btn-primary")
+        ),
+        easyClose = FALSE
+      ))
+    } else {
+      do_ask_answer(input$prompt)
+    }
+  })
+
+  observeEvent(input$answer_notice_ok, {
+    removeModal()
+    options(.classmate_answer_notice_shown = TRUE)
+    req(input$prompt)
+    do_ask_answer(input$prompt)
+  })
+
+  # --- Answer tab ------------------------------------------------------------------
+  answer_card <- function(entry) {
+    div(
+      tags$p(style = "color: #888; font-size: 0.85em; margin: 4px 0 8px 0;",
+             tags$em(paste0("You asked: ", entry$question))),
+      HTML(answer_to_html(entry$answer)),
+      if (nzchar(entry$code %||% ""))
+        tags$details(
+          style = "margin-top: 10px;",
+          tags$summary(style = "cursor: pointer; color: #2c5f8a;", "Show my working"),
+          tags$p(em("The code Classmate ran to work this out:"), style = "margin: 8px 0 4px 0;"),
+          tags$pre(entry$code),
+          if (nzchar(entry$results %||% ""))
+            tagList(tags$p(em("What it produced:"), style = "margin: 8px 0 4px 0;"),
+                    tags$pre(entry$results))
+        )
+    )
+  }
+  output$answer_ui <- renderUI({
+    a <- answer_latest()
+    if (is.null(a))
+      return(tags$p(em("Your answer will appear here."), style = "color: #999; margin: 4px 0;"))
+    answer_card(a)
+  })
+  output$past_answers_ui <- renderUI({
+    h <- answer_hist()
+    if (length(h) == 0)
+      return(tags$p(em("No earlier answers yet."), style = "color: #999; margin: 4px 0;"))
+    tagList(lapply(seq_along(h), function(i)
+      div(style = "border-bottom: 1px solid #eee; padding-bottom: 6px; margin-bottom: 6px;",
+          answer_card(h[[i]]))))
   })
 
   observeEvent(input$oos_ok_plain, {
@@ -5403,9 +5822,9 @@ server <- function(input, output, session) {
     output$run_status <- renderUI(run_status_ui(run_result$success))
     has_output <- nzchar(trimws(paste(base_output, collapse = "\n"))) || length(plots) > 0
     if (!stay_on_code && has_output) {
-      updateTabsetPanel(session, "main_tabs", selected = "R output")
+      goto_tab("R output")
     } else {
-      updateTabsetPanel(session, "main_tabs", selected = "Code")
+      goto_tab("Code")
     }
   }
 
@@ -5533,7 +5952,10 @@ server <- function(input, output, session) {
       last_prompt_for_code = last_prompt_for_code(),
       last_logged_code     = last_logged_code(),
       prompt_history       = prompt_history(),
-      conv_count_rv        = conv_count_rv()
+      conv_count_rv        = conv_count_rv(),
+      answer_latest        = answer_latest(),
+      answer_hist          = answer_hist(),
+      ask_mode             = ask_mode()
     )
     if (length(all_log_entries()) > 0) do_save_log()
     tryCatch(
