@@ -234,10 +234,14 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.90 (2026-10-15)  
-**Current version:** 0.5.90
+**Last released:** 0.5.91 (2026-10-15)  
+**Current version:** 0.5.91
 
-Released in 0.5.90 (no unreleased changes):
+Released in 0.5.91 (no unreleased changes):
+- **Changes tab**: `compute_diff()` now matches lines by longest common subsequence (the old greedy forward scan was thrown off by one inserted/moved line) and shows the comparison only when at least 60% of the new non-blank lines are unchanged and at least one differs (no 10-line cap). When no comparison is possible a short notification says so. User-reported: the tab was not appearing; not reproduced with the real model, so the rule was made more robust.
+- The main-screen "Load key file" button is gone; **Load new key file** is now the first item in Preferences (opens the Load key file window with Browse / Load from Web; its Cancel returns to Preferences). The "Usage allowance reached" and "Key expired" messages now say a new key file can be loaded under Preferences and have **Close** and **Open Preferences** buttons (`quota_open_prefs`). The allowance message now names the Answer button (it still said "Ask"). Help: `load_key_file_btn` entry removed, Preferences entry mentions loading a key.
+
+Released in 0.5.90:
 - **Model update**: default model is now Sonnet 5.5 (Haiku 5.5 for small jobs) with the model shown read-only in Preferences; per-model request settings, prices and cost accounting; reply parsing no longer assumes `content[[1]]` is text; key checks reworked (they would have signed students out on the 5.x models); output token limits raised ~30% for the new tokenizer; code-only rule cuts wasted prose after code (see the Models paragraph in "System prompt rules").
 - **Pause**: the button formerly labelled "Save" is now "Pause" (button, pop-up, help, notebook text, docs).
 
@@ -330,4 +334,5 @@ Released in 0.5.83–0.5.85:
 | 0.5.87 | **Answer button** (was Ask (no code)) is now a two-stage answer pipeline: Claude answers directly from object/file summaries or requests a small read-only calculation, which runs in a sandbox and whose scrubbed summary output Claude turns into a plain-English answer. New Answer / Past answers tabs replace Code / R output / Past code while in the Answer view (tabs follow the most recent ask); Run/Explain/Fix/Load Script/Save Code Block are frozen there; "Show my working" reveals code and output; not written to the code-log notebook. |
 | 0.5.88 | Answer button privacy hardening (coded copies of identifying columns, refusal of string/sort/location tricks, geometry scrubbing, decline record requests); fixed under-counted API cost (`calc_cost`); startup disclaimer personal-data warnings split into two bold dark-red bullets |
 | 0.5.89 | Recall (Past prompts / Past code) restores answers or code with R output, plots, warnings and Changes; Back to Code / Back to Answer buttons; fixed-height Answer panes; fixed `compute_diff` crash on a changed first line; fixed session crash when the project folder or the app's own folder disappears (`cm_enter_root`, `cm_ensure_root`); help for Past code / prompts / conversations Recall buttons |
+| 0.5.91 | Load new key file moved into Preferences; allowance/expired messages gain Close and Open Preferences buttons; Changes tab comparison made robust (LCS matching, shown when >= 60% of lines unchanged, notice when not possible) |
 | 0.5.90 | Default model is now Sonnet 5.5 (Sonnet 5.5 only; shown read-only in Preferences), Haiku 5.5 for small jobs; per-model request settings (thinking off), per-model prices and cost accounting, reply parsing by content type, key checks reworked (empty reply with max_tokens=1; network blips no longer sign students out), output limits +30%, code-only rule for Ask for Code; the "Save" button is now "Pause" |

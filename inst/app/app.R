@@ -989,7 +989,7 @@ code_too_long <- function(code, max_lines) {
 
 # LCS-based diff: matches new lines forward through old lines, extracts just the
 # old section that corresponds to the new code, and identifies changed lines in both
-# panels. Returns NULL when change is too substantial (> 25% or > 10 changed lines).
+# panels. Returns NULL when there is no difference or the change is too substantial (< 60% of lines unchanged).
 compute_diff <- function(old_code, new_code) {
   old_lines <- strsplit(old_code, "\n", fixed = TRUE)[[1]]
   new_lines <- strsplit(new_code, "\n", fixed = TRUE)[[1]]
@@ -999,18 +999,20 @@ compute_diff <- function(old_code, new_code) {
   n_old <- length(old_lines)
   n_new <- length(new_lines)
 
-  # Greedy forward scan: match each non-blank new line to the first available old line
+  # Longest-common-subsequence match of non-blank lines (robust to inserted/removed lines)
+  ni <- which(nzchar(new_norm)); oi <- which(nzchar(old_norm))
   new_to_old <- rep(NA_integer_, n_new)
-  old_ptr <- 1L
-  for (i in seq_len(n_new)) {
-    if (!nzchar(new_norm[i])) next
-    if (old_ptr > n_old) next
-    for (j in old_ptr:n_old) {
-      if (nzchar(old_norm[j]) && identical(new_norm[i], old_norm[j])) {
-        new_to_old[i] <- j
-        old_ptr <- j + 1L
-        break
-      }
+  if (length(ni) > 0 && length(oi) > 0) {
+    L <- matrix(0L, length(ni) + 1L, length(oi) + 1L)
+    for (a in rev(seq_along(ni))) for (b in rev(seq_along(oi)))
+      L[a, b] <- if (identical(new_norm[ni[a]], old_norm[oi[b]])) L[a + 1L, b + 1L] + 1L
+                 else max(L[a + 1L, b], L[a, b + 1L])
+    a <- 1L; b <- 1L
+    while (a <= length(ni) && b <= length(oi)) {
+      if (identical(new_norm[ni[a]], old_norm[oi[b]])) {
+        new_to_old[ni[a]] <- oi[b]; a <- a + 1L; b <- b + 1L
+      } else if (L[a + 1L, b] >= L[a, b + 1L]) a <- a + 1L
+      else b <- b + 1L
     }
   }
 
@@ -1018,8 +1020,7 @@ compute_diff <- function(old_code, new_code) {
   changed_new <- which(is.na(new_to_old) & nzchar(new_norm))
   n_changed   <- length(changed_new)
   if (n_changed == 0) return(NULL)
-  if (n_changed / max(n_new, 1L) > 0.25) return(NULL)
-  if (n_changed > 10) return(NULL)
+  if (n_changed / max(length(ni), 1L) > 0.4) return(NULL)   # need >= 60% of lines unchanged
 
   matched_old <- sort(unique(new_to_old[!is.na(new_to_old)]))
   if (length(matched_old) < 1) return(NULL)   # codes too different to be comparable
@@ -2026,8 +2027,7 @@ ui <- fluidPage(
       column(8,
         actionButton("ask_plain", "Answer"),
         actionButton("ask_code", "Ask for Code", class = "btn-primary"),
-        actionButton("clear_prompt", "Clear"),
-        actionButton("load_key_file_btn", "Load key file")
+        actionButton("clear_prompt", "Clear")
       ),
       column(4, div(style = "text-align: right;",
         actionButton("preferences", "Preferences")
@@ -2721,13 +2721,9 @@ HELP_TEXTS <- list(
     "highlighted yellow: press it to clear the data-protection reminder, which",
     "unlocks the other buttons."
   ),
-  load_key_file_btn = paste(
-    "Load key file — Loads a Classmate key file from your instructor, either from",
-    "a file on your computer (Browse) or from a web address (Load from Web).",
-    "Loading a newly issued key resets your usage allowance to match that key."
-  ),
   preferences = paste(
-    "Preferences — Opens the preferences panel where you can set your preferred",
+    "Preferences — Opens the preferences panel, where you can load a new key file from your",
+    "instructor (from your computer or a web address) and set your preferred",
     "response language, coding style (base R, tidyverse, data.table), plotting",
     "library, mapping package, image export format, quality and size, and comment",
     "density. The Claude model in use (Sonnet 5.5) and the maximum code length are",
@@ -3104,9 +3100,13 @@ server <- function(input, output, session) {
         title     = "Key expired",
         tags$p("Your Classmate key expired on ",
                tags$strong(format(as.Date(expiry), "%d %B %Y")), "."),
-        tags$p("Please contact your instructor for a new key."),
+        tags$p("Please contact your instructor for a new key. If you have been given a new key file,",
+               "you can load it under Preferences."),
         easyClose = FALSE,
-        footer    = modalButton("OK")
+        footer    = tagList(
+          modalButton("Close"),
+          actionButton("quota_open_prefs", "Open Preferences", class = "btn-primary")
+        )
       ))
       return(invisible(NULL))
     }
@@ -3119,13 +3119,18 @@ server <- function(input, output, session) {
     showModal(modalDialog(
       title     = "Usage allowance reached",
       tags$p("You have used your full allowance for this period. ",
-             "The Ask, Ask for Code, Explain, and Fix buttons are now disabled."),
+             "The Answer, Ask for Code, Explain, and Fix buttons are now disabled."),
       tags$p(reset_line),
       tags$p("Any code already in the editor can still be run and edited."),
+      tags$p("If you have been given a new key file, you can load it under Preferences."),
       easyClose = FALSE,
-      footer    = modalButton("OK")
+      footer    = tagList(
+        modalButton("Close"),
+        actionButton("quota_open_prefs", "Open Preferences", class = "btn-primary")
+      )
     ))
   }
+  observeEvent(input$quota_open_prefs, show_preferences_modal())
 
   # Proactively show quota modal the moment a call tips the student over their limit.
   # Uses a shadow reactiveVal so the modal fires only on the FALSE→TRUE transition,
@@ -3177,7 +3182,7 @@ server <- function(input, output, session) {
       fileInput("mid_session_key_file", NULL, accept = ".key", width = "100%",
                 buttonLabel = "Browse...", placeholder = "classmate.key"),
       web_key_ui("web_key_url", "load_web_key_btn"),
-      footer = modalButton("Cancel")
+      footer = actionButton("load_key_cancel", "Cancel")
     ))
   }
 
@@ -3205,7 +3210,8 @@ server <- function(input, output, session) {
     load_key_from_web(input$key_web_url, on_success = function() key_is_set(TRUE))
   })
 
-  observeEvent(input$load_key_file_btn, show_load_key_file_modal())
+  observeEvent(input$pref_load_key, show_load_key_file_modal())
+  observeEvent(input$load_key_cancel, show_preferences_modal())
 
   observeEvent(input$mid_session_key_file, {
     req(input$mid_session_key_file)
@@ -3609,7 +3615,7 @@ server <- function(input, output, session) {
                     "load_script", "save_block", "help_toggle",
                     "quick_console", "pause_app", "new_conversation",
                     "add_objects", "load_package_data", "remove_context", "remove_all_context",
-                    "preferences", "load_key_file_btn",
+                    "preferences",
                     "file_select", "load_workspace"))
         shinyjs::disable(btn)
       shinyjs::runjs("
@@ -3625,7 +3631,7 @@ server <- function(input, output, session) {
       document.getElementById('clear_prompt').style.color = '';
     ")
     for (btn in c("help_toggle", "quick_console", "pause_app",
-                  "add_objects", "load_package_data", "preferences", "load_key_file_btn",
+                  "add_objects", "load_package_data", "preferences",
                   "file_select", "load_workspace"))
       shinyjs::enable(btn)
     if (!exceeded) {
@@ -3715,7 +3721,7 @@ server <- function(input, output, session) {
       tags$p(spend_line),
       if (!is.null(reset_line)) tags$p(reset_line),
       if (!is.null(expiry_line)) tags$p(expiry_line),
-      tags$p("If you reach your limit, buttons will be disabled until the allowance resets or your instructor provides a new key."),
+      tags$p("If you reach your limit, buttons will be disabled until the allowance resets or your instructor provides a new key (load it under Preferences)."),
       footer = modalButton("Close"),
       easyClose = TRUE
     ))
@@ -4618,6 +4624,8 @@ server <- function(input, output, session) {
     lang_choices <- if (tolower(lang) == "english") "English" else c(lang, "English")
     showModal(modalDialog(
       title = "Preferences",
+      actionButton("pref_load_key", "Load new key file", class = "btn-default btn-sm"),
+      tags$div(style = "margin-bottom: 10px;"),
       tags$label("Claude Model:"),
       tags$p(style = "margin: 6px 0 0 0;", tags$strong(MODEL_SONNET_LABEL),
              tags$span(style = "color: #888;", " (fixed)")),
@@ -5425,6 +5433,9 @@ server <- function(input, output, session) {
       if (!is.null(d)) show_changes_tab() else {
         hide_changes_tab()
         goto_tab("Code")
+        if (nzchar(trimws(old_editor_code)) && !identical(trimws(old_editor_code), trimws(parts$code)))
+          showNotification("The new code differs too much from the previous code to show a side-by-side comparison.",
+                           type = "message", duration = 6)
       }
       sq <- add_interaction(list(kind = "code", prompt = current_prompt, code = parts$code,
                                  description = parts$description %||% "", editor_code = parts$code,
