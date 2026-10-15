@@ -35,7 +35,14 @@ The **Answer** button gives the student a plain-English answer instead of code. 
 2. runs that code locally;
 3. removes any printed data rows or `str()` value lines from the output (the same filter as for console output), caps its length, and sends only the remaining **summary results** back to Claude to write the answer.
 
-Claude is instructed to print aggregates only and never individual records, identifiers or small groups. The student is told about this the first time they use the button in an R session, and the startup disclaimer states it. The code and output are shown to the student under "Show my working".
+Claude is instructed to print aggregates only and never individual records, identifiers or small groups. Prompt instructions alone are not a guarantee, so there are mechanical safeguards as well:
+
+- **Identifying text never reaches the calculation.** The calculation runs on *copies* of the data in which text columns that look like names or identifiers (by column name — name, id, address, surname, code, geoid, label — or by having many distinct values) have been replaced by opaque codes such as `[[NAME_7]]`. Whatever the code does to those columns (capital letters, substrings, arithmetic), it only ever sees codes. Claude writes its answer around the codes and Classmate fills the real values back in on the student's screen only. The conversation history sent on later turns also carries codes, not real values.
+- Text and pattern functions, sorting and comparing on those columns are refused (they would give wrong answers on coded values or try to extract pieces of them); Claude gets one chance to revise, and otherwise points the student to Ask for Code.
+- Per-record locations are refused (`st_coordinates`, `st_centroid`, `st_bbox`, `st_as_text` and similar), geometry text is removed from results, and requests to list rows, identifiers, parts of identifiers, or the location of a single record are declined.
+- Values the code reads for itself from files (rather than from selected objects) are caught by a second layer that withholds exact matches of identifying text from the output.
+
+These were tested with the real model using deliberately awkward questions (names in capitals, digits extracted from names, partial IDs, centre coordinates, a "ignore your rules" override, lists disguised as filters): the real names, ID fragments and coordinates did not appear in anything sent. Limits: a numeric-only ID column, an identifier column with an unusual title and few distinct values, or identifying text the code reads straight from a file into a non-table object may not be recognised; treat this as a strong safeguard, not a guarantee, and do not use classmate with identifiable personal data. The student is told about all of this the first time they use the button in an R session, and the startup disclaimer states it. The code and output are shown to the student under "Show my working".
 
 ### Never sent
 
@@ -144,8 +151,8 @@ In addition to technical safeguards, classmate includes two in-app prompts desig
 Every time a student opens the app for the first time in an R session, a modal dialog is displayed before they can proceed. It informs them that:
 
 - Their prompts and code are processed by Anthropic's Claude API (Anthropic, Inc., USA)
-- Only questions, code, and variable names are transmitted — data values are not
-- They must not include personal information in their prompts or work with identifiable personal data
+- Only questions, code, and variable names are transmitted — data values are not (the exception is the Answer button, which sends summary results, never individual records)
+- Two separate warnings, shown in bold dark red: they must not include personal information about themselves or others in their prompts, and they must not use classmate with datasets that contain identifiable personal data
 - Use of classmate must comply with the university's AI policies; students should check with their module leader if unsure about a specific assessment
 - Anthropic does not use API interactions for training; data is deleted after 30 days
 

@@ -711,7 +711,8 @@ summarise_workspace_object <- function(obj_name, envir = .GlobalEnv) {
   header <- if (!is.null(schema$nrow)) {
     paste0("`", obj_name, "` [", type_str, ", ",
            format(schema$nrow, big.mark = ","), " rows, ",
-           length(schema$cols %||% character(0)), " columns]")
+           length(schema$cols %||% character(0)),
+           if (inherits(obj, "sf")) " columns plus a geometry column]" else " columns]")
   } else {
     paste0("`", obj_name, "` [", type_str, "]")
   }
@@ -1350,7 +1351,8 @@ PRICE_OUTPUT      <- 15.00  # USD per MTok
 calc_cost <- function(usage) {
   cache_write <- usage$cache_creation_input_tokens %||% 0L
   cache_read  <- usage$cache_read_input_tokens     %||% 0L
-  regular_in  <- (usage$input_tokens  %||% 0L) - cache_write - cache_read
+  # The API reports input_tokens EXCLUDING cached tokens (which are listed separately).
+  regular_in  <- usage$input_tokens %||% 0L
   out         <- usage$output_tokens  %||% 0L
   (cache_write * PRICE_CACHE_WRITE +
    cache_read  * PRICE_CACHE_READ  +
@@ -2134,7 +2136,10 @@ answer_mode_rule <- paste(
   "begin your reply with the line COMPUTE: then one short sentence saying what you will",
   "calculate, then exactly one ```r code block. The code is run for you and its summary",
   "output is returned to you so that you can write the answer.",
-  "Never put ANSWER: and COMPUTE: in the same reply."
+  "Never put ANSWER: and COMPUTE: in the same reply.",
+  "Text in double square brackets, such as [[NAME_1]], is a placeholder for a text value from",
+  "the student's data that has been withheld from you for privacy. Refer to it exactly as",
+  "written; it is filled in on the student's screen. Never use such placeholders inside code."
 )
 
 answer_compute_rules <- paste(
@@ -2153,7 +2158,23 @@ answer_compute_rules <- paste(
   "sent back to you.",
   "4. For sf objects call sf::st_drop_geometry() before summarising; never print geometries.",
   "5. Use only the exact column names listed in the context. Call library() for every",
-  "package you use. Keep the code short."
+  "package you use. Keep the code short.",
+  "IDENTIFIER COLUMNS: In the data your code runs on, text columns holding names, IDs or",
+  "addresses contain opaque codes such as [[NAME_7]] instead of the real values (which are",
+  "withheld for privacy and restored on the student's screen). Use these columns only to",
+  "identify records — for example which.max(), counting, grouping or joining. Do not sort,",
+  "compare, match, count characters in, or transform them (no toupper, substr, gsub, grepl,",
+  "as.numeric and so on). Never print coordinates, geometries or bounding boxes: the location",
+  "of an individual record is identifying.",
+  "REQUESTS FOR RECORDS: If the student asks to see individual rows, records or lists of",
+  "names or identifiers (for example 'show me the first five rows' or 'list the tracts'), or",
+  "asks for part of an identifier (capital letters, a few digits, the first word) or the",
+  "location of a single record,",
+  "do not attempt it. Decide this BEFORE you start writing, and reply with ANSWER: saying",
+  "briefly and kindly that this button gives summaries rather than listing individual records,",
+  "and that Ask for Code will give code that shows them on the student's own screen. Never",
+  "begin an answer and then retract it. (Looking up a single value, such as which record is",
+  "largest, is fine: print its value; identifying text is withheld from you automatically.)"
 )
 
 answer_column_rule <- paste(
@@ -2200,6 +2221,9 @@ build_answer_write_system_prompt <- function(language = "English") {
       "working' to see that). Do not include code blocks. If the results are incomplete, truncated,",
       "or do not actually answer the question, say so plainly rather than guessing. Talk about groups",
       "and summaries only — never reproduce or guess values for individual people or records.",
+      "Text in double square brackets, such as [[NAME_1]], stands for a text value from the",
+      "student's data that was withheld from you for privacy: keep it exactly as written, in",
+      "context (for example 'the tract [[NAME_1]]'); it is filled in on the student's screen.",
       "Do not invite follow-up replies; this is a one-shot answer."
     ),
     build_language_clause(language),
@@ -2232,7 +2256,10 @@ parse_answer_plan <- function(raw) {
   "dev.print", "ggsave", "tmap_save", "url", "download.file", "browseURL", "curl",
   "request", "req_perform", "GET", "POST", "readline", "scan", "menu", "View", "edit",
   "fix", "browser", "debug", "quit", "q", "stopApp", "install_github", "install_cran",
-  "<<-", "->>"
+  "<<-", "->>",
+  # per-record locations are identifying (home addresses, small areas)
+  "st_coordinates", "st_centroid", "st_point_on_surface", "st_bbox", "st_as_text",
+  "st_as_binary", "st_geometry", "st_geometry<-", "coordinates", "bbox"
 )
 .ANSWER_BLOCKED_PATTERN <- "^(write|save|install|remove\\.packages|update\\.packages|download)"
 
@@ -2269,10 +2296,11 @@ answer_code_violations <- function(code) {
 
 # Runs the Answer button's code in a throw-away environment, with graphics going
 # nowhere. Returns list(success, message, output, warnings).
-run_answer_code <- function(code, timeout = 60) {
+run_answer_code <- function(code, timeout = 60, objects = list()) {
   old_wd <- setwd(project_root())
   on.exit(setwd(old_wd), add = TRUE)
   env <- new.env(parent = globalenv())
+  for (nm in names(objects)) assign(nm, objects[[nm]], envir = env)   # masked copies shadow the real objects
   warnings_seen <- character(0)
   out <- character(0)
   grDevices::pdf(NULL)
@@ -2295,7 +2323,7 @@ run_answer_code <- function(code, timeout = 60) {
     ))
     list(success = TRUE, message = "")
   }, error = function(e) list(success = FALSE, message = strip_ansi(conditionMessage(e))))
-  c(res, list(output = strip_ansi(out), warnings = warnings_seen))
+  c(res, list(output = strip_ansi(out), warnings = warnings_seen, env = env))
 }
 
 # What may be sent back to Claude: printed records/str() lines are removed (the
@@ -2304,6 +2332,8 @@ scrub_results_for_answer <- function(output, warnings = character(0),
                                      max_chars = 6000L, max_lines = 150L) {
   txt   <- scrub_console_output(paste(output, collapse = "\n"))
   lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
+  geom  <- grepl("\\b(POINT|POLYGON|LINESTRING|MULTI[A-Z]+|GEOMETRYCOLLECTION)\\s*Z?\\s*\\(", lines)
+  lines[geom] <- "[geometry — values not shown]"
   if (length(lines) > max_lines)
     lines <- c(lines[seq_len(max_lines)],
                sprintf("[... %d further lines not shown]", length(lines) - max_lines))
@@ -2312,6 +2342,187 @@ scrub_results_for_answer <- function(output, warnings = character(0),
   if (length(warnings) > 0)
     txt <- paste0(txt, "\nWarnings: ", paste(utils::head(unique(warnings), 5), collapse = "; "))
   txt
+}
+
+# --- Withholding identifying text values ---------------------------------------
+# Printed single values (e.g. cat(top_row$NAME)) slip past the row filter. So, before
+# results go to Claude, text values from columns that look like names/identifiers
+# (by column name, or many distinct values) are replaced with placeholders such as
+# [[NAME_1]]. Claude writes the answer around the placeholders and Classmate fills
+# the real values back in locally, so they never leave the student's computer.
+.NAMEY_COLUMN <- "(^|[^a-z])(name|names|id|ids|ref|address|postcode|zip|surname|forename|email|phone|geoid|code|label)([^a-z]|$)"
+
+build_redaction_vocab <- function(objs, max_values = 200000L) {
+  values <- character(0); labels <- character(0)
+  for (o in objs) {
+    if (!is.data.frame(o)) next
+    for (cn in names(o)) {
+      col <- o[[cn]]
+      if (!(is.character(col) || is.factor(col))) next
+      u <- unique(as.character(col))
+      u <- u[!is.na(u) & nchar(u) >= 3L & !grepl("^\\[\\[[A-Za-z0-9_]+\\]\\]$", u)]   # skip values that are already codes
+      if (length(u) == 0) next
+      namey <- grepl(.NAMEY_COLUMN, tolower(cn))
+      high  <- length(u) > 12L && length(u) / max(length(col), 1L) >= 0.05
+      if (namey || high) {
+        values <- c(values, u)
+        labels <- c(labels, rep(toupper(gsub("[^A-Za-z0-9]+", "_", cn)), length(u)))
+      }
+      if (length(values) > max_values) break
+    }
+  }
+  keep <- !duplicated(values)
+  data.frame(value = values[keep], label = labels[keep], stringsAsFactors = FALSE)
+}
+
+redact_values <- function(text, vocab, map = character(0)) {
+  if (is.null(vocab) || nrow(vocab) == 0 || !nzchar(text)) return(list(text = text, map = map))
+  appears <- vapply(vocab$value, function(v) grepl(v, text, fixed = TRUE), logical(1))
+  hit <- vocab[appears, , drop = FALSE]
+  hit <- hit[order(-nchar(hit$value)), , drop = FALSE]
+  for (i in seq_len(nrow(hit))) {
+    v   <- hit$value[i]
+    pat <- paste0("(?<![[:alnum:]])", gsub("([.|()\\\\^{}+$*?\\[\\]])", "\\\\\\1", v, perl = TRUE), "(?![[:alnum:]])")
+    if (!grepl(pat, text, perl = TRUE)) next
+    token <- if (length(map) > 0) names(map)[match(v, unname(map))] else NA_character_  # reuse an existing token
+    if (is.na(token)) {
+      lab    <- hit$label[i]
+      prefix <- paste0("[[", lab, "_")
+      map_names <- names(map) %||% character(0)
+      used   <- map_names[startsWith(map_names, prefix)]
+      n      <- max(c(0L, suppressWarnings(as.integer(sub(".*_([0-9]+)\\]\\]$", "\\1", used)))), na.rm = TRUE) + 1L
+      token  <- sprintf("[[%s_%d]]", lab, n)
+      map[token] <- v
+    }
+    text <- gsub(pat, token, text, perl = TRUE)
+  }
+  list(text = text, map = map)
+}
+
+# Which columns of a data frame hold identifying text (same rule as the vocabulary above)
+identifier_columns <- function(o) {
+  if (!is.data.frame(o)) return(character(0))
+  Filter(function(cn) {
+    col <- o[[cn]]
+    if (!(is.character(col) || is.factor(col))) return(FALSE)
+    u <- unique(as.character(col)); u <- u[!is.na(u)]
+    if (length(u) == 0) return(FALSE)
+    grepl(.NAMEY_COLUMN, tolower(cn)) ||
+      (length(u) > 12L && length(u) / max(length(col), 1L) >= 0.05)
+  }, names(o))
+}
+
+# Replaces identifying text columns, in COPIES of the data, with opaque codes such as
+# [[NAME_7]]. The calculation then never sees real names/IDs, so nothing it does with
+# them (capitals, substrings, arithmetic) can reveal them. `map` is token -> value; tokens
+# already in it are reused so that they stay stable through the conversation.
+# Returns list(objs, map (all tokens used in this run), id_cols, failed).
+pseudonymise_objects <- function(objs, map = character(0)) {
+  tok_to_val <- map
+  val_to_tok <- if (length(map) > 0) setNames(names(map), unname(map)) else character(0)
+  id_cols <- character(0); failed <- character(0)
+  out <- objs
+  for (nm in names(objs)) {
+    o <- objs[[nm]]
+    cols <- identifier_columns(o)
+    if (length(cols) == 0) next
+    ok <- tryCatch({
+      for (cn in cols) {
+        col <- o[[cn]]
+        chr <- as.character(col)
+        u   <- unique(chr[!is.na(chr)])
+        new <- u[!(u %in% names(val_to_tok))]
+        if (length(new) > 0) {
+          lab      <- toupper(gsub("[^A-Za-z0-9]+", "_", cn))
+          prefix   <- paste0("[[", lab, "_")
+          names_now <- names(tok_to_val) %||% character(0)
+          used     <- suppressWarnings(as.integer(sub("\\]\\]$", "",
+                        sub(paste0("^", gsub("([\\[\\]])", "\\\\\\1", prefix, perl = TRUE)), "",
+                            names_now[startsWith(names_now, prefix)]))))
+          idx      <- setdiff(seq_len(length(new) + length(used)), used)[seq_along(new)]
+          toks     <- sprintf("[[%s_%d]]", lab, idx)
+          val_to_tok[new] <- toks
+          tok_to_val[toks] <- new
+        }
+        coded <- unname(val_to_tok[chr])
+        o[[cn]] <- if (is.factor(col)) factor(coded) else coded
+        id_cols <- c(id_cols, cn)
+      }
+      TRUE
+    }, error = function(e) FALSE)
+    if (isTRUE(ok)) out[[nm]] <- o else failed <- c(failed, nm)
+  }
+  list(objs = out, map = tok_to_val, id_cols = unique(id_cols), failed = failed)
+}
+
+# String constants in the code that equal a real identifier value (e.g. a tract name the
+# student typed in the question) are swapped for that value's code so that lookups work.
+replace_known_literals <- function(code, val_to_tok) {
+  exprs <- tryCatch(parse(text = code, keep.source = FALSE), error = function(e) NULL)
+  if (is.null(exprs) || length(val_to_tok) == 0) return(code)
+  swap <- function(x) {
+    if (is.character(x) && length(x) == 1L && !is.na(x) && x %in% names(val_to_tok))
+      return(unname(val_to_tok[[x]]))
+    if (is.call(x) || is.pairlist(x) || is.expression(x))
+      for (i in seq_along(x)) {
+        if (identical(x[[i]], quote(expr = ))) next
+        x[[i]] <- swap(x[[i]])
+      }
+    x
+  }
+  paste(vapply(exprs, function(e) paste(deparse(swap(e), width.cutoff = 500L), collapse = "\n"),
+               character(1)), collapse = "\n")
+}
+
+# When identifying columns exist, text/pattern functions on them would give wrong answers
+# (the calculation only sees opaque codes) or try to extract pieces of them, so they are refused.
+.ANSWER_STRING_FNS <- c("toupper", "tolower", "casefold", "chartr", "substr", "substring",
+  "strsplit", "sub", "gsub", "regmatches", "regexpr", "gregexpr", "regexec", "grepl", "grep",
+  "startsWith", "endsWith", "nchar", "strtoi", "utf8ToInt", "intToUtf8", "iconv")
+.ANSWER_ORDER_FNS <- c("sort", "order", "rank", "min", "max", "range", "arrange", "sort_by", "xtfrm")
+answer_identifier_violations <- function(code, id_cols) {
+  if (length(id_cols) == 0) return(character(0))
+  exprs <- tryCatch(parse(text = code, keep.source = FALSE), error = function(e) NULL)
+  if (is.null(exprs)) return(character(0))
+  found <- character(0)
+  mentions_id <- function(x) {
+    if (is.name(x)) return(as.character(x) %in% id_cols)
+    if (is.character(x)) return(any(x %in% id_cols))
+    if (is.call(x) || is.pairlist(x) || is.expression(x) || is.list(x))
+      return(any(vapply(seq_along(x), function(i)
+        !identical(x[[i]], quote(expr = )) && mentions_id(x[[i]]), logical(1))))
+    FALSE
+  }
+  walk <- function(x) {
+    if (is.call(x)) {
+      f  <- x[[1]]
+      nm <- if (is.name(f)) as.character(f)
+            else if (is.call(f) && length(f) == 3 && as.character(f[[1]]) %in% c("::", ":::"))
+              as.character(f[[3]]) else ""
+      if (nm %in% .ANSWER_STRING_FNS || grepl("^(str_|stri_)", nm))
+        found <<- c(found, nm)
+      else if (nm %in% .ANSWER_ORDER_FNS && length(x) > 1 && mentions_id(as.list(x)[-1]))
+        found <<- c(found, paste0(nm, "() on an identifier column"))
+      for (i in seq_along(x)) {
+        if (identical(x[[i]], quote(expr = ))) next
+        walk(x[[i]])
+      }
+    } else if (is.pairlist(x) || is.expression(x)) {
+      for (i in seq_along(x)) {
+        if (identical(x[[i]], quote(expr = ))) next
+        walk(x[[i]])
+      }
+    }
+  }
+  for (e in exprs) walk(e)
+  unique(found)
+}
+
+restore_placeholders <- function(text, map) {
+  if (length(map) == 0 || !nzchar(text)) return(text)
+  toks <- unique(unlist(regmatches(text, gregexpr("\\[\\[[A-Za-z0-9_]+\\]\\]", text))))
+  for (tok in intersect(toks, names(map))) text <- gsub(tok, map[[tok]], text, fixed = TRUE)
+  text
 }
 
 # Text from the AI is untrusted: escape it, then apply light formatting
@@ -2380,7 +2591,9 @@ HELP_TEXTS <- list(
     "working\" under it reveals the code and output used. The Code, R output and Past code",
     "tabs are replaced by Answer and Past answers while you use it, and Run, Explain, Fix,",
     "Load Script and Save Code Block are switched off. Use Ask for Code to get them back.",
-    "To produce its answer, summary results (not individual records) are sent to Claude."
+    "To produce its answer, summary results (not individual records) are sent to Claude;",
+    "names and identifiers in your data are replaced by placeholders and filled back in",
+    "only on your own screen. It will not list individual rows or records."
   ),
   ask_code = paste(
     "Ask for Code — Send a prompt to the AI and have the generated code placed",
@@ -2653,9 +2866,12 @@ server <- function(input, output, session) {
           "records) to Claude."
         ),
         tags$li(
-          "Do not include personal information about yourself or others in your",
-          "prompts, and avoid working with datasets that contain identifiable",
-          "personal data during this session."
+          tags$strong(style = "color: #8b0000;",
+            "Do not include personal information about yourself or others in your prompts.")
+        ),
+        tags$li(
+          tags$strong(style = "color: #8b0000;",
+            "Do not use classmate with datasets that contain identifiable personal data.")
         ),
         tags$li(
           "Use of classmate must comply with your university's policies on the",
@@ -3601,6 +3817,7 @@ server <- function(input, output, session) {
     output$run_status <- renderUI(NULL)
     answer_latest(recalled$answer_latest)
     answer_hist(recalled$answer_hist %||% list())
+    placeholder_map(character(0))
     goto_tab("Code")
     if (length(recalled$codes) == 0 && !is.null(recalled$answer_latest)) set_ask_mode("answer")
     if (current_is_blank) conv_count_rv(max(conv_count_rv() - 1L, 1L))
@@ -3918,6 +4135,8 @@ server <- function(input, output, session) {
   ask_mode      <- reactiveVal(if (!is.null(ps) && identical(ps$ask_mode, "answer")) "answer" else "code")
   answer_latest <- reactiveVal(if (!is.null(ps)) ps$answer_latest else NULL)
   answer_hist   <- reactiveVal(if (!is.null(ps)) (ps$answer_hist %||% list()) else list())
+  # Placeholder -> real value, for the whole conversation (kept locally only)
+  placeholder_map <- reactiveVal(if (!is.null(ps)) (ps$placeholder_map %||% character(0)) else character(0))
   CODE_SIDE_TABS <- c("Code", "R output", "Past code", "Changes")
 
   refresh_ask_tabs <- function() {
@@ -4401,6 +4620,7 @@ server <- function(input, output, session) {
     run_history(list())
     answer_latest(NULL)
     answer_hist(list())
+    placeholder_map(character(0))
     set_ask_mode("code")
     pending_log_entries(list())
     all_log_entries(list())
@@ -5043,13 +5263,15 @@ server <- function(input, output, session) {
     record_usage(r1$cost_usd %||% 0)
     plan <- parse_answer_plan(raw)
 
-    finalize <- function(answer_text, code = "", results_text = "") {
+    finalize <- function(answer_tokens, code = "", results_text = "") {
       prev <- answer_latest()
       if (!is.null(prev)) answer_hist(c(list(prev), answer_hist()))
-      answer_latest(list(question = current_prompt, answer = answer_text,
+      answer_latest(list(question = current_prompt,
+                         answer   = restore_placeholders(answer_tokens, placeholder_map()),
                          code = code, results = results_text))
+      # History (which is sent to Claude on later turns) keeps placeholders, not real values
       conversation_history(c(history_so_far,
-                             list(list(role = "assistant", content = answer_text))))
+                             list(list(role = "assistant", content = answer_tokens))))
       prompt_history(c(current_prompt, prompt_history()))
       output$run_status <- renderUI(NULL)
       set_ask_mode("answer")
@@ -5071,22 +5293,60 @@ server <- function(input, output, session) {
 
     code_cur <- plan$code
     raw_cur  <- raw
+
+    # Data frames the calculation may touch (the selected objects, plus any other data
+    # frame the code names), as copies in which identifying text is replaced by codes.
+    prepare_run <- function(code) {
+      syms <- tryCatch(all.names(parse(text = code, keep.source = FALSE)), error = function(e) character(0))
+      cand <- union(selected_objects(), intersect(syms, ls(envir = .GlobalEnv)))
+      cand <- cand[vapply(cand, function(n)
+        exists(n, envir = .GlobalEnv, inherits = FALSE) &&
+          is.data.frame(get(n, envir = .GlobalEnv, inherits = FALSE)), logical(1))]
+      ps <- pseudonymise_objects(mget(cand, envir = .GlobalEnv), placeholder_map())
+      list(ps = ps, masked = cand)
+    }
+
     check_and_install_if_needed(code_cur, function() {
-      res <- NULL; scrubbed <- ""; usable <- FALSE
+      res <- NULL; usable <- FALSE; red <- list(text = "", map = character(0)); tok_all <- character(0)
       for (attempt in 1:2) {
-        res <- withProgress(message = "Working on your answer...", value = 0.6,
-                            run_answer_code(code_cur))
-        scrubbed <- scrub_results_for_answer(res$output, res$warnings)
-        hidden   <- grepl("values not shown", scrubbed, fixed = TRUE)
-        usable   <- isTRUE(res$success) && !hidden && nzchar(trimws(scrubbed))
-        if (usable || attempt == 2) break
-        problem <- if (!isTRUE(res$success)) {
-          paste0("The code failed with this error:\n", res$message)
-        } else if (hidden) {
-          paste("Your output was hidden because it looked like individual records (printed",
-                "data-frame rows). Re-run, printing only aggregated results with cat(), a",
-                "named vector, table() or summary().")
-        } else "The code printed no results. Re-run, printing the results you need."
+        prep <- prepare_run(code_cur)
+        if (length(prep$ps$failed) > 0)
+          return(fail(paste("Classmate could not safely prepare", paste(prep$ps$failed, collapse = ", "),
+                            "for this question. Try Ask for Code instead.")))
+        tok_all <- prep$ps$map
+        bad_id  <- answer_identifier_violations(code_cur, prep$ps$id_cols)
+        problem <- NULL
+        if (length(bad_id) > 0) {
+          res <- list(success = FALSE, output = character(0), warnings = character(0), env = new.env())
+          problem <- paste0(
+            "Your code used ", paste(bad_id, collapse = ", "), ". Columns of names, IDs or addresses ",
+            "contain opaque codes, so text functions, sorting, comparing and number conversion on ",
+            "them are not allowed and would give wrong answers. If the question needs part of an ",
+            "identifier or such operations, reply with ANSWER: explaining briefly that this button ",
+            "cannot do that and that Ask for Code can; otherwise rewrite using only counting, ",
+            "grouping, which.max() style lookups and joins.")
+        } else {
+          to_run <- replace_known_literals(code_cur, setNames(names(tok_all), unname(tok_all)))
+          res <- withProgress(message = "Working on your answer...", value = 0.6,
+                              run_answer_code(to_run, objects = prep$ps$objs))
+          created  <- setdiff(ls(res$env, all.names = TRUE), prep$masked)
+          vocab    <- tryCatch(build_redaction_vocab(mget(created, envir = res$env)),
+                               error = function(e) NULL)
+          scrubbed <- scrub_results_for_answer(res$output, res$warnings)
+          red      <- redact_values(scrubbed, vocab, tok_all)
+          tok_all  <- red$map
+          hidden   <- grepl("values not shown", scrubbed, fixed = TRUE)
+          usable   <- isTRUE(res$success) && !hidden && nzchar(trimws(scrubbed))
+          if (usable) break
+          problem <- if (!isTRUE(res$success)) {
+            paste0("The code failed with this error:\n", redact_values(res$message, vocab, tok_all)$text)
+          } else if (hidden) {
+            paste("Your output was hidden because it looked like individual records (printed",
+                  "data-frame rows). Re-run, printing only aggregated results with cat(), a",
+                  "named vector, table() or summary().")
+          } else "The code printed no results. Re-run, printing the results you need."
+        }
+        if (attempt == 2) break
         r_fix <- withProgress(message = "Trying again...", value = 0.6, call_ai(
           c(windowed, list(list(role = "assistant", content = raw_cur),
                            list(role = "user", content = paste0(problem,
@@ -5108,7 +5368,7 @@ server <- function(input, output, session) {
 
       results_msg <- paste0(
         "Here are the results of running that code (summary output only):\n```\n",
-        scrubbed, "\n```\nNow write the answer to my original question in plain English. ",
+        red$text, "\n```\nNow write the answer to my original question in plain English. ",
         "Do not include code.")
       r2 <- withProgress(message = "Writing the answer...", value = 0.8, call_ai(
         c(windowed, list(list(role = "assistant", content = raw_cur),
@@ -5120,11 +5380,18 @@ server <- function(input, output, session) {
 
       new_pkgs <- vapply(extract_pkg_info(code_cur), `[[`, character(1), "pkg")
       loaded_packages(unique(c(loaded_packages(), new_pkgs)))
+      answer_tokens <- trimws(sub("^\\s*ANSWER:\\s*", "", r2$text))
+      # Keep the codes that actually appeared (in results or answer) so later turns can restore them
+      seen_text <- paste(red$text, answer_tokens)
+      seen      <- intersect(unique(unlist(regmatches(seen_text, gregexpr("\\[\\[[A-Za-z0-9_]+\\]\\]", seen_text)))),
+                             names(tok_all))
+      placeholder_map(c(placeholder_map()[setdiff(names(placeholder_map()), seen)], tok_all[seen]))
+      # What the student sees under "Show my working" has the real values put back
       shown <- strsplit(paste(res$output, collapse = "\n"), "\n", fixed = TRUE)[[1]]
       if (length(shown) > 200)
         shown <- c(shown[1:200], sprintf("[... %d further lines not shown]", length(shown) - 200))
-      finalize(trimws(sub("^\\s*ANSWER:\\s*", "", r2$text)),
-               code = code_cur, results_text = paste(shown, collapse = "\n"))
+      shown_txt <- restore_placeholders(paste(shown, collapse = "\n"), tok_all)
+      finalize(answer_tokens, code = code_cur, results_text = shown_txt)
     })
   }
 
@@ -5955,6 +6222,7 @@ server <- function(input, output, session) {
       conv_count_rv        = conv_count_rv(),
       answer_latest        = answer_latest(),
       answer_hist          = answer_hist(),
+      placeholder_map      = placeholder_map(),
       ask_mode             = ask_mode()
     )
     if (length(all_log_entries()) > 0) do_save_log()
