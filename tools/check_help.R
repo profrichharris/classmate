@@ -141,6 +141,13 @@ if (length(stale_t)) {
 # Computed ids already reviewed: web_key_ui()'s button, used only on the startup
 # screen and inside the Load key file pop-up.
 dynamic <- dynamic[!dynamic$expr %in% c("btn_id"), ]
+# A computed id such as paste0("recall_prompt_", i) is covered if its literal prefix matches
+# one of the HELP_ID_PATTERNS.
+covered_by_pattern <- vapply(dynamic$expr, function(e) {
+  m <- regmatches(e, regexec('^paste0\\("([^"]+)"', e))[[1]]
+  length(m) == 2 && any(vapply(names(help_env$HELP_ID_PATTERNS), function(p) grepl(p, m[2]), logical(1)))
+}, logical(1))
+dynamic <- dynamic[!covered_by_pattern, ]
 if (nrow(dynamic) > 0) {
   say("\nNote: ", nrow(dynamic), " button/tab(s) have computed ids/titles and cannot be",
       " checked automatically. Confirm they are covered by HELP_TEXTS or HELP_ID_PATTERNS:")

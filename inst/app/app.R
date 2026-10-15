@@ -14,10 +14,47 @@ library(httr2)
 .cm <- new.env()
 .cm$root <- normalizePath(getOption(".classmate_project_root", getwd()),
                           winslash = "/", mustWork = FALSE)
-project_root <- function() .cm$root
-outputs_dir  <- function() file.path(.cm$root, "outputs")
-pause_file   <- function() file.path(.cm$root, "claude_assistant_pause.rds")
+project_root <- function() {
+  if (!dir.exists(.cm$root)) cm_ensure_root()
+  .cm$root
+}
+outputs_dir  <- function() file.path(project_root(), "outputs")
+pause_file   <- function() file.path(project_root(), "claude_assistant_pause.rds")
 dir.create(outputs_dir(), showWarnings = FALSE, recursive = TRUE)
+
+# If the project folder has disappeared (moved, deleted, drive unplugged), fall back to the nearest
+# folder that still exists, so nothing downstream fails. The server shows a notice (.cm$fallback).
+cm_ensure_root <- function() {
+  if (dir.exists(.cm$root)) return(invisible(NULL))
+  lost   <- .cm$root
+  parent <- lost
+  repeat {
+    up <- dirname(parent)
+    if (identical(up, parent)) break
+    parent <- up
+    if (dir.exists(parent)) break
+  }
+  for (d in unique(c(if (dir.exists(parent)) parent, path.expand("~"), tempdir()))) {
+    if (!dir.exists(d)) next
+    .cm$root <- normalizePath(d, winslash = "/")
+    options(.classmate_project_root = .cm$root)
+    suppressWarnings(dir.create(file.path(.cm$root, "outputs"), showWarnings = FALSE, recursive = TRUE))
+    .cm$fallback <- list(from = lost, to = .cm$root)
+    return(invisible(.cm$root))
+  }
+  invisible(NULL)
+}
+
+# Switches to the project folder for the duration of a run and returns a restore() that never
+# errors (the folder Classmate itself runs from may have been replaced, e.g. by a reinstall).
+cm_enter_root <- function() {
+  root <- project_root()
+  old  <- tryCatch(getwd(), error = function(e) NULL)
+  ok   <- tryCatch({ setwd(root); TRUE }, error = function(e) FALSE)
+  list(ok = ok, restore = function() {
+    if (!is.null(old) && nzchar(old) && dir.exists(old)) try(setwd(old), silent = TRUE)
+  })
+}
 
 # Makes `new_dir` the project root. Returns list(ok, changed, path, outputs_ok, error).
 cm_set_root <- function(new_dir) {
@@ -934,7 +971,8 @@ compute_diff <- function(old_code, new_code) {
   old_ptr <- 1L
   for (i in seq_len(n_new)) {
     if (!nzchar(new_norm[i])) next
-    for (j in seq(old_ptr, n_old)) {
+    if (old_ptr > n_old) next
+    for (j in old_ptr:n_old) {
       if (nzchar(old_norm[j]) && identical(new_norm[i], old_norm[j])) {
         new_to_old[i] <- j
         old_ptr <- j + 1L
@@ -963,11 +1001,11 @@ compute_diff <- function(old_code, new_code) {
   old_changed <- integer(0)
   for (ci in changed_new) {
     prev_old <- NA_integer_
-    for (k in seq(ci - 1L, 1L)) {
+    if (ci > 1L) for (k in (ci - 1L):1L) {
       if (!is.na(new_to_old[k])) { prev_old <- new_to_old[k]; break }
     }
     next_old <- NA_integer_
-    if (ci < n_new) for (k in seq(ci + 1L, n_new)) {
+    if (ci < n_new) for (k in (ci + 1L):n_new) {
       if (!is.na(new_to_old[k])) { next_old <- new_to_old[k]; break }
     }
     gap_start <- if (is.na(prev_old)) old_start else prev_old + 1L
@@ -1047,8 +1085,13 @@ run_code <- function(code_text) {
   plot_files     <- character(0)
 
   # Run in the user's project directory, not the Shiny app directory
-  old_wd <- setwd(project_root())
-  on.exit(setwd(old_wd), add = TRUE)
+  .enter <- cm_enter_root()
+  on.exit(.enter$restore(), add = TRUE)
+  if (!.enter$ok)
+    return(list(success = FALSE, warnings = character(0), output = character(0),
+                plot_files = character(0), wd_changed = NULL,
+                message = paste("Classmate could not open your working directory.",
+                                "Use Change Working Directory in the Quick Console to choose a folder.")))
 
   # Open a numbered PNG device to capture any plots generated
   tmp_base    <- tempfile("classmate_plot_")
@@ -1757,6 +1800,15 @@ ui <- fluidPage(
     });
   ")),
 
+  # Answer / Past answers panes: same fixed height as the Code editor, scrolling inside
+  tags$style(HTML("
+    .cm-answer-pane {
+      height: 220px; overflow-y: auto; box-sizing: border-box;
+      border: 1px solid #ddd; border-radius: 3px; padding: 8px 12px; background: #fff;
+    }
+    .cm-answer-pane > .shiny-html-output > :first-child { margin-top: 0; }
+  ")),
+
   # Optional "filter by name" box in the Import files dialog. Folders always stay
   # visible so the user can still navigate; only files are filtered.
   tags$script(HTML("
@@ -1966,16 +2018,39 @@ ui <- fluidPage(
         )
       ),
       tabPanel("Answer",
-        tags$div(style = "margin-top: 8px; min-height: 220px; max-height: 320px; overflow-y: auto;",
+        tags$div(class = "cm-answer-pane", style = "margin-top: 8px;",
           uiOutput("answer_ui")
         )
       ),
       tabPanel("Past answers",
-        tags$div(style = "margin-top: 8px; min-height: 220px; max-height: 320px; overflow-y: auto;",
+        tags$div(class = "cm-answer-pane", style = "margin-top: 8px;",
           uiOutput("past_answers_ui")
         )
       ),
     ),
+
+    # "Back to Code": placed at the end of the tab bar (moved there by the script below)
+    tags$div(style = "display: none;",
+      tags$li(id = "back_to_code_li", class = "cm-back-li", style = "display: none;",
+        actionButton("back_to_code", "Back to Code", class = "btn-sm",
+          style = "background-color: white; border-color: #bbb; color: #333;")),
+      tags$li(id = "back_to_answer_li", class = "cm-back-li", style = "display: none;",
+        actionButton("back_to_answer", "Back to Answer", class = "btn-sm",
+          style = "background-color: white; border-color: #bbb; color: #333;"))
+    ),
+    tags$script(HTML("
+      (function() {
+        var ul = document.getElementById('main_tabs');
+        ['back_to_code_li', 'back_to_answer_li'].forEach(function(id) {
+          var li = document.getElementById(id);
+          if (li && ul) ul.appendChild(li);
+        });
+      })();
+    ")),
+    tags$style(HTML("
+      #main_tabs .cm-back-li { float: left; margin: 3px 0 0 14px; }
+      #main_tabs .cm-back-li .btn { height: 28px; padding: 2px 10px; }
+    ")),
 
     div(style = "margin-top: 6px;",
       disabled(actionButton("run_code", "Run", class = "btn-success")),
@@ -2297,9 +2372,12 @@ answer_code_violations <- function(code) {
 # Runs the Answer button's code in a throw-away environment, with graphics going
 # nowhere. Returns list(success, message, output, warnings).
 run_answer_code <- function(code, timeout = 60, objects = list()) {
-  old_wd <- setwd(project_root())
-  on.exit(setwd(old_wd), add = TRUE)
   env <- new.env(parent = globalenv())
+  .enter <- cm_enter_root()
+  on.exit(.enter$restore(), add = TRUE)
+  if (!.enter$ok)
+    return(list(success = FALSE, message = "Classmate could not open your working directory.",
+                output = character(0), warnings = character(0), env = env))
   for (nm in names(objects)) assign(nm, objects[[nm]], envir = env)   # masked copies shadow the real objects
   warnings_seen <- character(0)
   out <- character(0)
@@ -2652,6 +2730,16 @@ HELP_TEXTS <- list(
     "Remove All — Clears all attached files and objects from the context.",
     "This button appears once you have added something."
   ),
+  back_to_code = paste(
+    "Back to Code — Appears beside the Answer tabs once you have code to go back to.",
+    "It returns to the Code, R output and Past code tabs exactly as you left them before",
+    "using the Answer button, on the same tab you were viewing."
+  ),
+  back_to_answer = paste(
+    "Back to Answer — Appears beside the code tabs once you have asked a question with",
+    "the Answer button. It returns to your answer (or your earlier answers) exactly as you",
+    "left it, on the same tab you were viewing."
+  ),
   run_code = paste(
     "Run — Executes the code currently in the editor. Results and any plots",
     "appear in the R output tab. If the code runs successfully it is added to",
@@ -2752,8 +2840,10 @@ HELP_TAB_TEXTS <- list(
   ),
   "Past prompts" = paste(
     "Past Prompts tab — Shows a history of all the prompts you have sent to the AI",
-    "in this conversation. Use the Repeat button beside an entry to copy it back",
-    "into the prompt box."
+    "in this conversation, marked Answer or Code according to what they produced. Use the",
+    "Recall button beside an entry to bring it all back: the prompt returns to the prompt",
+    "box, and you are taken back to its answer, or to its code with the R output, plots and",
+    "warnings it produced if it was run."
   ),
   "Past conversations" = paste(
     "Past Conversations tab — Appears once you have started a New Conversation and",
@@ -2771,8 +2861,9 @@ HELP_TAB_TEXTS <- list(
   ),
   "Past code" = paste(
     "Past Code tab — A record of every code block that has been run successfully in",
-    "this conversation. Use the Repeat button next to any entry to reload that code",
-    "into the editor."
+    "this conversation. Use the Recall button next to any entry to reload that code",
+    "into the editor; if its run was captured, its prompt, R output, plots and warnings",
+    "come back too."
   ),
   "Answer" = paste(
     "Answer tab — Shows the plain-English answer to your last question asked with the Answer button.",
@@ -2810,11 +2901,21 @@ HELP_TAB_TEXTS <- list(
 # the help overlay and so behaves normally in Help mode.
 HELP_EXEMPT <- c("usage_help", "about_classmate", "tell_more_ok")
 
-# Generated ids that follow a pattern (e.g. one Repeat button per past code block).
+# Generated ids that follow a pattern (e.g. one Recall button per past code block).
 HELP_ID_PATTERNS <- list(
-  "^re_run_" = paste(
-    "Repeat — Re-loads this previously generated code block into the Code",
-    "editor so you can run it again or use it as a starting point."
+  "^repeat_code_" = paste(
+    "Recall (Past code) — Reloads this earlier code block into the Code editor so you can",
+    "run it again or use it as a starting point. If the run of that code was captured, its",
+    "prompt, R output, plots and warnings come back with it."
+  ),
+  "^recall_prompt_" = paste(
+    "Recall (Past prompts) — Brings back this earlier prompt and everything it produced: the",
+    "prompt returns to the prompt box, and you are taken back to its answer, or to its code",
+    "with the R output, plots and warnings if it was run."
+  ),
+  "^recall_conv_" = paste(
+    "Recall (Past conversations) — Restores this earlier conversation (its prompts, code,",
+    "answers and context) after saving the current one."
   )
 )
 
@@ -3304,6 +3405,7 @@ server <- function(input, output, session) {
 
   # Save current conversation to saved_conversations (prepend = newest first)
   save_current_conversation_if_nonempty <- function() {
+    capture_active_code()
     ph <- prompt_history()
     rh <- run_history()
     if (length(ph) == 0 && length(rh) == 0) return(invisible(NULL))
@@ -3317,7 +3419,9 @@ server <- function(input, output, session) {
       files       = unique(selected_files()),
       objects     = unique(selected_objects()),
       answer_latest = answer_latest(),
-      answer_hist   = answer_hist()
+      answer_hist   = answer_hist(),
+      interactions  = interactions(),
+      active_code_id = active_code_id()
     )
     saved_conversations(c(list(entry), saved_conversations()))
     show_past_convs_tab()
@@ -3631,6 +3735,11 @@ server <- function(input, output, session) {
     history <- prompt_history()
     if (length(history) == 0)
       return(tags$p(em("No prompts yet."), style = "color: #999; margin: 0; font-size: 0.9em;"))
+    kind_of <- function(p) {
+      r <- find_interaction_by_prompt(p)
+      if (is.null(r)) "" else if (identical(r$kind, "answer")) "Answer" else "Code"
+    }
+    digest_id <- function(p) match(p, history)
     tagList(lapply(history, function(p) {
       # Escape single quotes in the prompt text so it survives the onclick string.
       p_escaped <- gsub("'", "\\\\'", p, fixed = TRUE)
@@ -3640,7 +3749,10 @@ server <- function(input, output, session) {
           "font-size: 0.85em; color: #444;",
           "white-space: pre-wrap; word-break: break-word;"
         )),
-        tags$button("Repeat",
+        if (nzchar(kind_of(p)))
+          tags$span(style = "flex-shrink: 0; margin: 2px 6px 0 6px; font-size: 0.72em; color: #888;",
+                    kind_of(p)),
+        tags$button("Recall", id = paste0("recall_prompt_", digest_id(p)),
           style = paste0(
             "flex-shrink: 0; margin-left: 6px; padding: 1px 6px;",
             "font-size: 0.75em; background: white;",
@@ -3687,7 +3799,7 @@ server <- function(input, output, session) {
           "margin: 0; flex: 1; font-size: 0.85em; color: #444;",
           "white-space: pre-wrap; word-break: break-word;"
         )),
-        actionButton(btn_id, "Repeat",
+        actionButton(btn_id, "Recall",
           style = paste0(
             "flex-shrink: 0; margin-left: 6px; padding: 1px 6px;",
             "font-size: 0.75em; background: white;",
@@ -3700,20 +3812,38 @@ server <- function(input, output, session) {
     tagList(items)
   })
 
-  # Observe any repeat_code_N button — move entry to top (no duplicate), load into editor
+  # Past code "Recall": reload that code block; if it is the code that produced a captured
+  # run, bring back its prompt, R output, plots and warnings too. Observers are registered
+  # once per button (button i = i-th entry of the current run history).
+  repeat_obs <- new.env()
   observe({
-    history <- run_history()
-    lapply(seq_along(history), function(i) {
-      btn_id <- paste0("repeat_code_", i)
-      observeEvent(input[[btn_id]], {
-        h <- run_history()
-        entry <- h[[i]]
-        run_history(c(list(entry), h[-i]))
-        updateAceEditor(session, "code_editor", value = entry$code)
-        last_run_code(NULL)
-        goto_tab("Code")
-      }, ignoreInit = TRUE)
-    })
+    for (i in seq_along(run_history())) {
+      key <- as.character(i)
+      if (!is.null(repeat_obs[[key]])) next
+      repeat_obs[[key]] <- TRUE
+      local({
+        ii <- i
+        observeEvent(input[[paste0("repeat_code_", ii)]], {
+          h <- run_history()
+          if (ii > length(h)) return()
+          entry <- h[[ii]]
+          run_history(c(list(entry), h[-ii]))
+          capture_active_code()
+          rec <- NULL
+          for (r in interactions())
+            if (identical(r$kind, "code") && !is.null(r$last_run_code) &&
+                identical(trimws(r$last_run_code), trimws(entry$code))) { rec <- r; break }
+          if (!is.null(rec)) {
+            recall_interaction(rec, code_override = entry$code)
+            if (nzchar(entry$prompt %||% "")) updateTextAreaInput(session, "prompt", value = entry$prompt)
+          } else {
+            updateAceEditor(session, "code_editor", value = entry$code)
+            last_run_code(NULL)
+            goto_tab("Code")
+          }
+        }, ignoreInit = TRUE)
+      })
+    }
   })
 
   # Past prompt repeat: move to top (no duplicate)
@@ -3723,6 +3853,8 @@ server <- function(input, output, session) {
     idx <- match(p, ph)
     if (!is.na(idx)) ph <- c(p, ph[-idx]) else ph <- c(p, ph)
     prompt_history(ph)
+    rec <- find_interaction_by_prompt(p)       # bring back everything the prompt produced
+    if (!is.null(rec)) recall_interaction(rec)
     updateTextAreaInput(session, "prompt", value = p)
     updateTabsetPanel(session, "prompt_tabs", selected = "Your prompt")
   })
@@ -3817,6 +3949,8 @@ server <- function(input, output, session) {
     output$run_status <- renderUI(NULL)
     answer_latest(recalled$answer_latest)
     answer_hist(recalled$answer_hist %||% list())
+    interactions(recalled$interactions %||% list())
+    active_code_id(NULL)
     placeholder_map(character(0))
     goto_tab("Code")
     if (length(recalled$codes) == 0 && !is.null(recalled$answer_latest)) set_ask_mode("answer")
@@ -4139,8 +4273,14 @@ server <- function(input, output, session) {
   placeholder_map <- reactiveVal(if (!is.null(ps)) (ps$placeholder_map %||% character(0)) else character(0))
   CODE_SIDE_TABS <- c("Code", "R output", "Past code", "Changes")
 
+  prior_code_tab   <- reactiveVal("Code")     # the code-side tab showing before the Answer view
+  prior_answer_tab <- reactiveVal("Answer")   # the answer tab showing before going back to the code view
+
   refresh_ask_tabs <- function() {
     answer_view <- identical(isolate(ask_mode()), "answer")
+    if (isTRUE(isolate(changes_tab_shown())))
+      if (answer_view) hideTab("main_tabs", "Changes", session = session)
+      else showTab("main_tabs", "Changes", session = session)
     for (t in c("Code", "R output", "Past code"))
       if (answer_view) hideTab("main_tabs", t, session = session)
       else showTab("main_tabs", t, session = session)
@@ -4154,7 +4294,14 @@ server <- function(input, output, session) {
     }
   }
   set_ask_mode <- function(mode) {
-    if (identical(mode, "answer")) hide_changes_tab()   # before the flip, so it cannot flip back
+    if (identical(mode, "answer") && !identical(isolate(ask_mode()), "answer")) {
+      cur <- isolate(input$main_tabs)
+      prior_code_tab(if (isTRUE(cur %in% CODE_SIDE_TABS)) cur else "Code")
+    }
+    if (identical(mode, "code") && identical(isolate(ask_mode()), "answer")) {
+      cur <- isolate(input$main_tabs)
+      prior_answer_tab(if (isTRUE(cur %in% c("Answer", "Past answers"))) cur else "Answer")
+    }
     ask_mode(mode)
     refresh_ask_tabs()
     if (identical(mode, "answer")) {
@@ -4167,6 +4314,84 @@ server <- function(input, output, session) {
     if (tab %in% CODE_SIDE_TABS && identical(isolate(ask_mode()), "answer")) set_ask_mode("code")
     updateTabsetPanel(session, "main_tabs", selected = tab)
   }
+  # --- Interactions: what each past prompt produced, so Recall can bring it all back -----
+  # kind "code":   generated code, plus (captured when you move on) the editor text, R output,
+  #                plots, warnings, error, diff and the tab you were on.
+  # kind "answer": the Answer-tab entry.
+  interactions   <- reactiveVal(if (!is.null(ps)) (ps$interactions %||% list()) else list())
+  active_code_id <- reactiveVal(if (!is.null(ps)) ps$active_code_id else NULL)
+  next_seq <- function()
+    max(c(0L, vapply(isolate(interactions()), function(r) as.integer(r$seq %||% 0L), integer(1)))) + 1L
+  add_interaction <- function(rec) {
+    if (is.null(rec$seq)) rec$seq <- next_seq()
+    interactions(utils::head(c(list(rec), isolate(interactions())), 60L))
+    invisible(rec$seq)
+  }
+  capture_active_code <- function() {
+    isolate({
+      id <- active_code_id()
+      if (is.null(id)) return(invisible(NULL))
+      recs <- interactions()
+      i <- which(vapply(recs, function(r) identical(r$seq, id), logical(1)))
+      if (length(i) == 0) return(invisible(NULL))
+      r   <- recs[[i[1]]]
+      cur <- input$main_tabs
+      r$editor_code   <- input$code_editor %||% ""
+      r$console       <- console_output_rv()
+      r$warnings      <- warnings_rv()
+      r$plots         <- plot_files_rv()
+      r$last_run_code <- last_run_code()
+      r$failed        <- isTRUE(last_run_failed())
+      r$error         <- last_error_msg()
+      r$diff          <- diff_rv()
+      r$tab <- if (identical(ask_mode(), "answer")) prior_code_tab()
+               else if (isTRUE(cur %in% CODE_SIDE_TABS)) cur else (r$tab %||% "Code")
+      recs[[i[1]]] <- r
+      interactions(recs)
+    })
+    invisible(NULL)
+  }
+  find_interaction_by_prompt <- function(p) {
+    for (r in isolate(interactions())) if (identical(r$prompt, p)) return(r)
+    NULL
+  }
+  recall_interaction <- function(rec, code_override = NULL) {
+    capture_active_code()
+    if (identical(rec$kind, "answer")) {
+      ent    <- rec$entry
+      hist   <- Filter(function(e) !identical(e$seq, ent$seq), isolate(answer_hist()))
+      latest <- isolate(answer_latest())
+      if (!is.null(latest) && !identical(latest$seq, ent$seq)) hist <- c(list(latest), hist)
+      answer_hist(hist)
+      answer_latest(ent)
+      set_ask_mode("answer")
+      return(invisible(NULL))
+    }
+    set_ask_mode("code")
+    hide_changes_tab()
+    updateAceEditor(session, "code_editor", value = code_override %||% rec$editor_code %||% rec$code)
+    console_output_rv(rec$console %||% character(0))
+    warnings_rv(rec$warnings %||% character(0))
+    plots <- rec$plots %||% character(0)
+    plot_files_rv(plots[file.exists(plots)])
+    last_run_code(rec$last_run_code)
+    last_run_failed(isTRUE(rec$failed))
+    last_error_msg(rec$error %||% "")
+    last_extracted_code(rec$code %||% "")
+    last_prompt_for_code(rec$prompt %||% "")
+    last_code_description(rec$description %||% "")
+    loaded_script_name(NULL)
+    code_before_fix(NULL)
+    diff_rv(rec$diff)
+    if (!is.null(rec$diff)) show_changes_tab()
+    tab <- rec$tab %||% "Code"
+    if (identical(tab, "Changes") && is.null(rec$diff)) tab <- "Code"
+    goto_tab(tab)
+    output$run_status <- renderUI(NULL)
+    active_code_id(rec$seq)
+    invisible(NULL)
+  }
+
   session$onFlushed(function() {
     refresh_ask_tabs()
     if (identical(isolate(ask_mode()), "answer"))
@@ -4605,7 +4830,7 @@ server <- function(input, output, session) {
 
   # --- Ask / Clear / New conversation ----------------------------------------
   observeEvent(input$clear_prompt, {
-    hide_changes_tab()
+    if (!identical(ask_mode(), "answer")) hide_changes_tab()
     updateTextAreaInput(session, "prompt", value = "")
     if (protection_notice_active()) protection_notice_active(FALSE)
   })
@@ -4620,6 +4845,8 @@ server <- function(input, output, session) {
     run_history(list())
     answer_latest(NULL)
     answer_hist(list())
+    interactions(list())
+    active_code_id(NULL)
     placeholder_map(character(0))
     set_ask_mode("code")
     pending_log_entries(list())
@@ -4697,6 +4924,17 @@ server <- function(input, output, session) {
     showNotification(paste("Working directory changed to", path),
                      type = "message", duration = 6)
   }
+  observe({
+    invalidateLater(3000, session)
+    fb <- .cm$fallback
+    if (!is.null(fb)) {
+      .cm$fallback <- NULL
+      wd_rv(fb$to)
+      showNotification(paste0("The folder ", fb$from, " no longer exists, so Classmate has switched to ",
+                              fb$to, ". Use Change Working Directory (in the Quick Console) to choose another."),
+                       type = "warning", duration = 15)
+    }
+  })
   output$qc_wd_ui <- renderUI(
     tags$p(style = "font-size: 0.8em; color: #555; margin: 0 0 4px 0;",
            "Working directory: ", tags$code(wd_rv()))
@@ -4756,8 +4994,12 @@ server <- function(input, output, session) {
     warnings_seen  <- character(0)
     console_output <- character(0)
     # Run in the user's project directory, not the Shiny app directory
-    old_wd <- setwd(project_root())
-    on.exit(setwd(old_wd), add = TRUE)
+    .enter <- cm_enter_root()
+    on.exit(.enter$restore(), add = TRUE)
+    if (!.enter$ok)
+      return(list(output = paste("Classmate could not open your working directory.",
+                                 "Use Change Working Directory to choose a folder."),
+                  is_error = TRUE, plot_path = NULL))
     # Temporarily shadow q/quit/stopApp/ask in globalenv to intercept them
     .qc_classmate_fns <- c("talk", "whisper", "raisehand", "rh", "ssshh",
                            "reset_key", "classmate_reset", "classmate_speaks",
@@ -5024,6 +5266,7 @@ server <- function(input, output, session) {
   # --- Ask for Code ----------------------------------------------------------
   do_ask_code <- function(current_prompt) {
     if (isTRUE(quota_exceeded())) { show_quota_modal(); return(invisible(NULL)) }
+    capture_active_code()    # save what the previous code interaction looked like before it is cleared
     hide_changes_tab()
     console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); diff_rv(NULL)
     disable("ask_code"); disable("ask_plain")
@@ -5154,6 +5397,12 @@ server <- function(input, output, session) {
         hide_changes_tab()
         goto_tab("Code")
       }
+      sq <- add_interaction(list(kind = "code", prompt = current_prompt, code = parts$code,
+                                 description = parts$description %||% "", editor_code = parts$code,
+                                 console = character(0), warnings = character(0), plots = character(0),
+                                 last_run_code = NULL, failed = FALSE, error = "", diff = d,
+                                 tab = if (!is.null(d)) "Changes" else "Code"))
+      active_code_id(sq)
     }, finally = { enable("ask_code"); enable("ask_plain") })
   }
 
@@ -5174,7 +5423,6 @@ server <- function(input, output, session) {
   do_ask_answer <- function(current_prompt) {
     if (isTRUE(quota_exceeded())) { show_quota_modal(); return(invisible(NULL)) }
     ui_busy(TRUE)
-    hide_changes_tab()
     updateTextAreaInput(session, "prompt", value = "")
     disable("ask_code"); disable("ask_plain")
 
@@ -5264,11 +5512,15 @@ server <- function(input, output, session) {
     plan <- parse_answer_plan(raw)
 
     finalize <- function(answer_tokens, code = "", results_text = "") {
+      capture_active_code()    # keep the code side as it is, for Back to Code / Recall
       prev <- answer_latest()
       if (!is.null(prev)) answer_hist(c(list(prev), answer_hist()))
-      answer_latest(list(question = current_prompt,
-                         answer   = restore_placeholders(answer_tokens, placeholder_map()),
-                         code = code, results = results_text))
+      sq  <- next_seq()
+      ent <- list(seq = sq, question = current_prompt,
+                  answer = restore_placeholders(answer_tokens, placeholder_map()),
+                  code = code, results = results_text)
+      answer_latest(ent)
+      add_interaction(list(seq = sq, kind = "answer", prompt = current_prompt, entry = ent))
       # History (which is sent to Claude on later turns) keeps placeholders, not real values
       conversation_history(c(history_so_far,
                              list(list(role = "assistant", content = answer_tokens))))
@@ -5422,6 +5674,41 @@ server <- function(input, output, session) {
     options(.classmate_answer_notice_shown = TRUE)
     req(input$prompt)
     do_ask_answer(input$prompt)
+  })
+
+  # --- Back to Code ------------------------------------------------------------------
+  # Shown beside the Answer tabs once there is code-side work to go back to.
+  has_code_state <- reactive({
+    nzchar(trimws(input$code_editor %||% "")) || length(run_history()) > 0 ||
+      length(console_output_rv()) > 0 || length(plot_files_rv()) > 0 ||
+      isTRUE(changes_tab_shown())
+  })
+  observe({
+    shinyjs::toggle("back_to_code_li",
+      condition = (identical(ask_mode(), "answer") && isTRUE(has_code_state())) ||
+                  (isTRUE(help_mode()) && identical(ask_mode(), "answer")))
+  })
+  observeEvent(input$back_to_code, {
+    tab <- prior_code_tab()
+    if (identical(tab, "Changes") && !isTRUE(changes_tab_shown())) tab <- "Code"
+    set_ask_mode("code")
+    updateTabsetPanel(session, "main_tabs", selected = tab)
+  })
+
+  # --- Back to Answer: the reverse, from the code tabs ---------------------------------
+  has_answer_state <- reactive({
+    !is.null(answer_latest()) || length(answer_hist()) > 0
+  })
+  observe({
+    shinyjs::toggle("back_to_answer_li",
+      condition = identical(ask_mode(), "code") &&
+                  (isTRUE(has_answer_state()) || isTRUE(help_mode())))
+  })
+  observeEvent(input$back_to_answer, {
+    tab <- prior_answer_tab()
+    if (identical(tab, "Past answers") && length(answer_hist()) == 0) tab <- "Answer"
+    set_ask_mode("answer")
+    updateTabsetPanel(session, "main_tabs", selected = tab)
   })
 
   # --- Answer tab ------------------------------------------------------------------
@@ -6194,6 +6481,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$confirm_pause_app, {
     removeModal()
+    capture_active_code()
     pause_state <- list(
       prompt               = isolate(input$prompt),
       code_editor          = isolate(input$code_editor),
@@ -6222,6 +6510,8 @@ server <- function(input, output, session) {
       conv_count_rv        = conv_count_rv(),
       answer_latest        = answer_latest(),
       answer_hist          = answer_hist(),
+      interactions         = interactions(),
+      active_code_id       = active_code_id(),
       placeholder_map      = placeholder_map(),
       ask_mode             = ask_mode()
     )
