@@ -18,17 +18,20 @@ The package is authored by Richard Harris (profrichharris@gmail.com) and is inte
 
 ---
 
-## App modes
+## Key-driven behaviour
 
-The app has three modes, set by the API key used:
+There is a single mode (the old Student / Non-student distinction was removed in 0.5.84). The app only runs with a `.key` file, loaded by Browse or from a web address; there is no "paste an API key" option and no Change API key button. Everything that used to differ by mode is now set by the key:
 
-| Mode | Description |
-|------|-------------|
-| **Student** | Rate-limited (conversation quota, code-length cap). Preferences locked. Time-limited key (`final_expiry`). |
-| **Help** | Like student mode but with help overlay enabled. The `?` button explains every UI element. |
-| **Non-student** | Instructor / developer mode. No quota. Full preferences (including unlimited code length). |
+| Key field | Effect |
+|-----------|--------|
+| `cost_limit`, `reset_period` | Spend cap per period (`NULL` = unlimited) |
+| `final_expiry` | Date the key stops working |
+| `max_conversations` | Conversations per app start, 1–25 (`NULL` = unlimited) |
+| `max_lines` | Ceiling for the code-length preference (`Inf` = unlimited; keys without the field behave as 100) |
 
-Help mode is toggled by the `?` button and overlays black help labels on every UI element. In help mode: the conversations-remaining counter turns dark grey (it is invisible/absent otherwise), the "Code saved to Notebook" indicator becomes a black button (with an explanation), and the Quick Console button becomes black.
+An instructor/developer who wants unlimited use generates their own key with `classmate_make_key()`. `cost_limit`, `max_conversations` and `max_lines` set to `NULL` each require a Y/N confirmation and are never the default. `whisper()` still accepts a raw API key (console only, no quota).
+
+Help mode is toggled by the `?` button and overlays black help labels on every UI element. In help mode: the conversations-remaining counter turns dark grey, the "Code saved to Notebook" indicator becomes a black button, and the Quick Console button becomes black.
 
 ---
 
@@ -215,10 +218,13 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.82 (2026-07-21)  
-**Current version:** 0.5.82
+**Last released:** 0.5.85 (2026-10-15)  
+**Current version:** 0.5.85
 
-No unreleased changes.
+Released in 0.5.83–0.5.85 (no unreleased changes):
+- "Or / Load from Web" button + "Enter web address" box added under Browse in the Load key file modal and the startup key panel. `fetch_key_from_web()` (app.R, top level) accepts an https address of a .key file, or of a page listing .key links (newest by `created` is used); fails with informative modals. GitHub blob and Dropbox share links are rewritten to direct downloads.
+- 0.5.84: removed Student/Personal mode distinction (see Key-driven behaviour above): removed "Student mode" label, Change API key, paste-a-key option, `app_mode`; `classmate_make_key()` gains `max_lines`, and unlimited cost/lines need Y/N confirmation; Preferences code-length choices are capped by the key.
+- 0.5.85: `max_conversations` in `classmate_make_key()` now follows the same pattern: omitted = prompt (default 3, max 25); `NULL` or `none` = unlimited with Y/N confirmation (numbers are clamped to 1–25).
 
 ---
 
@@ -272,3 +278,6 @@ No unreleased changes.
 | 0.5.65 | Extended button freeze during protection notice: all buttons frozen except Quit and Clear; Clear highlighted yellow; Clear Workspace shown white during notice period |
 | 0.5.66 | Clear Workspace button changed to default white permanently (was orange); orange colouring removed |
 | 0.5.67 | Classmate logo (pineapple) added to top-left header, left of the Classmate title |
+| 0.5.83 | "Load from Web" for key files (https address of a .key file or a page listing them; newest key used) |
+| 0.5.84 | Student/Personal mode removed; key now sets cost, expiry, conversations and code-length cap; Change API key and paste-a-key removed; `max_lines` added to keys |
+| 0.5.85 | `max_conversations` in `classmate_make_key()` follows the same prompt/NULL-with-confirmation pattern as cost and code length |

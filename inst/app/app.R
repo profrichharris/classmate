@@ -244,6 +244,19 @@ disclosure_risk_rule <- paste(
   "and why this raises a disclosure concern>"
 )
 
+web_key_ui <- function(url_id, btn_id) {
+  tagList(
+    div(style = "text-align: center; margin: 4px 0 8px 0;", tags$strong("Or")),
+    div(style = "display: flex; align-items: flex-start; gap: 8px;",
+      actionButton(btn_id, "Load from Web", class = "btn-default",
+                   style = "flex-shrink: 0;"),
+      div(style = "flex-grow: 1;",
+        textInput(url_id, NULL, value = "", width = "100%",
+                  placeholder = "Enter web address"))
+    )
+  )
+}
+
 build_language_clause <- function(language) {
   if (tolower(trimws(language)) == "english") {
     paste(
@@ -1407,7 +1420,6 @@ ui <- fluidPage(
       display: inline-block !important;
     }
     body.help-mode #help-mode-label { display: block !important; }
-    body.help-mode #student-mode-label { display: none !important; }
 
     /* Full-page overlay that intercepts all clicks in help mode */
     #classmate-help-overlay {
@@ -1564,10 +1576,7 @@ ui <- fluidPage(
           style = "color: #888; font-size: 0.75em; white-space: nowrap;",
           paste0("v", utils::packageVersion("classmate"))
         )
-      ),
-      tags$span(id = "student-mode-label",
-        style = "color: #888; font-size: 0.75em; display: none;",
-        "Student mode")
+      )
     )
     ),
     tags$h3(id = "help-mode-label", "Help Mode",
@@ -1579,26 +1588,14 @@ ui <- fluidPage(
     condition = "output.has_key == false",
     wellPanel(
       uiOutput("key_status_message"),
-      fluidRow(
-        column(5,
-          tags$h5("Paste an API key"),
-          tags$p(em("For personal or instructor use.")),
-          passwordInput("api_key", NULL, width = "100%")
-        ),
-        column(2,
-          div(style = "text-align: center; padding-top: 55px;",
-            tags$strong("— or —"))
-        ),
-        column(5,
-          tags$h5("Load a key file"),
-          tags$p(em("For students: load the classmate.key file from your instructor.")),
-          fileInput("key_file", NULL, accept = ".key", width = "100%",
-                    buttonLabel = "Browse...", placeholder = "classmate.key")
-        )
-      ),
+      tags$h5("Load a key file"),
+      tags$p(em("Load the classmate.key file provided by your instructor,",
+                "or enter the web address where it is stored.")),
+      fileInput("key_file", NULL, accept = ".key", width = "100%",
+                buttonLabel = "Browse...", placeholder = "classmate.key"),
+      web_key_ui("key_web_url", "load_key_web_btn"),
       hr(),
-      div(style = "display: flex; justify-content: space-between; align-items: center;",
-        actionButton("set_key", "Set key", class = "btn-primary"),
+      div(style = "display: flex; justify-content: flex-end; align-items: center;",
         actionButton("quit_setup", "Quit", class = "btn-danger")
       )
     )
@@ -1652,7 +1649,6 @@ ui <- fluidPage(
         actionButton("ask_plain", "Ask"),
         actionButton("ask_code", "Ask for Code", class = "btn-primary"),
         actionButton("clear_prompt", "Clear"),
-        actionButton("change_key", "Change API key"),
         actionButton("load_key_file_btn", "Load key file")
       ),
       column(4, div(style = "text-align: right;",
@@ -1730,6 +1726,90 @@ ui <- fluidPage(
 
 # --- Server ------------------------------------------------------------------
 
+# Fetches a classmate key from a web address. The address may point directly
+# at a .key file, or at a page/folder listing that links to one or more .key
+# files, in which case the most recently created key is used.
+# Returns list(payload = <key list>) on success or list(error = <message>).
+fetch_key_from_web <- function(url) {
+  url <- trimws(url %||% "")
+  if (!nzchar(url)) return(list(error = "Please enter a web address."))
+  if (!grepl("^[a-zA-Z][a-zA-Z0-9+.-]*://", url)) url <- paste0("https://", url)
+  if (!grepl("^https://", url, ignore.case = TRUE))
+    return(list(error = "The web address must start with https://"))
+
+  # Friendly rewrites for common sharing services
+  url <- sub("^https://github\\.com/([^/]+/[^/]+)/blob/", "https://raw.githubusercontent.com/\\1/", url)
+  if (grepl("^https://(www\\.)?dropbox\\.com/", url) && !grepl("[?&]dl=1", url))
+    url <- if (grepl("[?&]dl=0", url)) sub("dl=0", "dl=1", url) else
+             paste0(url, if (grepl("\\?", url)) "&dl=1" else "?dl=1")
+
+  get_raw <- function(u) {
+    resp <- httr2::request(u) |>
+      httr2::req_timeout(15) |>
+      httr2::req_user_agent("classmate") |>
+      httr2::req_error(is_error = \(r) FALSE) |>
+      httr2::req_perform()
+    list(status = httr2::resp_status(resp), body = httr2::resp_body_raw(resp))
+  }
+  as_key <- function(raw_body) {
+    if (length(raw_body) == 0 || length(raw_body) > 1e6) return(NULL)
+    tmp <- tempfile(fileext = ".rds")
+    on.exit(unlink(tmp), add = TRUE)
+    writeBin(raw_body, tmp)
+    p <- tryCatch(readRDS(tmp), error = function(e) NULL, warning = function(w) NULL)
+    if (is.list(p) && is.character(p$api_key) && nzchar(p$api_key[1])) p else NULL
+  }
+
+  first <- tryCatch(get_raw(url), error = function(e) NULL)
+  if (is.null(first))
+    return(list(error = paste("Could not connect to that address. Please check it",
+                              "and your internet connection, then try again.")))
+  if (first$status >= 400)
+    return(list(error = paste0("The web address returned an error (HTTP ", first$status,
+                               "). Please check the address.")))
+
+  direct <- as_key(first$body)
+  if (!is.null(direct)) return(list(payload = direct))
+
+  # Not a key itself: treat as a page listing .key files
+  page <- tryCatch(rawToChar(first$body), error = function(e) "")
+  page <- iconv(page, from = "UTF-8", to = "UTF-8", sub = "")
+  links <- unique(unlist(regmatches(
+    page, gregexpr("(?:href=[\"']|https?://)[^\"'<>\\s]*\\.key(?=[\"'<>\\s?#]|$)",
+                   page, perl = TRUE))))
+  links <- sub("^href=[\"']", "", links)
+  if (length(links) == 0)
+    return(list(error = paste("No classmate key was found at that address. It should",
+                              "point to a .key file, or to a page that links to one.")))
+  parts <- regmatches(url, regexec("^(https://[^/]+)(/.*)?$", url))[[1]]
+  origin <- parts[2]
+  base_dir <- sub("[^/]*$", "", sub("[?#].*$", "", url))
+  links <- vapply(links, function(l) {
+    if (grepl("^https?://", l)) l
+    else if (grepl("^//", l)) paste0("https:", l)
+    else if (grepl("^/", l)) paste0(origin, l)
+    else paste0(base_dir, l)
+  }, character(1), USE.NAMES = FALSE)
+  links <- links[grepl("^https://", links)]
+  links <- head(unique(links), 20)
+
+  keys <- list()
+  for (l in links) {
+    r <- tryCatch(get_raw(l), error = function(e) NULL)
+    if (is.null(r) || r$status >= 400) next
+    k <- as_key(r$body)
+    if (!is.null(k)) keys[[length(keys) + 1]] <- k
+  }
+  if (length(keys) == 0)
+    return(list(error = paste("Found .key links at that address, but none could be",
+                              "read as a valid classmate key.")))
+  created <- vapply(keys, function(k)
+    tryCatch(as.numeric(as.POSIXct(k$created)), error = function(e) NA_real_),
+    numeric(1))
+  idx <- if (all(is.na(created))) length(keys) else which.max(replace(created, is.na(created), -Inf))
+  list(payload = keys[[idx]])
+}
+
 server <- function(input, output, session) {
 
   # Show a clean "session ended" page, then stop after 400 ms so the JS has
@@ -1743,7 +1823,7 @@ server <- function(input, output, session) {
   # (covers Quit button, Pause, browser-tab close, and network drop).
   # Personal users keep their own key — only student mode is cleared.
   session$onEnded(function() {
-    if (isolate(app_mode()) == "student") Sys.unsetenv("ANTHROPIC_API_KEY")
+    Sys.unsetenv("ANTHROPIC_API_KEY")
     # Remove any package-bound symbols the app may have left in .GlobalEnv
     # (e.g. q/quit/stopApp/talk shadowed during Quick Console if R was restarted
     # while the modal was open). Prevents "package:X may not be available" warning
@@ -1814,15 +1894,13 @@ server <- function(input, output, session) {
       ")
     }, once = TRUE)
   }
-  app_mode        <- reactiveVal(if (!is.null(.saved_cfg)) "student" else "personal")
-  # Show student-mode label on startup if already in student mode
-  if (!is.null(.saved_cfg)) {
-    observe({ shinyjs::show("student-mode-label") }) |> bindEvent(session$clientData$url_hostname, once = TRUE)
-  }
   cost_limit_val        <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$cost_limit        else NULL)
   reset_period_val      <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$reset_period      else "weekly")
   final_expiry_val      <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$final_expiry      else NULL)
   max_conversations_val <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$max_conversations else NULL)
+  # Code-length cap set by the key (Inf = unlimited). Keys made before this
+  # field existed fall back to the old student ceiling of 100 lines.
+  max_lines_cap_val     <- reactiveVal(if (!is.null(.saved_cfg)) (.saved_cfg$max_lines %||% 100) else 100)
   usage_log_rv    <- reactiveVal(read_usage_log())
 
   # Show disclaimer once per R session for student users (not on pause resume).
@@ -1851,19 +1929,16 @@ server <- function(input, output, session) {
   }
 
   current_spend <- reactive({
-    if (app_mode() != "student") return(0)
     period_spend(usage_log_rv(), reset_period_val())
   })
 
   key_expired <- reactive({
-    if (app_mode() != "student") return(FALSE)
     expiry <- final_expiry_val()
     if (is.null(expiry)) return(FALSE)
     Sys.Date() > as.Date(expiry)
   })
 
   quota_exceeded <- reactive({
-    if (app_mode() != "student") return(FALSE)
     if (key_expired()) return(TRUE)
     limit <- cost_limit_val()
     if (is.null(limit)) return(FALSE)
@@ -1927,8 +2002,7 @@ server <- function(input, output, session) {
   if (!is.null(.saved_cfg) && nzchar(.saved_cfg$api_key %||% "")) {
     Sys.setenv(ANTHROPIC_API_KEY = .saved_cfg$api_key)
   }
-  key_is_set   <- reactiveVal(Sys.getenv("ANTHROPIC_API_KEY") != "")
-  changing_key <- reactiveVal(FALSE)
+  key_is_set   <- reactiveVal(!is.null(.saved_cfg) && nzchar(.saved_cfg$api_key %||% ""))
 
   output$has_key <- reactive({ key_is_set() })
   outputOptions(output, "has_key", suspendWhenHidden = FALSE)
@@ -1942,18 +2016,6 @@ server <- function(input, output, session) {
     ))
   }
 
-  show_change_key_modal <- function() {
-    showModal(modalDialog(
-      title = "Change API key",
-      passwordInput("new_api_key", "Paste new API key:", value = "", width = "100%"),
-      tags$p(em("Treat the key like a password — never paste it into a script you save or share.")),
-      footer = tagList(
-        modalButton("Cancel"),
-        actionButton("confirm_change_key", "Set key", class = "btn-primary")
-      )
-    ))
-  }
-
   show_load_key_file_modal <- function() {
     showModal(modalDialog(
       title = "Load key file",
@@ -1962,9 +2024,34 @@ server <- function(input, output, session) {
              "will be reset in line with the new key's settings."),
       fileInput("mid_session_key_file", NULL, accept = ".key", width = "100%",
                 buttonLabel = "Browse...", placeholder = "classmate.key"),
+      web_key_ui("web_key_url", "load_web_key_btn"),
       footer = modalButton("Cancel")
     ))
   }
+
+  load_key_from_web <- function(url, on_success) {
+    res <- NULL
+    withProgress(message = "Fetching key...", value = 0.5, { res <- fetch_key_from_web(url) })
+    if (!is.null(res$error)) {
+      showModal(modalDialog(
+        title = "Could not load key from the web",
+        res$error,
+        footer = modalButton("OK")
+      ))
+      return(invisible(NULL))
+    }
+    tmp <- tempfile(fileext = ".key")
+    saveRDS(res$payload, tmp)
+    on.exit(unlink(tmp), add = TRUE)
+    load_key_file(tmp, on_success = on_success)
+  }
+
+  observeEvent(input$load_web_key_btn, {
+    load_key_from_web(input$web_key_url, on_success = function() removeModal())
+  })
+  observeEvent(input$load_key_web_btn, {
+    load_key_from_web(input$key_web_url, on_success = function() key_is_set(TRUE))
+  })
 
   observeEvent(input$load_key_file_btn, show_load_key_file_modal())
 
@@ -2001,12 +2088,13 @@ server <- function(input, output, session) {
 
     # Save active config for classmate_config_show()
     tryCatch(saveRDS(payload, active_cfg_path()), error = function(e) invisible(NULL))
-    app_mode(             "student")
-    shinyjs::show("student-mode-label")
     cost_limit_val(       payload$cost_limit)
     reset_period_val(     payload$reset_period)
     final_expiry_val(     payload$final_expiry)
     max_conversations_val(payload$max_conversations)
+    new_cap <- payload$max_lines %||% 100
+    max_lines_cap_val(new_cap)
+    if (isolate(prefs$max_lines) > new_cap) prefs$max_lines <- new_cap
     on_success()
     if (!isTRUE(getOption(".classmate_disclaimer_shown"))) {
       show_student_disclaimer()
@@ -2014,50 +2102,14 @@ server <- function(input, output, session) {
     }
   }
 
-  observeEvent(input$set_key, {
-    req(input$api_key)
-    key <- trimws(input$api_key)
-    withProgress(message = "Checking key...", value = 0.5, { ok <- validate_api_key(key) })
-    if (ok) {
-      app_mode("personal")
-      key_is_set(TRUE)
-    } else show_key_error()
-  })
-
   observeEvent(input$key_file, {
     req(input$key_file)
     load_key_file(input$key_file$datapath, on_success = function() key_is_set(TRUE))
   })
 
-  observeEvent(input$new_key_file, {
-    req(input$new_key_file)
-    load_key_file(input$new_key_file$datapath, on_success = function() {
-      changing_key(FALSE)
-      removeModal()
-    })
-  })
-
   observeEvent(input$quit_setup, do_quit())
 
-  observeEvent(input$change_key, { changing_key(TRUE); show_change_key_modal() })
-
-  observeEvent(input$confirm_change_key, {
-    new_key <- trimws(input$new_api_key)
-    if (!nzchar(new_key)) { removeModal(); return(invisible(NULL)) }
-    removeModal()
-    withProgress(message = "Checking key...", value = 0.5, { ok <- validate_api_key(new_key) })
-    if (ok) {
-      app_mode("personal")
-      cost_limit_val(NULL)
-      changing_key(FALSE)
-      key_is_set(TRUE)
-    } else show_key_error()
-  })
-
-  observeEvent(input$key_error_ok, {
-    removeModal()
-    if (changing_key()) show_change_key_modal()
-  })
+  observeEvent(input$key_error_ok, removeModal())
 
   key_status_msg <- reactiveVal("")
   output$key_status_message <- renderUI({
@@ -2080,10 +2132,9 @@ server <- function(input, output, session) {
         nzchar(trimws(resp$text))
       }, error = function(e) FALSE)
       if (!ok) {
-        changing_key(FALSE)
         key_status_msg(paste(
-          "Your API key is no longer valid — it may have been suspended or deleted.",
-          "Please enter a new key, or re-enter the same key once it has been reactivated."
+          "Your key is no longer valid — it may have been suspended or deleted.",
+          "Please load a new key file, or load the same one again once it has been reactivated."
         ))
         key_is_set(FALSE)
       }
@@ -2092,7 +2143,7 @@ server <- function(input, output, session) {
 
   # --- Usage bar -------------------------------------------------------------
   output$usage_bar_ui <- renderUI({
-    if (app_mode() != "student") return(NULL)
+    if (!isTRUE(key_is_set())) return(NULL)
     limit <- cost_limit_val()
     spend <- current_spend()
     if (is.null(limit)) {
@@ -2408,7 +2459,7 @@ server <- function(input, output, session) {
                     "load_script", "save_block", "help_toggle",
                     "quick_console", "pause_app", "clear_workspace", "new_conversation",
                     "add_objects", "remove_context", "remove_all_context",
-                    "preferences", "change_key", "load_key_file_btn",
+                    "preferences", "load_key_file_btn",
                     "file_select", "load_workspace"))
         shinyjs::disable(btn)
       shinyjs::runjs("
@@ -2424,7 +2475,7 @@ server <- function(input, output, session) {
       document.getElementById('clear_prompt').style.color = '';
     ")
     for (btn in c("help_toggle", "quick_console", "pause_app",
-                  "add_objects", "preferences", "change_key", "load_key_file_btn",
+                  "add_objects", "preferences", "load_key_file_btn",
                   "file_select", "load_workspace"))
       shinyjs::enable(btn)
     if (!exceeded) {
@@ -2621,7 +2672,6 @@ server <- function(input, output, session) {
         "Load Workspace — Loads a saved R workspace file (.RData or .rda) into your",
         "current R session, making its objects available as context."
       ),
-      change_key       = "Change API Key — Lets you enter or update the Anthropic API key used to call the AI.",
       preferences      = paste(
         "Preferences — Opens the preferences panel where you can set your preferred",
         "coding style (base R, tidyverse, data.table), plotting library, mapping package,",
@@ -2975,9 +3025,6 @@ server <- function(input, output, session) {
         ),
         tags$p("The script has not been loaded. Please select a shorter excerpt ",
                "or paste just the section you want to work with."),
-        if (app_mode() != "student") tags$p(em(
-          "You can increase or remove the code-length limit in Preferences."
-        )),
         footer    = modalButton("OK"),
         easyClose = FALSE
       ))
@@ -3276,7 +3323,7 @@ server <- function(input, output, session) {
     img_format      = pref_val("img_format",       "png"),
     img_quality     = pref_val("img_quality",      "Medium"),
     img_size        = pref_val("img_size",         "Journal double col. (180x120 mm)"),
-    max_lines       = pref_val("max_lines",        50),
+    max_lines       = min(pref_val("max_lines",    50), isolate(max_lines_cap_val())),
     comment_density = pref_val("comment_density",  "Minimal"),
     language        = {
       .lp <- file.path(tools::R_user_dir("classmate", "config"), "language.rds")
@@ -3342,10 +3389,14 @@ server <- function(input, output, session) {
       fluidRow(
         column(6,
           selectInput("pref_max_lines", "Maximum code length (lines):",
-            choices = if (isolate(app_mode()) == "student")
-              c("50 lines" = 50, "100 lines" = 100)
-            else
-              c("50 lines" = 50, "100 lines" = 100, "Unlimited" = Inf),
+            choices = {
+              cap  <- isolate(max_lines_cap_val())
+              opts <- sort(unique(c(Filter(function(x) x <= cap, c(25, 50, 75, 100)),
+                                    if (is.finite(cap)) cap)))
+              ch <- setNames(opts, paste(opts, "lines"))
+              if (is.infinite(cap)) ch <- c(ch, "Unlimited" = Inf)
+              ch
+            },
             selected = prefs$max_lines)
         ),
         column(6,
@@ -3569,7 +3620,6 @@ server <- function(input, output, session) {
   }
 
   output$conv_remaining_ui <- renderUI({
-    if (app_mode() != "student") return(NULL)
     max_c <- max_conversations_val()
     if (is.null(max_c)) return(NULL)
     remaining <- max(max_c - conv_count_rv(), 0L)
@@ -3917,9 +3967,6 @@ server <- function(input, output, session) {
           tags$p("Try breaking it into smaller steps — for example, load the data first, ",
                  "then build the analysis, then visualise the results, one prompt at a time. ",
                  "The code has not been added to the editor."),
-          if (app_mode() != "student") tags$p(em(
-            "You can increase or remove the code-length limit in Preferences."
-          )),
           footer    = modalButton("OK"),
           easyClose = FALSE
         ))
@@ -4074,9 +4121,6 @@ server <- function(input, output, session) {
         ),
         tags$p("Try breaking it into smaller steps — for example, load the data first, ",
                "then build the analysis, then visualise the results, one prompt at a time."),
-        if (app_mode() != "student") tags$p(em(
-          "You can increase or remove the code-length limit in Preferences."
-        )),
         footer    = modalButton("OK"),
         easyClose = FALSE
       ))

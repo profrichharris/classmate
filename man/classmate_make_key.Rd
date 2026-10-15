@@ -6,10 +6,11 @@
 \usage{
 classmate_make_key(
   api_key = NULL,
-  cost_limit = NULL,
+  cost_limit,
   reset_period = NULL,
   final_expiry = NULL,
-  max_conversations = NULL,
+  max_conversations,
+  max_lines,
   output_file = "classmate.key"
 )
 }
@@ -18,8 +19,9 @@ classmate_make_key(
 If omitted, you are prompted to paste it.}
 
 \item{cost_limit}{Maximum spend in USD per reset period. Default \code{0.30}.
-Set to \code{NULL} for no limit (not recommended for student distribution).
-If omitted, you are prompted to confirm or change the default.}
+If omitted, you are prompted to confirm or change the default. Passing
+\code{NULL} (or typing \code{none} at the prompt) creates a key with no
+spending limit; you are asked to confirm this with Y/N.}
 
 \item{reset_period}{Duration of the usage window. Default \code{"weekly"}.
 If omitted, you are prompted to confirm or change the default. Options:
@@ -31,6 +33,16 @@ If omitted, you are prompted to confirm or change the default. Options:
   \item \code{"hourly"}     — resets at the top of each clock hour
   \item \code{"daily"}      — resets at midnight each day
 }}
+
+\item{max_conversations}{Maximum number of conversations per app start, from
+1 to 25. Default \code{3}. If omitted, you are prompted to confirm or
+change the default. Passing \code{NULL} (or typing \code{none} at the
+prompt) removes the limit; you are asked to confirm this with Y/N.}
+
+\item{max_lines}{Maximum length, in lines, of code the app will accept or
+generate. Default \code{50}. If omitted, you are prompted to confirm or
+change the default. Passing \code{NULL} (or typing \code{none} at the
+prompt) removes the limit; you are asked to confirm this with Y/N.}
 
 \item{output_file}{Path for the key file. Default \code{"classmate.key"} in
 the current working directory.}
@@ -45,5 +57,9 @@ load the file via the \strong{Load key file} button in the app and never see
 the raw API key.
 }
 \details{
-Any argument left as \code{NULL} is requested interactively at the console.
+Any of \code{api_key}, \code{reset_period} and \code{final_expiry} left as
+\code{NULL}, and \code{cost_limit}, \code{max_conversations} or
+\code{max_lines} left out entirely, is requested interactively at the
+console. For those last three, passing \code{NULL} (or typing \code{none})
+means no limit and requires a Y/N confirmation.
 }
