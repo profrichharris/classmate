@@ -128,7 +128,7 @@ Key rules passed to Claude with every request:
 9. **RESEARCH INTEGRITY RULE** — use statistically appropriate methods; report results honestly; never fabricate or misrepresent data; produce truthful visualisations; note concerns briefly if a request would lead to misleading analysis.
 10. **DISCLOSURE RISK RULE** — never generate code that would produce a publishable/exportable output containing named individuals alongside personal attributes. Respond with `DISCLOSURE_RISK` / `REASON:` instead. Console exploration (`head()`, `str()`, `summary()`) is acceptable.
 
-Model used: `claude-sonnet-4-6` (Sonnet). Haiku (`claude-haiku-4-5-20251001`) is used only for comment-density rewrites (fast, low-stakes task).
+Models: **Claude Sonnet 5.5** (`claude-sonnet-5-5`; `MODEL_SONNET`) is the only model used for the main calls (Ask for Code, Answer, Explain, Fix); Preferences shows it read-only (`MODEL_SONNET_LABEL`). It briefly offered Sonnet 4.6 as a choice, removed because the two were within a fraction of a cent per request and 4.6 will be retired; a `model` value saved in old `user_prefs.rds` is ignored. **Haiku 5.5** (`claude-haiku-5-5`; `MODEL_HAIKU`, `.WATCH_MODEL`) handles comment-density rewrites, conversation titles, key checks and whisper()/raisehand(). Per-model request settings live in `model_extra_params()`: Sonnet 5.5 and Haiku 5.5 think before answering by default (slow, many extra output tokens, and a `thinking` block ahead of the text), so Sonnet 5.5 gets `thinking: {type: "between_tools"}` (it rejects `disabled`) and Haiku 5.5 `{type: "disabled"}` (it rejects `between_tools`). Replies are read with `first_text_block()` (never `content[[1]]`). Prices are per model in `MODEL_PRICES` (per MTok: Sonnet 5.5 $2 in / $2.50 cache write / $0.10 cache read / $10 out; Haiku 5.5 $0.10/$0.125/$0.01/$0.50) and `calc_cost(usage, model)` prices each call by the model used; `.WATCH_PRICE_*` in watch.R is Haiku 5.5. Update the prices with the model. The 5.x tokenizer makes ~30% more tokens than older models, so output `max_tokens` limits were raised ~30% (check them if a "response too complex"/cut-off message appears on short answers). Key checks use `claude_key_status()` (8 tokens; success = API accepted the request, only 401/403 = invalid, network trouble = unknown) because with `max_tokens = 1` the 5.x models return an EMPTY reply. `code_only_rule` tells Ask for Code to reply with DESCRIPTION + code only (the prose after the code is never displayed). Benchmark on 8 typical tasks (code executed): Sonnet 5.5 8/8 runnable, ~2.3s and ~0.37¢ per request with thinking off and code-only (~3.5s / 0.56¢ before code-only).
 
 Haiku was tested for main responses but hallucinated non-existent tmap functions — Sonnet only for main calls.
 
@@ -199,12 +199,12 @@ All buttons are also disabled during the busy state via the central `observe()` 
 ## Button layout (top bar, right side)
 
 ```
-[About Classmate]  [?]  [Quick Console]  [Save]  [New conversation] [Quit with Code Log]
+[About Classmate]  [?]  [Quick Console]  [Pause]  [New conversation] [Quit with Code Log]
 ```
 
 - `?` — toggles help mode
 - `Quick Console` — opens REPL modal (white fill normally, black in help mode)
-- `Save` — save session + close (formerly "Save & Pause", originally "Pause App"); the session can be resumed with `talk()`
+- `Pause` — save session + close (previously labelled "Save", "Save & Pause" and "Pause App"); the session can be resumed with `talk()`
 - `Quit with Code Log` — close and save the code log as an R Notebook (formerly "Quit"); the session is not kept for resuming
 
 ---
@@ -234,10 +234,14 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.89 (2026-10-15)  
-**Current version:** 0.5.89
+**Last released:** 0.5.90 (2026-10-15)  
+**Current version:** 0.5.90
 
-Released in 0.5.89 (no unreleased changes):
+Released in 0.5.90 (no unreleased changes):
+- **Model update**: default model is now Sonnet 5.5 (Haiku 5.5 for small jobs) with the model shown read-only in Preferences; per-model request settings, prices and cost accounting; reply parsing no longer assumes `content[[1]]` is text; key checks reworked (they would have signed students out on the 5.x models); output token limits raised ~30% for the new tokenizer; code-only rule cuts wasted prose after code (see the Models paragraph in "System prompt rules").
+- **Pause**: the button formerly labelled "Save" is now "Pause" (button, pop-up, help, notebook text, docs).
+
+Released in 0.5.89:
 - Bug fix (user-reported crash, traceback `setwd <- run_code <- on_success <- check_and_install_if_needed`): `run_code()`, `run_in_qc()` and `run_answer_code()` called `setwd()` unguarded and restored with `on.exit(setwd(old_wd))`. If the folder Classmate itself runs from was deleted/replaced under a running app (e.g. the package was reinstalled while Classmate was open) `old_wd` was NULL and the restore errored, killing the session (reproduced: "character argument expected"). Now `cm_enter_root()` returns a never-erroring `restore()`, and `project_root()` self-heals through `cm_ensure_root()` (falls back to the nearest existing parent, then ~, then tempdir; a notification explains via `.cm$fallback`). Reinstalling the package while Classmate is open is still best avoided (restart R afterwards).
 - **Recall** (Past prompts and Past code buttons, formerly "Repeat"): each prompt now has an *interaction* record (`interactions`, `active_code_id`, saved in pause state and past-conversation snapshots, reset on New conversation). kind "code": generated code plus, captured by `capture_active_code()` whenever you move on (new ask, recall, pause, snapshot), the editor text, R output, plots, warnings, error, diff and active tab; kind "answer": the Answer entry (now carries `seq`). `recall_interaction()` restores it all (code view, Changes tab, outputs) or makes that answer the current one; Past prompts also shows an Answer/Code tag and restores the prompt box; Past code Recall restores the full run only if the block matches an interaction's `last_run_code`, else just the code. Prompts from before this feature recall as text only. Plot files live in tempdir (gone if R restarts). Past code Recall observers are now registered once per button (they previously accumulated on every history change). Help patterns added for `repeat_code_`, `recall_prompt_`, `recall_conv_` buttons (they previously fell through to "no help").
 - **Back to Code / Back to Answer** buttons sit at the end of the tab bar (list items moved there by a script, toggled with shinyjs). Back to Code appears in the Answer view when there is code-side state (`has_code_state`) and returns to the same code tab (`prior_code_tab`); the Changes tab is hidden, not deleted, while answering (do_ask_answer no longer calls hide_changes_tab; Clear doesn't either in the Answer view). Back to Answer appears in the code view once an answer exists and returns to the same answer tab (`prior_answer_tab`).
@@ -326,3 +330,4 @@ Released in 0.5.83–0.5.85:
 | 0.5.87 | **Answer button** (was Ask (no code)) is now a two-stage answer pipeline: Claude answers directly from object/file summaries or requests a small read-only calculation, which runs in a sandbox and whose scrubbed summary output Claude turns into a plain-English answer. New Answer / Past answers tabs replace Code / R output / Past code while in the Answer view (tabs follow the most recent ask); Run/Explain/Fix/Load Script/Save Code Block are frozen there; "Show my working" reveals code and output; not written to the code-log notebook. |
 | 0.5.88 | Answer button privacy hardening (coded copies of identifying columns, refusal of string/sort/location tricks, geometry scrubbing, decline record requests); fixed under-counted API cost (`calc_cost`); startup disclaimer personal-data warnings split into two bold dark-red bullets |
 | 0.5.89 | Recall (Past prompts / Past code) restores answers or code with R output, plots, warnings and Changes; Back to Code / Back to Answer buttons; fixed-height Answer panes; fixed `compute_diff` crash on a changed first line; fixed session crash when the project folder or the app's own folder disappears (`cm_enter_root`, `cm_ensure_root`); help for Past code / prompts / conversations Recall buttons |
+| 0.5.90 | Default model is now Sonnet 5.5 (Sonnet 5.5 only; shown read-only in Preferences), Haiku 5.5 for small jobs; per-model request settings (thinking off), per-model prices and cost accounting, reply parsing by content type, key checks reworked (empty reply with max_tokens=1; network blips no longer sign students out), output limits +30%, code-only rule for Ask for Code; the "Save" button is now "Pause" |

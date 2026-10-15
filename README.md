@@ -54,7 +54,7 @@ Each is an `sf` object ready to use with `tmap`, `ggplot2`, etc.
 | **Save Code Log** | Appends all successfully-run code blocks to `claude_session_log.R` in your working directory |
 | **Import files / Select objects** | Attach file paths or workspace object summaries as context for Claude |
 | **Load Workspace** | Load an `.RData` / `.rds` file into the session without adding it to the context list |
-| **Save** | Saves full session state and closes the app; restored automatically on the next `talk()` call |
+| **Pause** | Saves full session state and closes the app; restored automatically on the next `talk()` call |
 | **Preferences** | Set default coding/plotting/mapping style and image export defaults |
 | **Outputs folder** | All saved files go to `outputs/` inside your current working directory |
 

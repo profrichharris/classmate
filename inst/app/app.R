@@ -84,8 +84,23 @@ KEY_CHECK_INTERVAL_MS <- 10 * 60 * 1000
 
 # Pinned to Sonnet.  Haiku hallucinated a non-existent tmap function in
 # side-by-side testing so it is not offered here.
-MODEL_SONNET <- "claude-sonnet-4-6"
-MODEL_HAIKU  <- "claude-haiku-4-5-20251001"
+MODEL_SONNET <- "claude-sonnet-5-5"
+MODEL_SONNET_LABEL <- "Claude Sonnet 5.5"
+MODEL_HAIKU  <- "claude-haiku-5-5"
+
+# Extra request fields each model needs. Sonnet 5.5 and Haiku 5.5 "think" before answering by
+# default (slower, more output tokens, and a thinking block ahead of the text), so that is
+# switched off. (Sonnet 5.5 accepts "between_tools" but not "disabled"; Haiku 5.5 the reverse.)
+model_extra_params <- function(model) {
+  if (grepl("^claude-sonnet-5", model)) list(thinking = list(type = "between_tools"))
+  else if (grepl("^claude-haiku-5", model)) list(thinking = list(type = "disabled"))
+  else list()
+}
+# The reply text, whichever order the content blocks come in
+first_text_block <- function(content) {
+  for (b in content %||% list()) if (identical(b$type, "text")) return(b$text %||% "")
+  ""
+}
 
 CLASSMATE_LANGUAGES <- c(
   "Afrikaans", "Albanian", "Amharic", "Arabic", "Armenian", "Azerbaijani",
@@ -244,6 +259,13 @@ code_description_rule <- paste(
   "Do not use this line if your response contains no code."
 )
 
+code_only_rule <- paste(
+  "CODE-ONLY RULE: Reply with the DESCRIPTION line and the code block, and nothing else. Add no",
+  "explanation, summary, notes or commentary before or after the code (the student can press",
+  "Explain for that). This does not apply to OUT_OF_SCOPE, NEEDS_CLARIFICATION or",
+  "DISCLOSURE_RISK replies, which keep their own formats."
+)
+
 scope_rule <- paste(
   "SCOPE RULE: Your only job is to help students write or understand R code.",
   "If the user's request has no conceivable connection to writing, running,",
@@ -362,6 +384,7 @@ build_system_prompt <- function(coding, plotting, mapping, img_format, img_quali
     format_image_preferences_clause(img_format, img_quality, img_size),
     build_language_clause(language),
     code_description_rule,
+    code_only_rule,
     scope_rule,
     clarity_rule,
     research_integrity_rule,
@@ -895,7 +918,7 @@ format_log_entries <- function(entries) {
   header <- paste0(
     "---\ntitle: \"Classmate Code Log\"\ndate: \"",
     format(Sys.time(), "%Y-%m-%d %H:%M"), "\"\noutput: html_notebook\n---\n\n",
-    "> **Note:** Please close Classmate (using Save or Quit with Code Log) before running code in this notebook.",
+    "> **Note:** Please close Classmate (using Pause or Quit with Code Log) before running code in this notebook.",
     " Running code here while the app is active may cause conflicts."
   )
   chunks <- lapply(seq_along(entries), function(i) {
@@ -909,19 +932,29 @@ format_log_entries <- function(entries) {
   paste(c(header, chunks), collapse = "\n\n")
 }
 
+# "ok" (the API accepted the request), "invalid" (authentication/permission refused: 401/403) or
+# "unknown" (network trouble, overload, rate limit...). Success is the API accepting the request,
+# not any particular reply text: with a tiny max_tokens the 5.x models return an empty reply.
+claude_key_status <- function(key = Sys.getenv("ANTHROPIC_API_KEY")) {
+  tryCatch({
+    call_claude(
+      messages     = list(list(role = "user", content = "Hi")),
+      model        = MODEL_HAIKU,
+      max_tokens   = 8,
+      api_key      = key,
+      cache_system = FALSE
+    )
+    "ok"
+  },
+  httr2_http_401 = function(e) "invalid",
+  httr2_http_403 = function(e) "invalid",
+  error          = function(e) "unknown")
+}
+
 validate_api_key <- function(key) {
   old_key <- Sys.getenv("ANTHROPIC_API_KEY")
   Sys.setenv(ANTHROPIC_API_KEY = key)
-  ok <- tryCatch({
-    resp <- call_claude(
-      messages   = list(list(role = "user", content = "Hi")),
-      model      = MODEL_SONNET,
-      max_tokens = 1,
-      api_key    = key,
-      cache_system = FALSE
-    )
-    nzchar(trimws(resp$text))
-  }, error = function(e) FALSE)
+  ok <- identical(claude_key_status(key), "ok")
   if (!ok) Sys.setenv(ANTHROPIC_API_KEY = old_key)
   ok
 }
@@ -1386,12 +1419,16 @@ explanation_to_html <- function(text) {
 
 # --- Usage tracking helpers --------------------------------------------------
 
-PRICE_INPUT       <- 3.00   # USD per MTok (non-cached input)
-PRICE_CACHE_WRITE <- 3.75   # USD per MTok
-PRICE_CACHE_READ  <- 0.30   # USD per MTok
-PRICE_OUTPUT      <- 15.00  # USD per MTok
+# USD per million tokens (platform pricing page): input, 5-minute cache write, cache read, output
+MODEL_PRICES <- list(
+  "claude-sonnet-5-5" = c(input = 2.00, cache_write = 2.50,  cache_read = 0.10, output = 10.00),
+  "claude-haiku-5-5"  = c(input = 0.10, cache_write = 0.125, cache_read = 0.01, output = 0.50)
+)
 
-calc_cost <- function(usage) {
+calc_cost <- function(usage, model = MODEL_SONNET) {
+  pr <- MODEL_PRICES[[model]] %||% MODEL_PRICES[["claude-sonnet-5-5"]]   # unknown model: use the Sonnet prices
+  PRICE_INPUT <- pr[["input"]]; PRICE_CACHE_WRITE <- pr[["cache_write"]]
+  PRICE_CACHE_READ <- pr[["cache_read"]]; PRICE_OUTPUT <- pr[["output"]]
   cache_write <- usage$cache_creation_input_tokens %||% 0L
   cache_read  <- usage$cache_read_input_tokens     %||% 0L
   # The API reports input_tokens EXCLUDING cached tokens (which are listed separately).
@@ -1513,7 +1550,7 @@ call_claude <- function(messages, model, max_tokens, system_prompt = NULL,
                 list(type = "text", text = system_prompt, cache_control = cc)))
   } else NULL
 
-  body <- list(model = model, max_tokens = max_tokens, messages = messages)
+  body <- c(list(model = model, max_tokens = max_tokens, messages = messages), model_extra_params(model))
   if (!is.null(system_block)) body$system <- system_block
 
   resp <- request("https://api.anthropic.com/v1/messages") |>
@@ -1527,9 +1564,9 @@ call_claude <- function(messages, model, max_tokens, system_prompt = NULL,
 
   result <- resp_body_json(resp)
   list(
-    text        = result$content[[1]]$text,
+    text        = first_text_block(result$content),
     stop_reason = result$stop_reason,
-    cost_usd    = calc_cost(result$usage %||% list())
+    cost_usd    = calc_cost(result$usage %||% list(), model)
   )
 }
 
@@ -2080,7 +2117,7 @@ ui <- fluidPage(
             style = "margin-right: 8px;"),
           actionButton("quick_console", "Quick Console",
             style = "background-color: white; border-color: #bbb; color: #333; margin-right: 8px;"),
-          actionButton("pause_app", "Save",
+          actionButton("pause_app", "Pause",
             style = "background-color: white; border-color: #bbb; color: #333; margin-right: 14px;"),
           div(style = "display: inline-flex; flex-direction: column; align-items: flex-start;",
             div(
@@ -2693,8 +2730,8 @@ HELP_TEXTS <- list(
     "Preferences — Opens the preferences panel where you can set your preferred",
     "response language, coding style (base R, tidyverse, data.table), plotting",
     "library, mapping package, image export format, quality and size, and comment",
-    "density. The maximum code length is shown there too, but it is set by your key",
-    "and cannot be changed."
+    "density. The Claude model in use (Sonnet 5.5) and the maximum code length are",
+    "shown there too, but they cannot be changed (the code length is set by your key)."
   ),
   file_select = paste(
     "Import files — Opens a file browser so you can bring files from your working",
@@ -2774,7 +2811,7 @@ HELP_TEXTS <- list(
     "has been added to the Code Log for this conversation.",
     "The log is saved as an R Notebook (.Rmd file) in your project folder",
     "and opened in RStudio automatically whenever you start a New Conversation,",
-    "use Save, or use Quit with Code Log.",
+    "use Pause, or use Quit with Code Log.",
     "One notebook is created per conversation: starting a New Conversation",
     "saves and closes the current notebook and begins a fresh one for the next",
     "conversation. This means you always have a clean, timestamped record of",
@@ -2797,7 +2834,7 @@ HELP_TEXTS <- list(
     "when you leave Classmate."
   ),
   pause_app = paste(
-    "Save — Saves your entire session — conversation history, code, context, and",
+    "Pause — Saves your entire session — conversation history, code, context, and",
     "preferences — and closes Classmate. Your code log is saved too. Reopen the app",
     "with talk() to pick up exactly where you left off.",
     "Use this if you want to take a longer break and return to the same conversation later.",
@@ -3237,16 +3274,8 @@ server <- function(input, output, session) {
     invalidateLater(KEY_CHECK_INTERVAL_MS, session)
     req(key_is_set())
     isolate({
-      ok <- tryCatch({
-        resp <- call_claude(
-          messages     = list(list(role = "user", content = "Hi")),
-          model        = MODEL_SONNET,
-          max_tokens   = 1,
-          cache_system = FALSE
-        )
-        nzchar(trimws(resp$text))
-      }, error = function(e) FALSE)
-      if (!ok) {
+      # Only a genuine refusal of the key signs the student out; a network blip must not
+      if (identical(claude_key_status(), "invalid")) {
         key_status_msg(paste(
           "Your key is no longer valid — it may have been suspended or deleted.",
           "Please load a new key file, or load the same one again once it has been reactivated."
@@ -3391,7 +3420,7 @@ server <- function(input, output, session) {
           first_few
         ))),
         model        = MODEL_HAIKU,
-        max_tokens   = 40,
+        max_tokens   = 60,
         api_key      = api_key,
         cache_system = FALSE
       )
@@ -4571,7 +4600,7 @@ server <- function(input, output, session) {
     coding          = pref_val("coding",          "tidyverse"),
     plotting        = pref_val("plotting",         "ggplot2"),
     mapping         = pref_val("mapping",          "tmap"),
-    model           = pref_val("model",            MODEL_SONNET),
+    model           = MODEL_SONNET,   # fixed: a model name saved in old preferences is ignored
     img_format      = pref_val("img_format",       "png"),
     img_quality     = pref_val("img_quality",      "Medium"),
     img_size        = pref_val("img_size",         "Journal double col. (180x120 mm)"),
@@ -4583,14 +4612,15 @@ server <- function(input, output, session) {
     }
   )
 
-  model_choices <- c("Claude Sonnet" = MODEL_SONNET)
 
   show_preferences_modal <- function() {
     lang         <- prefs$language
     lang_choices <- if (tolower(lang) == "english") "English" else c(lang, "English")
     showModal(modalDialog(
       title = "Preferences",
-      selectInput("pref_model", "Model:", choices = model_choices, selected = prefs$model),
+      tags$label("Claude Model:"),
+      tags$p(style = "margin: 6px 0 0 0;", tags$strong(MODEL_SONNET_LABEL),
+             tags$span(style = "color: #888;", " (fixed)")),
       hr(),
       fluidRow(
         column(8, selectInput("pref_language", "Response language:",
@@ -4735,7 +4765,6 @@ server <- function(input, output, session) {
   observeEvent(input$pref_coding,          { prefs$coding          <- input$pref_coding })
   observeEvent(input$pref_plotting,        { prefs$plotting        <- input$pref_plotting })
   observeEvent(input$pref_mapping,         { prefs$mapping         <- input$pref_mapping })
-  observeEvent(input$pref_model,           { prefs$model           <- input$pref_model })
   observeEvent(input$pref_img_format,      { prefs$img_format      <- input$pref_img_format })
   observeEvent(input$pref_img_quality,     { prefs$img_quality     <- input$pref_img_quality })
   observeEvent(input$pref_img_size,        { prefs$img_size        <- input$pref_img_size })
@@ -4784,7 +4813,7 @@ server <- function(input, output, session) {
               )
             )),
             model         = MODEL_HAIKU,
-            max_tokens    = 2000,
+            max_tokens    = 2600,
             system_prompt = paste(
               "You are a code comment editor for R code.",
               "Your only task is to adjust comment lines to the requested level.",
@@ -5019,7 +5048,7 @@ server <- function(input, output, session) {
     assign("stopApp", function(...) stop("__QC_STOPAPP__"), envir = .GlobalEnv)
     .qc_not_here_msg <- paste0(
       "This function is not available inside Classmate's Quick Console.\n",
-      "Please leave Classmate (using Save or Quit with Code Log) and run it from your main R console."
+      "Please leave Classmate (using Pause or Quit with Code Log) and run it from your main R console."
     )
     for (.qc_fn in .qc_classmate_fns)
       assign(.qc_fn, local({ msg <- .qc_not_here_msg; function(...) message(msg) }), envir = .GlobalEnv)
@@ -5289,7 +5318,7 @@ server <- function(input, output, session) {
         call_claude(
           messages      = windowed_prompt,
           model         = prefs$model,
-          max_tokens    = 800,
+          max_tokens    = 1100,
           system_prompt = build_system_prompt(prefs$coding, prefs$plotting, prefs$mapping,
                                               prefs$img_format, prefs$img_quality, prefs$img_size,
                                               prefs$max_lines, prefs$comment_density,
@@ -5456,7 +5485,7 @@ server <- function(input, output, session) {
     plan_prompt    <- build_answer_system_prompt(prefs$language)
 
     r1  <- withProgress(message = "Thinking...", value = 0.3,
-                        call_ai(windowed, plan_prompt, 1500))
+                        call_ai(windowed, plan_prompt, 2000))
     raw <- r1$text
     if (!nzchar(trimws(raw)))
       return(fail("No response from Claude. Check your API key and try again."))
@@ -5604,7 +5633,7 @@ server <- function(input, output, session) {
                            list(role = "user", content = paste0(problem,
             "\nReply with COMPUTE: and one corrected ```r block following the same rules,",
             " or ANSWER: if no calculation is needed.")))),
-          plan_prompt, 1500))
+          plan_prompt, 2000))
         if (!nzchar(trimws(r_fix$text))) break
         record_usage(r_fix$cost_usd %||% 0)
         plan2 <- parse_answer_plan(r_fix$text)
@@ -5625,7 +5654,7 @@ server <- function(input, output, session) {
       r2 <- withProgress(message = "Writing the answer...", value = 0.8, call_ai(
         c(windowed, list(list(role = "assistant", content = raw_cur),
                          list(role = "user", content = results_msg))),
-        build_answer_write_system_prompt(prefs$language), 1200))
+        build_answer_write_system_prompt(prefs$language), 1600))
       if (!nzchar(trimws(r2$text)))
         return(fail("No response from Claude when writing the answer. Please try again."))
       record_usage(r2$cost_usd %||% 0)
@@ -5806,7 +5835,7 @@ server <- function(input, output, session) {
             "explanation already covers."
           ))),
           model         = prefs$model,
-          max_tokens    = 380,
+          max_tokens    = 500,
           system_prompt = paste(
             "You are a helpful R programming tutor unpacking one specific passage",
             "from an explanation the student has already read. Your only job is to",
@@ -5863,7 +5892,7 @@ server <- function(input, output, session) {
                 error_text
               ))),
               model         = prefs$model,
-              max_tokens    = 400,
+              max_tokens    = 520,
               system_prompt = build_error_explain_system_prompt(prefs$language)
             ),
             error = function(e) list(text = "", stop_reason = "error", cost_usd = 0)
@@ -5929,7 +5958,7 @@ server <- function(input, output, session) {
                   prompt = prompt_ctx
                 ))),
               model         = prefs$model,
-              max_tokens    = 700,
+              max_tokens    = 900,
               system_prompt = build_output_explain_system_prompt(prefs$language)
             ),
             error = function(e) list(text = "", stop_reason = "error", cost_usd = 0,
@@ -5989,7 +6018,7 @@ server <- function(input, output, session) {
             call_claude(
               messages      = list(list(role = "user", content = user_msg)),
               model         = prefs$model,
-              max_tokens    = 600,
+              max_tokens    = 800,
               system_prompt = build_diff_explain_system_prompt(prefs$language)
             ),
             error = function(e) list(text = "", stop_reason = "error", cost_usd = 0)
@@ -6065,7 +6094,7 @@ server <- function(input, output, session) {
             messages      = list(list(role = "user",
                                       content = build_explain_prompt(code_text, level))),
             model         = prefs$model,
-            max_tokens    = 1200,
+            max_tokens    = 1600,
             system_prompt = build_explain_system_prompt(prefs$language)
           ),
           error = function(e) list(text = "", stop_reason = "error")
@@ -6126,7 +6155,7 @@ server <- function(input, output, session) {
             messages      = list(list(role = "user",
                                       content = build_explain_prompt(code_text, new_level))),
             model         = prefs$model,
-            max_tokens    = 1200,
+            max_tokens    = 1600,
             system_prompt = build_explain_system_prompt(prefs$language)
           ),
           error = function(e) list(text = "", stop_reason = "error")
@@ -6241,7 +6270,7 @@ server <- function(input, output, session) {
             "It produced this error:\n", current_error
           ))),
           model         = prefs$model,
-          max_tokens    = 800,
+          max_tokens    = 1100,
           system_prompt = build_fix_system_prompt(prefs$language),
           cache_system  = FALSE
         ),
@@ -6409,7 +6438,7 @@ server <- function(input, output, session) {
       ),
       tags$ul(
         tags$li("start a ", tags$strong("New Conversation")),
-        tags$li("use ", tags$strong("Save")),
+        tags$li("use ", tags$strong("Pause")),
         tags$li("use ", tags$strong("Quit with Code Log"))
       ),
       tags$p(
@@ -6421,7 +6450,7 @@ server <- function(input, output, session) {
       ),
       tags$p(
         "In the notebook you can review and re-run each code chunk individually.",
-        tags$strong(" Remember to close Classmate (using Save or Quit with Code Log)",
+        tags$strong(" Remember to close Classmate (using Pause or Quit with Code Log)",
                     " before running code in the notebook to avoid conflicts.")
       ),
       footer = modalButton("Close"),
@@ -6459,11 +6488,11 @@ server <- function(input, output, session) {
     ))
   })
 
-  # --- Save (pause) ----------------------------------------------------------
+  # --- Pause ----------------------------------------------------------
   observeEvent(input$pause_app, {
     showModal(modalDialog(
-      title = "Save",
-      tags$p(tags$strong("Save your session and close Classmate.")),
+      title = "Pause",
+      tags$p(tags$strong("Pause Classmate: your session is saved and Classmate closes.")),
       tags$p(paste(
         "The current session — prompt, code, context files and objects,",
         "conversation history, and preferences — will be saved and restored",
@@ -6474,7 +6503,7 @@ server <- function(input, output, session) {
       )),
       footer = tagList(
         modalButton("Cancel"),
-        actionButton("confirm_pause_app", "Save", class = "btn-primary")
+        actionButton("confirm_pause_app", "Pause", class = "btn-primary")
       )
     ))
   })

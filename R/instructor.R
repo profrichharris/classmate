@@ -162,7 +162,8 @@ classmate_make_key <- function(api_key           = NULL,
         "content-type"      = "application/json"
       ) |>
       httr2::req_body_json(list(
-        model      = "claude-sonnet-4-6",
+        model      = "claude-haiku-5-5",
+        thinking   = list(type = "disabled"),
         max_tokens = 1L,
         messages   = list(list(role = "user", content = "Hi"))
       )) |>

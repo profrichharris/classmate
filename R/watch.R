@@ -20,11 +20,11 @@
 .watch_env$original_error    <- NULL
 
 .WATCH_BUFFER_SIZE <- 30L
-.WATCH_MODEL       <- "claude-haiku-4-5-20251001"
+.WATCH_MODEL       <- "claude-haiku-5-5"
 
-# Input token price per million (Haiku 4.5)
-.WATCH_PRICE_IN  <- 1.00 / 1e6
-.WATCH_PRICE_OUT <- 5.00 / 1e6
+# Token prices per million (Haiku 5.5, prompts up to 100,000 tokens)
+.WATCH_PRICE_IN  <- 0.10 / 1e6
+.WATCH_PRICE_OUT <- 0.50 / 1e6
 
 # ---------------------------------------------------------------------------
 # Shared path helpers (identical to those in app.R so files are the same)
@@ -278,7 +278,8 @@
       ) |>
       httr2::req_body_json(list(
         model      = .WATCH_MODEL,
-        max_tokens = 1024L,
+        max_tokens = 1400L,
+        thinking   = list(type = "disabled"),
         system     = system_prompt,
         messages   = list(list(role = "user", content = user_prompt))
       )) |>
@@ -286,7 +287,8 @@
       httr2::req_perform()
 
     body    <- httr2::resp_body_json(resp)
-    text    <- body$content[[1]]$text
+    text    <- ""
+    for (blk in body$content) if (identical(blk$type, "text")) { text <- blk$text; break }
     usage   <- body$usage
     cost    <- (usage$input_tokens  %||% 0L) * .WATCH_PRICE_IN +
                (usage$output_tokens %||% 0L) * .WATCH_PRICE_OUT

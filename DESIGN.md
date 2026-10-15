@@ -207,9 +207,9 @@ When comment density changes, the current editor code is automatically rewritten
 
 ## Model choices
 
-- **Main app (talk):** `claude-sonnet-4-6` — used for all Ask / Ask for Code requests. Haiku was tested but hallucinated non-existent tmap functions; Sonnet only for main calls.
-- **Comment density rewrite:** `claude-haiku-4-5-20251001` — fast, cheap, appropriate for a purely cosmetic text transformation.
-- **whisper / raisehand:**" `claude-haiku-4-5-20251001` — responses are short plain-English explanations; Haiku is adequate and approximately 15× cheaper per token than Sonnet.
+- **Main app (talk):** `claude-sonnet-5-5` — used for Ask for Code, Answer, Explain and Fix. An earlier Haiku (4.5) hallucinated non-existent tmap functions, so Sonnet is used for the main calls.
+- **Comment density rewrite, conversation titles, key validation:** `claude-haiku-5-5` — fast and very cheap, appropriate for small cosmetic or low-stakes tasks.
+- **whisper / raisehand:** `claude-haiku-5-5` — responses are short plain-English explanations; Haiku is adequate and roughly 20× cheaper per token than Sonnet.
 
 ---
 
