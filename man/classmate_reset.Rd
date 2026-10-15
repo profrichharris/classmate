@@ -16,5 +16,6 @@ language to English.
 \details{
 This function will refuse to run while \code{whisper()} is active or while
 a paused \code{talk()} session exists. Stop \code{whisper()} with
-\code{ssshh()} first, or quit the app before resetting.
+\code{ssshh()} first, or resume the app and use \emph{Quit with Code Log}
+before resetting.
 }

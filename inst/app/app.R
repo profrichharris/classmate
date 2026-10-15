@@ -4,14 +4,37 @@ library(shinyFiles)
 library(shinyAce)
 library(httr2)
 
-# --- Project root and output paths -------------------------------------------
+# --- Project root (= the R working directory) and output paths --------------
 # talk() stores the user's working directory in this option before calling
 # runApp(), which would otherwise change the wd to this inst/app/ folder.
 # Fall back to getwd() when the app is run directly for development.
-PROJECT_ROOT <- getOption(".classmate_project_root", getwd())
-OUTPUTS_DIR  <- file.path(PROJECT_ROOT, "outputs")
-PAUSE_FILE   <- file.path(PROJECT_ROOT, "claude_assistant_pause.rds")
-dir.create(OUTPUTS_DIR, showWarnings = FALSE, recursive = TRUE)
+# The root can change during a session (Change Working Directory button, or
+# setwd() typed in the Quick Console); talk() applies the final value to the R
+# session when the app closes.
+.cm <- new.env()
+.cm$root <- normalizePath(getOption(".classmate_project_root", getwd()),
+                          winslash = "/", mustWork = FALSE)
+project_root <- function() .cm$root
+outputs_dir  <- function() file.path(.cm$root, "outputs")
+pause_file   <- function() file.path(.cm$root, "claude_assistant_pause.rds")
+dir.create(outputs_dir(), showWarnings = FALSE, recursive = TRUE)
+
+# Makes `new_dir` the project root. Returns list(ok, changed, path, outputs_ok, error).
+cm_set_root <- function(new_dir) {
+  p <- tryCatch(normalizePath(path.expand(new_dir), winslash = "/", mustWork = TRUE),
+                error = function(e) NA_character_)
+  if (is.na(p) || !dir.exists(p))
+    return(list(ok = FALSE, changed = FALSE, error = "That folder does not exist."))
+  if (identical(p, .cm$root)) return(list(ok = TRUE, changed = FALSE, path = p, outputs_ok = TRUE))
+  outputs_ok <- suppressWarnings(
+    dir.create(file.path(p, "outputs"), showWarnings = FALSE, recursive = TRUE) ||
+      dir.exists(file.path(p, "outputs")))
+  .cm$root <- p
+  options(.classmate_project_root = p)
+  if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable())
+    try(rstudioapi::filesPaneNavigate(p), silent = TRUE)
+  list(ok = TRUE, changed = TRUE, path = p, outputs_ok = outputs_ok)
+}
 
 # Serve temp plot files captured during code runs
 addResourcePath("classmate_plots", tempdir())
@@ -91,15 +114,15 @@ tmap_breaks_instruction <- paste(
   "the side where the boundary value itself belongs."
 )
 
-filename_timestamp_instruction <- paste0(
+filename_timestamp_instruction <- function() paste0(
   "HARD RULE — do NOT add any file-saving or export code unless the user's prompt ",
   "explicitly asks to save or export something (e.g. 'save the map', 'export to CSV', ",
   "'write the results to a file'). If the prompt only asks to create a plot, map, or ",
   "object, just create it — do not append saving code automatically. ",
 
   "When saving IS requested: always save into this exact folder, which already exists: ",
-  OUTPUTS_DIR, ". ",
-  "Use file.path(\"", OUTPUTS_DIR, "\", filename) as the save path. ",
+  outputs_dir(), ". ",
+  "Use file.path(\"", outputs_dir(), "\", filename) as the save path. ",
   "Do NOT call dir.create() — the folder is guaranteed to exist. ",
   "If the user has NOT specified a filename, default to a timestamp-based name: ",
   "paste0(format(Sys.time(), \"%Y-%m-%d-%H-%M-%S\"), \".ext\") ",
@@ -109,7 +132,7 @@ filename_timestamp_instruction <- paste0(
   "NEVER use tmap_save(), ggsave(), or any package-level save function for images. ",
   "Always use the explicit device pattern: open the device, print/plot the object, ",
   "close the device. For example: ",
-  "  png(file.path(\"", OUTPUTS_DIR, "\", fname), width=W, height=H, units=\"mm\", res=DPI) ",
+  "  png(file.path(\"", outputs_dir(), "\", fname), width=W, height=H, units=\"mm\", res=DPI) ",
   "  print(map_or_plot_object) ",
   "  dev.off() ",
   "Replace png() with pdf(), tiff(), jpeg(), or bmp() as appropriate for the chosen format. ",
@@ -297,7 +320,7 @@ build_system_prompt <- function(coding, plotting, mapping, img_format, img_quali
     library_clause,
     if (tolower(mapping) == "tmap") tmap_v4_instruction,
     tmap_breaks_instruction,
-    filename_timestamp_instruction,
+    filename_timestamp_instruction(),
     format_preferences_clause(coding, plotting, mapping, max_lines, comment_density),
     format_image_preferences_clause(img_format, img_quality, img_size),
     build_language_clause(language),
@@ -345,6 +368,214 @@ format_already_run_block <- function(run_history) {
     "loaded or objects it created already exist. Only provide the NEW code ",
     "needed for the next step:\n```r\n", code_concat, "\n```"
   )
+}
+
+# ---------------------------------------------------------------------------
+# "Filter by type" for the Select objects dialog.
+# Matches objects either by their formal R class ("sf", "integer", "lm") or by
+# everyday wording ("data table", "mappable", "model", "text"). Entirely local:
+# nothing is sent to the API.
+# ---------------------------------------------------------------------------
+
+type_norm <- function(x) trimws(gsub("[._/\\-]+", " ", tolower(x)))
+
+.has_coord_cols <- function(o) {
+  if (!is.data.frame(o)) return(FALSE)
+  nm <- tolower(names(o))
+  any(nm %in% c("lon", "long", "lng", "longitude")) && any(nm %in% c("lat", "latitude")) ||
+    (any(nm %in% c("easting", "eastings")) && any(nm %in% c("northing", "northings")))
+}
+.sf_geom_class <- function(o) {
+  if (inherits(o, "sfc")) return(toupper(class(o)))
+  if (!inherits(o, "sf")) return(character(0))
+  col <- attr(o, "sf_column")
+  if (is.null(col)) return(character(0))
+  toupper(class(o[[col]]))
+}
+.is_spatial_vector <- function(o)
+  inherits(o, c("sf", "sfc", "sfg", "Spatial", "SpatVector", "SpatialPolygons",
+                "SpatialPoints", "SpatialLines"))
+.is_raster <- function(o)
+  inherits(o, c("RasterLayer", "RasterStack", "RasterBrick", "SpatRaster",
+                "SpatRasterDataset", "stars", "stars_proxy"))
+.is_model <- function(o)
+  inherits(o, c("lm", "glm", "nls", "lme", "lmerMod", "glmerMod", "gam", "aov",
+                "Arima", "arima", "coxph", "loess", "randomForest", "rpart",
+                "svm", "nnet", "train", "kmeans", "prcomp", "princomp", "hclust",
+                "sarlm", "splm", "lagsarlm", "errorsarlm", "spautolm", "mlm", "manova")) ||
+    (is.list(o) && !is.data.frame(o) && !is.null(o$coefficients))
+
+# word lists are matched after type_norm(); the first word is the canonical name
+.TYPE_CATS <- list(
+  table = list(
+    words = c("table", "data table", "tabular", "dataset", "data set", "data frame",
+              "dataframe", "df", "spreadsheet", "data", "rectangular", "records",
+              "rows and columns"),
+    pred = function(o) is.data.frame(o) && !inherits(o, "sf")),
+  tibble = list(
+    words = c("tibble", "tbl", "tbl df", "tidy table"),
+    pred = function(o) inherits(o, "tbl_df")),
+  datatable = list(
+    words = c("data table package", "dt", "datatable"),
+    pred = function(o) inherits(o, "data.table")),
+  spatial = list(
+    words = c("spatial", "sf", "geographic", "geographical", "geospatial", "gis",
+              "geometry", "geometries", "shapefile", "simple features", "simple feature",
+              "sfc", "spatial vector", "vector layer", "geodata", "boundaries",
+              "boundary", "spatial data"),
+    pred = .is_spatial_vector),
+  raster = list(
+    words = c("raster", "grid", "gridded", "image", "imagery", "satellite", "pixel",
+              "pixels", "terra", "stars", "cell", "cells", "surface", "spatraster"),
+    pred = .is_raster),
+  mappable = list(
+    words = c("mappable", "map", "maps", "can be mapped", "plottable on a map",
+              "geographic", "mapping", "has coordinates", "coordinates"),
+    pred = function(o) .is_spatial_vector(o) || .is_raster(o) || .has_coord_cols(o)),
+  point = list(
+    words = c("point", "points", "point data", "pts"),
+    pred = function(o) any(grepl("POINT", .sf_geom_class(o))) || inherits(o, "SpatialPoints")),
+  line = list(
+    words = c("line", "lines", "linestring", "linestrings", "polyline", "polylines",
+              "roads", "routes", "network lines"),
+    pred = function(o) any(grepl("LINE", .sf_geom_class(o))) || inherits(o, "SpatialLines")),
+  polygon = list(
+    words = c("polygon", "polygons", "area", "areas", "areal", "zones", "zone",
+              "choropleth", "multipolygon", "boundary polygons"),
+    pred = function(o) any(grepl("POLYGON", .sf_geom_class(o))) || inherits(o, "SpatialPolygons")),
+  weights = list(
+    words = c("weights", "spatial weights", "neighbours", "neighbors", "nb", "listw",
+              "neighbour list", "contiguity", "weights matrix"),
+    pred = function(o) inherits(o, c("nb", "listw", "knn"))),
+  model = list(
+    words = c("model", "models", "regression", "fitted", "fitted model", "fit",
+              "statistical model", "estimate", "estimates", "lm", "glm", "ols"),
+    pred = .is_model),
+  test = list(
+    words = c("test", "hypothesis test", "htest", "t test", "chi squared", "significance test"),
+    pred = function(o) inherits(o, "htest")),
+  plot = list(
+    words = c("plot", "plots", "chart", "charts", "figure", "figures", "visualisation",
+              "visualization", "ggplot", "graphic", "graphics", "diagram", "picture"),
+    pred = function(o) inherits(o, c("gg", "ggplot", "recordedplot", "trellis",
+                                     "grob", "gtable", "patchwork", "gTree"))),
+  `function` = list(
+    words = c("function", "functions", "fn", "func", "closure", "method", "callable"),
+    pred = function(o) is.function(o)),
+  numeric = list(
+    words = c("numeric", "number", "numbers", "numerical", "double", "dbl", "num",
+              "quantitative", "decimal", "float"),
+    pred = function(o) is.numeric(o) && !is.factor(o) && !inherits(o, c("Date", "POSIXt", "difftime"))),
+  integer = list(
+    words = c("integer", "integers", "int", "whole number", "whole numbers", "count"),
+    pred = function(o) is.integer(o) && !is.factor(o)),
+  character = list(
+    words = c("character", "characters", "text", "string", "strings", "chr", "words",
+              "textual", "labels"),
+    pred = function(o) is.character(o)),
+  logical = list(
+    words = c("logical", "boolean", "bool", "lgl", "true false", "flag", "flags"),
+    pred = function(o) is.logical(o)),
+  factor = list(
+    words = c("factor", "factors", "categorical", "category", "categories", "fct",
+              "levels", "ordinal", "nominal"),
+    pred = function(o) is.factor(o)),
+  datetime = list(
+    words = c("date", "dates", "time", "times", "datetime", "date time", "timestamp",
+              "dttm", "posixct", "posixt", "temporal", "calendar"),
+    pred = function(o) inherits(o, c("Date", "POSIXt", "difftime"))),
+  timeseries = list(
+    words = c("time series", "timeseries", "ts", "series", "xts", "zoo", "tsibble"),
+    pred = function(o) inherits(o, c("ts", "xts", "zoo", "tsibble", "mts"))),
+  list = list(
+    words = c("list", "lists", "nested", "named list"),
+    pred = function(o) identical(class(o), "list")),
+  matrix = list(
+    words = c("matrix", "matrices", "array", "arrays", "grid of numbers"),
+    pred = function(o) is.matrix(o) || is.array(o)),
+  vector = list(
+    words = c("vector", "vectors", "atomic", "column", "variable"),
+    pred = function(o) is.atomic(o) && is.null(dim(o)) && !is.factor(o) && length(o) != 1L),
+  scalar = list(
+    words = c("scalar", "single value", "one value", "constant", "parameter", "value", "values"),
+    pred = function(o) is.atomic(o) && length(o) == 1L),
+  distance = list(
+    words = c("distance", "distances", "distance matrix", "dist", "dissimilarity"),
+    pred = function(o) inherits(o, "dist")),
+  crosstab = list(
+    words = c("contingency", "crosstab", "cross tab", "cross tabulation", "frequency table",
+              "tabulation", "counts table"),
+    pred = function(o) inherits(o, "table")),
+  network = list(
+    words = c("network", "graph", "igraph", "nodes", "edges", "social network"),
+    pred = function(o) inherits(o, c("igraph", "network", "tbl_graph", "graphNEL"))),
+  formula = list(
+    words = c("formula", "formulae", "formulas", "equation"),
+    pred = function(o) inherits(o, "formula")),
+  environment = list(
+    words = c("environment", "env", "namespace"),
+    pred = function(o) is.environment(o)),
+  empty = list(
+    words = c("empty", "null", "nothing", "zero length", "blank"),
+    pred = function(o) length(o) == 0L && !is.environment(o) && !is.function(o))
+)
+
+.TYPE_VOCAB <- local({
+  v <- list()
+  for (cat in names(.TYPE_CATS)) {
+    for (w in unique(type_norm(c(cat, .TYPE_CATS[[cat]]$words))))
+      v[[w]] <- union(v[[w]], cat)
+  }
+  v
+})
+
+type_object_info <- function(o) {
+  cats <- names(.TYPE_CATS)[vapply(.TYPE_CATS, function(ct)
+    isTRUE(tryCatch(ct$pred(o), error = function(e) FALSE)), logical(1))]
+  list(formal = unique(type_norm(tryCatch(class(o), error = function(e) character(0)))),
+       cats = cats)
+}
+
+# Looks a typed term up in the vocabulary: exact, plural-stripped, then fuzzy.
+type_term_categories <- function(term) {
+  cands <- unique(c(term, sub("(ies)$", "y", term), sub("es$", "", term), sub("s$", "", term)))
+  for (cd in cands) if (!is.null(.TYPE_VOCAB[[cd]])) return(.TYPE_VOCAB[[cd]])
+  if (nchar(term) >= 4) {
+    hits <- tryCatch(agrep(term, names(.TYPE_VOCAB), max.distance = 0.2,
+                           ignore.case = TRUE, value = TRUE), error = function(e) character(0))
+    hits <- hits[abs(nchar(hits) - nchar(term)) <= 3]
+    if (length(hits) > 0)
+      return(unique(unlist(.TYPE_VOCAB[head(hits, 3)], use.names = FALSE)))
+  }
+  character(0)
+}
+
+# Filters object names by a type query such as "sf, data table, mappable".
+# Terms separated by commas, "or", "and", "/" or "+" are alternatives.
+# Returns list(matched = <names>, unrecognised = <terms nothing understood>).
+filter_objects_by_type <- function(obj_names, query, env = .GlobalEnv) {
+  q <- trimws(query %||% "")
+  if (!nzchar(q)) return(list(matched = obj_names, unrecognised = character(0)))
+  terms <- trimws(unlist(strsplit(tolower(q), "\\s*(,|;|\\+|\\bor\\b|\\band\\b|/)\\s*", perl = TRUE)))
+  terms <- unique(type_norm(terms[nzchar(terms)]))
+  if (length(terms) == 0) return(list(matched = obj_names, unrecognised = character(0)))
+
+  info <- lapply(setNames(obj_names, obj_names), function(nm)
+    tryCatch(type_object_info(get(nm, envir = env)),
+             error = function(e) list(formal = character(0), cats = character(0))))
+
+  keep <- setNames(rep(FALSE, length(obj_names)), obj_names)
+  unrec <- character(0)
+  for (t in terms) {
+    tcats <- type_term_categories(t)
+    hit <- vapply(info, function(i) {
+      length(intersect(tcats, i$cats)) > 0 || t %in% i$formal ||
+        (nchar(t) >= 4 && any(grepl(t, i$formal, fixed = TRUE)))
+    }, logical(1))
+    if (length(tcats) == 0 && !any(hit)) unrec <- c(unrec, t)
+    keep <- keep | hit
+  }
+  list(matched = obj_names[keep], unrecognised = unrec)
 }
 
 schema_from_r_object <- function(obj) {
@@ -626,7 +857,7 @@ format_log_entries <- function(entries) {
   header <- paste0(
     "---\ntitle: \"Classmate Code Log\"\ndate: \"",
     format(Sys.time(), "%Y-%m-%d %H:%M"), "\"\noutput: html_notebook\n---\n\n",
-    "> **Note:** Please Pause or Quit Classmate before running code in this notebook.",
+    "> **Note:** Please close Classmate (using Save or Quit with Code Log) before running code in this notebook.",
     " Running code here while the app is active may cause conflicts."
   )
   chunks <- lapply(seq_along(entries), function(i) {
@@ -659,23 +890,9 @@ validate_api_key <- function(key) {
 
 build_volumes <- function() shinyFiles::getVolumes()()
 
-compute_default_root_and_path <- function(volumes, wd = getwd()) {
-  wd_norm  <- normalizePath(wd, winslash = "/", mustWork = FALSE)
-  best     <- NULL
-  best_len <- -1
-  for (nm in names(volumes)) {
-    vol_norm <- normalizePath(volumes[[nm]], winslash = "/", mustWork = FALSE)
-    if (startsWith(wd_norm, vol_norm) && nchar(vol_norm) > best_len) {
-      best     <- nm
-      best_len <- nchar(vol_norm)
-    }
-  }
-  if (is.null(best)) return(list(root = names(volumes)[1], path = ""))
-  vol_norm <- normalizePath(volumes[[best]], winslash = "/", mustWork = FALSE)
-  rel <- sub(paste0("^", vol_norm), "", wd_norm)
-  rel <- sub("^/+", "", rel)
-  list(root = best, path = rel)
-}
+# Roots offered by the file dialogs; "Working directory" always points at the
+# current project root, even after it has been changed.
+file_dialog_roots <- function(volumes) c("Working directory" = project_root(), volumes)
 
 open_log_file <- function(log_path, file_edit_fn = file.edit) {
   if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
@@ -829,7 +1046,7 @@ run_code <- function(code_text) {
   plot_files     <- character(0)
 
   # Run in the user's project directory, not the Shiny app directory
-  old_wd <- setwd(PROJECT_ROOT)
+  old_wd <- setwd(project_root())
   on.exit(setwd(old_wd), add = TRUE)
 
   # Open a numbered PNG device to capture any plots generated
@@ -860,7 +1077,15 @@ run_code <- function(code_text) {
   candidates <- sort(Sys.glob(paste0(tmp_base, "*.png")))
   plot_files <- candidates[file.exists(candidates) & file.size(candidates) > 8192]
 
-  c(result, list(plot_files = plot_files))
+  # If the code changed the working directory (setwd()), make that the new root
+  wd_changed <- NULL
+  now_wd <- tryCatch(normalizePath(getwd(), winslash = "/"), error = function(e) NA_character_)
+  if (!is.na(now_wd) && !identical(now_wd, project_root())) {
+    r <- cm_set_root(now_wd)
+    if (isTRUE(r$ok) && isTRUE(r$changed)) wd_changed <- r$path
+  }
+
+  c(result, list(plot_files = plot_files, wd_changed = wd_changed))
 }
 
 build_fix_system_prompt <- function(language = "English") {
@@ -1450,7 +1675,7 @@ ui <- fluidPage(
           // Shiny action button or regular button with an id
           var id = target.id || '';
           if ((target.tagName === 'BUTTON' || target.classList.contains('action-button')) && id) {
-            Shiny.setInputValue('help_button_clicked', {id: id, nonce: Math.random()}, {priority: 'event'});
+            Shiny.setInputValue('help_button_clicked', {id: id, label: (target.textContent || '').trim().replace(/\\s+/g, ' '), nonce: Math.random()}, {priority: 'event'});
             return;
           }
           // Tab header: Bootstrap tabs use <a data-toggle='tab' data-value='...'>
@@ -1516,6 +1741,65 @@ ui <- fluidPage(
         splash.classList.add('fade-out');
         setTimeout(function() { splash.classList.add('hidden'); }, 850);
       }, 3000);
+    })();
+  ")),
+
+  # Folder entries in the Change Working Directory browser
+  tags$script(HTML("
+    document.addEventListener('click', function(e) {
+      var a = e.target.closest ? e.target.closest('.cm-chdir-item') : null;
+      if (!a) return;
+      e.preventDefault();
+      Shiny.setInputValue('chdir_enter',
+        {name: a.getAttribute('data-name'), nonce: Math.random()}, {priority: 'event'});
+    });
+  ")),
+
+  # Optional "filter by name" box in the Import files dialog. Folders always stay
+  # visible so the user can still navigate; only files are filtered.
+  tags$script(HTML("
+    (function() {
+      function applyFilter(modal, input) {
+        var q = input.value.trim().toLowerCase();
+        var list = modal.querySelector('.sF-fileList');
+        if (!list) return;
+        Array.prototype.forEach.call(list.querySelectorAll('.sF-file'), function(el) {
+          var nm = (el.querySelector('.sF-file-name div') || {}).textContent || '';
+          var show = !q || nm.toLowerCase().indexOf(q) !== -1;
+          el.style.display = show ? '' : 'none';
+          if (!show) el.classList.remove('selected');
+        });
+      }
+      function addFilter(modal) {
+        if (modal.querySelector('.classmate-name-filter')) return;
+        var footer = modal.querySelector('.sF-responseButtons');
+        if (!footer) return;
+        var wrap = document.createElement('div');
+        wrap.className = 'classmate-name-filter';
+        wrap.style.cssText = 'padding: 8px 15px 0 15px;';
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'form-control input-sm';
+        input.placeholder = 'Filter files by name (optional)';
+        input.autocomplete = 'off';
+        wrap.appendChild(input);
+        footer.parentNode.insertBefore(wrap, footer);
+        input.addEventListener('input', function() { applyFilter(modal, input); });
+        input.addEventListener('keydown', function(e) {
+          e.stopPropagation();
+          if (e.key === 'Escape') {
+            var c = modal.querySelector('#sF-cancelButton');
+            if (c) c.click();
+          }
+        });
+        var list = modal.querySelector('.sF-fileList');
+        if (list) new MutationObserver(function() { applyFilter(modal, input); })
+          .observe(list, { childList: true });
+      }
+      new MutationObserver(function() {
+        var m = document.getElementById('file_select-modal');
+        if (m) addFilter(m);
+      }).observe(document.body, { childList: true });
     })();
   ")),
 
@@ -1622,31 +1906,34 @@ ui <- fluidPage(
       )
     ),
 
+    tags$p(
+      style = "margin: 8px 0 6px 0;",
+      "Are there any files or objects you want the prompt to work with?"
+    ),
     fluidRow(
       column(8,
-        shinyFilesButton("file_select", "Add files",
+        shinyFilesButton("file_select", "Import files",
           title = "Select one or more files", multiple = TRUE),
         tags$span(style = "display: inline-block; width: 4px;"),
-        actionButton("add_objects", "Add objects"),
+        actionButton("add_objects", "Select objects"),
+        tags$span(style = "display: inline-block; width: 4px;"),
+        actionButton("load_package_data", "Load Package Data"),
         tags$span(style = "display: inline-block; width: 4px;"),
         shinyFilesButton("load_workspace", "Load Workspace",
           title = "Select a workspace file (.RData / .rda)", multiple = FALSE),
-        tags$span(style = "display: inline-block; width: 4px;"),
-        actionButton("clear_workspace", "Clear Workspace")
       ),
       column(4,
-        disabled(actionButton("remove_context", "Remove checked")),
+        hidden(disabled(actionButton("remove_context", "Remove checked"))),
         tags$span(style = "display: inline-block; width: 4px;"),
-        disabled(actionButton("remove_all_context", "Remove all"))
+        hidden(disabled(actionButton("remove_all_context", "Remove all")))
       )
     ),
-    tags$p(tags$strong("Files and objects added as context:")),
     uiOutput("context_list_ui"),
 
     hr(),
     fluidRow(
       column(8,
-        actionButton("ask_plain", "Ask"),
+        actionButton("ask_plain", "Ask (no code)"),
         actionButton("ask_code", "Ask for Code", class = "btn-primary"),
         actionButton("clear_prompt", "Clear"),
         actionButton("load_key_file_btn", "Load key file")
@@ -1706,13 +1993,13 @@ ui <- fluidPage(
             style = "margin-right: 8px;"),
           actionButton("quick_console", "Quick Console",
             style = "background-color: white; border-color: #bbb; color: #333; margin-right: 8px;"),
-          actionButton("pause_app", "Save & Pause",
+          actionButton("pause_app", "Save",
             style = "background-color: white; border-color: #bbb; color: #333; margin-right: 14px;"),
           div(style = "display: inline-flex; flex-direction: column; align-items: flex-start;",
             div(
               actionButton("new_conversation", "New conversation",
                 style = "background-color: #e67e22; border-color: #ca6f1e; color: white;"),
-              actionButton("quit", "Quit", class = "btn-danger",
+              actionButton("quit", "Quit with Code Log", class = "btn-danger",
                 style = "margin-left: 4px;")
             ),
             uiOutput("conv_remaining_ui")
@@ -1810,6 +2097,240 @@ fetch_key_from_web <- function(url) {
   list(payload = keys[[idx]])
 }
 
+# ---------------------------------------------------------------------------
+# Help mode text
+#
+# HELP_TEXTS     — one entry per button id that is visible on the main screen.
+# HELP_TAB_TEXTS — one entry per tab title.
+# HELP_EXEMPT    — ids that deliberately have no entry above (with the reason).
+#
+# tools/check_help.R compares these tables with the buttons and tabs defined in
+# this file and fails if one is missing, so run it before every release and
+# whenever a button, tab or label is added, renamed or removed.
+# ---------------------------------------------------------------------------
+
+HELP_TEXTS <- list(
+  help_toggle = paste(
+    "You are in Help mode. Click any button or tab to read what it does.",
+    "Press the ? button again to return to normal."
+  ),
+  ask_plain = paste(
+    "Ask (no code) — Send a prompt to the AI when you want the answer or the result",
+    "rather than the code. If the response includes R code, it is run immediately and",
+    "the output appears in the R output tab; the code is saved to your code log but is",
+    "not placed in the editor. Use it for quick one-step tasks. If you would like to",
+    "see and edit the code first, use Ask for Code instead."
+  ),
+  ask_code = paste(
+    "Ask for Code — Send a prompt to the AI and have the generated code placed",
+    "in the Code editor for you to inspect before running. Press Run when you are",
+    "ready to execute it. Use Ask for Code when you want to review or edit the code",
+    "first."
+  ),
+  clear_prompt = paste(
+    "Clear — Erases all text in the prompt box. When Classmate first opens it is",
+    "highlighted yellow: press it to clear the data-protection reminder, which",
+    "unlocks the other buttons."
+  ),
+  load_key_file_btn = paste(
+    "Load key file — Loads a Classmate key file from your instructor, either from",
+    "a file on your computer (Browse) or from a web address (Load from Web).",
+    "Loading a newly issued key resets your usage allowance to match that key."
+  ),
+  preferences = paste(
+    "Preferences — Opens the preferences panel where you can set your preferred",
+    "response language, coding style (base R, tidyverse, data.table), plotting",
+    "library, mapping package, image export format, quality and size, and comment",
+    "density. The maximum code length is shown there too, but it is set by your key",
+    "and cannot be changed."
+  ),
+  file_select = paste(
+    "Import files — Opens a file browser so you can bring files from your working",
+    "directory into the conversation as background context. An optional box at the",
+    "bottom of the window lets you filter the list by name. The files are not loaded",
+    "into R: the AI is told the file names and paths, and the column names of data",
+    "files, so that its code is accurate (for example, when reading your data). The",
+    "data values themselves are not sent."
+  ),
+  add_objects = paste(
+    "Select objects — Lets you choose objects from your current R workspace to share",
+    "as context with the AI. You can narrow the list by name, or by type, using R",
+    "classes (such as sf or integer) or plain words (such as mappable, data table",
+    "or model). A structural summary of each object is shared — names, types,",
+    "dimensions and column names — never the data values."
+  ),
+  load_package_data = paste(
+    "Load Package Data — Opens a list of the data that comes with Classmate (for",
+    "example the chicago census-tract data). Tick what you want and press Load: it",
+    "is loaded into your R workspace and added to the context for your prompt, so you",
+    "can ask questions about it straight away. If you already have an object with the",
+    "same name you are asked before it is replaced."
+  ),
+  load_workspace = paste(
+    "Load Workspace — Loads a saved R workspace file (.RData, .rda or .rds) into",
+    "your current R session, making its objects available as context."
+  ),
+  remove_context = paste(
+    "Remove Checked — Removes the ticked files and objects from the context.",
+    "This button appears once you have added something."
+  ),
+  remove_all_context = paste(
+    "Remove All — Clears all attached files and objects from the context.",
+    "This button appears once you have added something."
+  ),
+  run_code = paste(
+    "Run — Executes the code currently in the editor. Results and any plots",
+    "appear in the R output tab. If the code runs successfully it is added to",
+    "Past Code and your code log."
+  ),
+  explain_code = paste(
+    "Explain — Asks the AI to explain the current code or R output. On the",
+    "Code tab it explains what the code does; on the R output tab it interprets",
+    "what the results mean. If you have highlighted a passage in an explanation",
+    "window, it unpacks that specific part in more detail."
+  ),
+  fix_code = paste(
+    "Fix — Available after a failed run. Asks the AI to diagnose the error and",
+    "produce corrected code. The fix is applied to the editor and run automatically.",
+    "If the fix does not work you can try again, or cancel to restore the original code."
+  ),
+  load_script = paste(
+    "Load Script — Opens a file browser so you can load an existing R script",
+    "from your project folder into the Code editor. Only available on the Code tab.",
+    "Scripts longer than the code-length limit set by your key will be refused."
+  ),
+  save_block = paste(
+    "Save Code Block — Saves the code currently in the editor to a named .R",
+    "file in your project folder (using the code description as the filename) and",
+    "opens it in RStudio."
+  ),
+  code_saved_notebook = paste(
+    "Code saved to Notebook — This message confirms that the code you just ran",
+    "has been added to the Code Log for this conversation.",
+    "The log is saved as an R Notebook (.Rmd file) in your project folder",
+    "and opened in RStudio automatically whenever you start a New Conversation,",
+    "use Save, or use Quit with Code Log.",
+    "One notebook is created per conversation: starting a New Conversation",
+    "saves and closes the current notebook and begins a fresh one for the next",
+    "conversation. This means you always have a clean, timestamped record of",
+    "every piece of code that was successfully run in each conversation."
+  ),
+  quick_console = paste(
+    "Quick Console — Opens a small R console inside the app where you can run",
+    "R code directly, inspect objects, or create new variables — all within the",
+    "same workspace and project folder as the main app. The rest of the app is",
+    "frozen while the Quick Console is open. Close it when you are done to return",
+    "to the app. Typing q() or quit() will just close the Quick Console, not end",
+    "your R session, and Classmate's own functions (talk(), whisper() and so on)",
+    "are not available there — run those from your main R console.",
+    "Along the bottom of the Quick Console, Clear output wipes the displayed history;",
+    "Clear Workspace removes every object from your R workspace — the equivalent of",
+    "rm(list = ls()) — and cannot be undone; and Change Working Directory lets you",
+    "pick a new working directory in a point-and-click folder browser. Typing",
+    "setwd() in the console does the same. The folder you choose is used for running",
+    "code and saving files, and your R session (for example RStudio) is switched to it",
+    "when you leave Classmate."
+  ),
+  pause_app = paste(
+    "Save — Saves your entire session — conversation history, code, context, and",
+    "preferences — and closes Classmate. Your code log is saved too. Reopen the app",
+    "with talk() to pick up exactly where you left off.",
+    "Use this if you want to take a longer break and return to the same conversation later.",
+    "For a quick step out to run some R code, use Quick Console instead."
+  ),
+  new_conversation = paste(
+    "New Conversation — Starts a fresh session, clearing the Code editor,",
+    "R output, Past code, and Past prompts. The current conversation is saved",
+    "to Past conversations and the code log is saved automatically.",
+    "Each new conversation counts towards the limit set by your key; the number",
+    "remaining is shown beneath this button."
+  ),
+  quit = paste(
+    "Quit with Code Log — Closes Classmate and saves your code log as an R Notebook",
+    "(.Rmd), which opens in your editor. Your session is not kept for resuming (use",
+    "Save for that), and your R workspace is not affected."
+  ),
+
+  # Buttons inside Explanation and Fix windows
+  tell_more = paste(
+    "Tell Me More — Available in Explanation windows after highlighting a",
+    "passage of text. Asks the AI to go a little deeper into just that passage —",
+    "clarifying it, adding detail, or giving a brief example — without",
+    "introducing new topics."
+  ),
+  explain_regenerate = paste(
+    "Regenerate — Requests a fresh explanation at the currently selected detail",
+    "level. Useful if you have changed the level dropdown since the last explanation",
+    "was generated."
+  ),
+  explain_close = "Close — Closes the Explanation window.",
+  fix_cancel    = "Cancel — Abandons the current fix attempt and restores the original code.",
+  fix_retry     = "Continue Fixing — Asks the AI to try again after an unsuccessful fix attempt."
+)
+
+HELP_TAB_TEXTS <- list(
+  "Your prompt" = paste(
+    "Your Prompt tab — This is where you type your question or instruction for the AI.",
+    "Once submitted with Ask (no code) or Ask for Code, the prompt box clears ready for the next step."
+  ),
+  "Past prompts" = paste(
+    "Past Prompts tab — Shows a history of all the prompts you have sent to the AI",
+    "in this conversation. Use the Repeat button beside an entry to copy it back",
+    "into the prompt box."
+  ),
+  "Past conversations" = paste(
+    "Past Conversations tab — Appears once you have started a New Conversation and",
+    "lists your earlier conversations. Choose one to restore its prompts, code and",
+    "output; your current conversation is saved first."
+  ),
+  "Code" = paste(
+    "Code tab — Contains the R code editor. Code generated by Ask for Code appears here",
+    "for you to review. You can also type or paste code directly. Press Run to execute it."
+  ),
+  "R output" = paste(
+    "R Output tab — Displays the results of running your code: printed values, tables,",
+    "statistical summaries, and plots. When more than one type of output is produced,",
+    "separate Plots, Results, and Warnings sub-tabs appear."
+  ),
+  "Past code" = paste(
+    "Past Code tab — A record of every code block that has been run successfully in",
+    "this conversation. Use the Repeat button next to any entry to reload that code",
+    "into the editor."
+  ),
+  "Changes" = paste(
+    "Changes tab — Appears when the AI makes targeted edits to existing code.",
+    "Shows the new version alongside the previous version, with changed lines",
+    "highlighted in yellow, so you can see exactly what was altered."
+  ),
+  "Plots" = paste(
+    "Plots sub-tab — Image output from your code, shown as thumbnails.",
+    "Click any thumbnail to expand it to full size."
+  ),
+  "Results" = paste(
+    "Results sub-tab — The printed text output from running the code: values,",
+    "data summaries, model output, and any messages printed to the console."
+  ),
+  "Warnings" = paste(
+    "Warnings sub-tab — Any warning messages produced when the code ran.",
+    "Warnings do not stop the code from running but may indicate something",
+    "worth checking, such as missing values or a coordinate reference system mismatch."
+  )
+)
+
+# Buttons that are on the main screen but are handled by their own observer
+# (they open their own explanatory window), so need no entry in HELP_TEXTS.
+# "tell_more_ok" is the OK button of the "More detail" popup, which sits above
+# the help overlay and so behaves normally in Help mode.
+HELP_EXEMPT <- c("usage_help", "about_classmate", "tell_more_ok")
+
+# Generated ids that follow a pattern (e.g. one Repeat button per past code block).
+HELP_ID_PATTERNS <- list(
+  "^re_run_" = paste(
+    "Repeat — Re-loads this previously generated code block into the Code",
+    "editor so you can run it again or use it as a starting point."
+  )
+)
+
 server <- function(input, output, session) {
 
   # Show a clean "session ended" page, then stop after 400 ms so the JS has
@@ -1885,7 +2406,7 @@ server <- function(input, output, session) {
   # --- App mode and usage state ----------------------------------------------
   # Restore student mode from the previously saved config (survives restarts).
   .saved_cfg       <- tryCatch(readRDS(active_cfg_path()), error = function(e) NULL)
-  .resuming_pause  <- file.exists(PAUSE_FILE)   # checked before pause state is consumed
+  .resuming_pause  <- file.exists(pause_file())   # checked before pause state is consumed
   if (.resuming_pause) {
     session$onFlushed(function() {
       shinyjs::runjs("
@@ -1898,9 +2419,9 @@ server <- function(input, output, session) {
   reset_period_val      <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$reset_period      else "weekly")
   final_expiry_val      <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$final_expiry      else NULL)
   max_conversations_val <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$max_conversations else NULL)
-  # Code-length cap set by the key (Inf = unlimited). Keys made before this
-  # field existed fall back to the old student ceiling of 100 lines.
-  max_lines_cap_val     <- reactiveVal(if (!is.null(.saved_cfg)) (.saved_cfg$max_lines %||% 100) else 100)
+  # Code length is set by the key (Inf = unlimited) and is not a user choice.
+  # Keys made before this field existed fall back to 50 lines.
+  max_lines_cap_val     <- reactiveVal(if (!is.null(.saved_cfg)) (.saved_cfg$max_lines %||% 50) else 50)
   usage_log_rv    <- reactiveVal(read_usage_log())
 
   # Show disclaimer once per R session for student users (not on pause resume).
@@ -2092,9 +2613,9 @@ server <- function(input, output, session) {
     reset_period_val(     payload$reset_period)
     final_expiry_val(     payload$final_expiry)
     max_conversations_val(payload$max_conversations)
-    new_cap <- payload$max_lines %||% 100
+    new_cap <- payload$max_lines %||% 50
     max_lines_cap_val(new_cap)
-    if (isolate(prefs$max_lines) > new_cap) prefs$max_lines <- new_cap
+    prefs$max_lines <- new_cap
     on_success()
     if (!isTRUE(getOption(".classmate_disclaimer_shown"))) {
       show_student_disclaimer()
@@ -2417,7 +2938,7 @@ server <- function(input, output, session) {
     if (ui_busy()) {
       for (btn in c("ask_plain", "ask_code", "explain_code", "fix_code", "run_code",
                     "load_script", "save_block", "help_toggle",
-                    "quick_console", "pause_app", "clear_workspace", "new_conversation", "quit"))
+                    "quick_console", "pause_app", "new_conversation", "quit"))
         shinyjs::disable(btn)
       return()
     }
@@ -2457,8 +2978,8 @@ server <- function(input, output, session) {
     if (protection_notice_active()) {
       for (btn in c("ask_plain", "ask_code", "explain_code", "fix_code", "run_code",
                     "load_script", "save_block", "help_toggle",
-                    "quick_console", "pause_app", "clear_workspace", "new_conversation",
-                    "add_objects", "remove_context", "remove_all_context",
+                    "quick_console", "pause_app", "new_conversation",
+                    "add_objects", "load_package_data", "remove_context", "remove_all_context",
                     "preferences", "load_key_file_btn",
                     "file_select", "load_workspace"))
         shinyjs::disable(btn)
@@ -2475,7 +2996,7 @@ server <- function(input, output, session) {
       document.getElementById('clear_prompt').style.color = '';
     ")
     for (btn in c("help_toggle", "quick_console", "pause_app",
-                  "add_objects", "preferences", "load_key_file_btn",
+                  "add_objects", "load_package_data", "preferences", "load_key_file_btn",
                   "file_select", "load_workspace"))
       shinyjs::enable(btn)
     if (!exceeded) {
@@ -2513,6 +3034,15 @@ server <- function(input, output, session) {
 
   # --- Help mode -------------------------------------------------------------
   help_mode <- reactiveVal(FALSE)
+
+  # Remove buttons only appear when there is something to remove (and in help
+  # mode, so that they can still be explained).
+  observe({
+    show_remove <- length(selected_files()) > 0 || length(selected_objects()) > 0 ||
+                   isTRUE(help_mode())
+    shinyjs::toggle("remove_context",     condition = show_remove)
+    shinyjs::toggle("remove_all_context", condition = show_remove)
+  })
 
   observeEvent(input$help_toggle, {
     new_state <- !help_mode()
@@ -2575,180 +3105,16 @@ server <- function(input, output, session) {
     ))
   })
 
-  help_text_for <- function(btn_id) {
-    texts <- list(
-      help_toggle      = "You are in Help mode. Click any active button to read what it does. Press ❓ again to return to normal.",
-      ask_plain        = paste(
-        "Ask — Send a prompt to the AI. If the response includes R code, it is run",
-        "immediately and the result appears in the R output tab. The code is saved to",
-        "your code log but is not placed in the editor. Use Ask for quick one-step",
-        "tasks where you want to see the output straight away."
-      ),
-      ask_code         = paste(
-        "Ask for Code — Send a prompt to the AI and have the generated code placed",
-        "in the Code editor for you to inspect before running. Press Run when you are",
-        "ready to execute it. Use Ask for Code when you want to review or edit the code",
-        "first."
-      ),
-      clear_prompt     = "Clear — Erases all text in the prompt box.",
-      run_code         = paste(
-        "Run — Executes the code currently in the editor. Results and any plots",
-        "appear in the R output tab. If the code runs successfully it is added to",
-        "Past Code and your code log."
-      ),
-      explain_code     = paste(
-        "Explain — Asks the AI to explain the current code or R output. On the",
-        "Code tab it explains what the code does; on the R output tab it interprets",
-        "what the results mean. If you have highlighted a passage in an explanation",
-        "window, it unpacks that specific part in more detail."
-      ),
-      fix_code         = paste(
-        "Fix — Available after a failed run. Asks the AI to diagnose the error and",
-        "produce corrected code. The fix is applied to the editor and run automatically.",
-        "If the fix does not work you can try again, or cancel to restore the original code."
-      ),
-      load_script      = paste(
-        "Load Script — Opens a file browser so you can load an existing R script",
-        "from your project folder into the Code editor. Only available on the Code tab.",
-        "Scripts longer than the current code-length limit will be refused."
-      ),
-      code_saved_notebook = paste(
-        "Code saved to Notebook — This message confirms that the code you just ran",
-        "has been added to the Code Log for this conversation.",
-        "The log is saved as an R Notebook (.Rmd file) in your project folder",
-        "and opened in RStudio automatically whenever you start a New Conversation,",
-        "Pause, or Quit the app.",
-        "One notebook is created per conversation: starting a New Conversation",
-        "saves and closes the current notebook and begins a fresh one for the next",
-        "conversation. This means you always have a clean, timestamped record of",
-        "every piece of code that was successfully run in each conversation."
-      ),
-      save_block       = paste(
-        "Save Code Block — Saves the code currently in the editor to a named .R",
-        "file in your project folder (using the code description as the filename) and",
-        "opens it in RStudio."
-      ),
-      quick_console    = paste(
-        "Quick Console — Opens a small R console inside the app where you can run",
-        "R code directly, inspect objects, or create new variables — all within the",
-        "same workspace as the main app. The rest of the app is frozen while the",
-        "Quick Console is open. Close it when you are done to return to the app.",
-        "Note: typing q() or quit() will just close the Quick Console, not end your R session."
-      ),
-      pause_app        = paste(
-        "Save & Pause — Saves your entire session — conversation history, code,",
-        "context, and preferences — and closes Classmate. Reopen the app with talk()",
-        "to pick up exactly where you left off.",
-        "Use this if you want to take a longer break and return to the same conversation later.",
-        "For a quick step out to run some R code, use Quick Console instead."
-      ),
-      clear_workspace  = paste(
-        "Clear Workspace — Removes all R objects from your global environment",
-        "(.GlobalEnv). This is the equivalent of running rm(list = ls()) in the console.",
-        "Use with care — this cannot be undone."
-      ),
-      new_conversation = paste(
-        "New Conversation — Starts a fresh session, clearing the Code editor,",
-        "R output, Past code, and Past prompts. The current conversation is saved",
-        "to Past conversations and the code log is saved automatically."
-      ),
-      quit             = paste(
-        "Quit — Closes Classmate. Your code notebook (.Rmd) is saved",
-        "automatically and opened in your editor. Your R workspace is not affected."
-      ),
-      file_select      = paste(
-        "Add Files — Opens a file browser so you can attach files from your project",
-        "folder as background context. The AI can see the filenames and their paths and",
-        "will use them to inform its code (for example, when reading data)."
-      ),
-      add_objects      = paste(
-        "Add Objects — Lets you choose objects from your current R workspace to",
-        "share as context with the AI. A structural summary of each object is included,",
-        "so the AI can see column names, data types, dimensions, and so on."
-      ),
-      remove_context   = "Remove Checked — Removes the ticked files from the context list.",
-      remove_all_context = "Remove All — Clears all attached files from the context.",
-      load_workspace   = paste(
-        "Load Workspace — Loads a saved R workspace file (.RData or .rda) into your",
-        "current R session, making its objects available as context."
-      ),
-      preferences      = paste(
-        "Preferences — Opens the preferences panel where you can set your preferred",
-        "coding style (base R, tidyverse, data.table), plotting library, mapping package,",
-        "maximum code length, image export format and quality, and comment density."
-      ),
-      tell_more        = paste(
-        "Tell Me More — Available in Explanation windows after highlighting a",
-        "passage of text. Asks the AI to go a little deeper into just that passage —",
-        "clarifying it, adding detail, or giving a brief example — without",
-        "introducing new topics."
-      ),
-      explain_regenerate = paste(
-        "Regenerate — Requests a fresh explanation at the currently selected detail",
-        "level. Useful if you have changed the level dropdown since the last explanation",
-        "was generated."
-      ),
-      explain_close    = "Close — Closes the Explanation window.",
-      fix_cancel       = "Cancel — Abandons the current fix attempt and restores the original code.",
-      fix_retry        = "Continue Fixing — Asks the AI to try again after an unsuccessful fix attempt."
-    )
-    # Dynamically-generated Repeat buttons in Past Code
-    if (grepl("^re_run_", btn_id))
-      return(paste(
-        "Repeat — Re-loads this previously generated code block into the Code",
-        "editor so you can run it again or use it as a starting point."
-      ))
-
-    # Tab headers (prefixed with tab__ by the JS overlay)
+  help_text_for <- function(btn_id, label = "") {
+    for (pat in names(HELP_ID_PATTERNS))
+      if (grepl(pat, btn_id)) return(HELP_ID_PATTERNS[[pat]])
     if (startsWith(btn_id, "tab__")) {
       tab_val <- sub("^tab__", "", btn_id)
-      tab_help <- list(
-        "Your prompt"  = paste(
-          "Your Prompt tab — This is where you type your question or instruction for the AI.",
-          "Once submitted with Ask or Ask for Code, the prompt box clears ready for the next step."
-        ),
-        "Past prompts" = paste(
-          "Past Prompts tab — Shows a history of all the prompts you have sent to the AI",
-          "in this conversation. Click any entry to copy it back into the prompt box."
-        ),
-        "Code"         = paste(
-          "Code tab — Contains the R code editor. Code generated by Ask for Code appears here",
-          "for you to review. You can also type or paste code directly. Press Run to execute it."
-        ),
-        "R output"     = paste(
-          "R Output tab — Displays the results of running your code: printed values, tables,",
-          "statistical summaries, and plots. When more than one type of output is produced,",
-          "separate Results, Plots, and Warnings sub-tabs appear."
-        ),
-        "Past code"    = paste(
-          "Past Code tab — A record of every code block that has been run successfully in",
-          "this conversation. Use the Repeat button next to any entry to reload that code",
-          "into the editor."
-        ),
-        "Changes"      = paste(
-          "Changes tab — Appears when the AI makes targeted edits to existing code.",
-          "Shows the new version alongside the previous version, with changed lines",
-          "highlighted in yellow, so you can see exactly what was altered."
-        ),
-        "Results"      = paste(
-          "Results sub-tab — The printed text output from running the code: values,",
-          "data summaries, model output, and any messages printed to the console."
-        ),
-        "Plots"        = paste(
-          "Plots sub-tab — Image output from your code, shown as thumbnails.",
-          "Click any thumbnail to expand it to full size."
-        ),
-        "Warnings"     = paste(
-          "Warnings sub-tab — Any warning messages produced when the code ran.",
-          "Warnings do not stop the code from running but may indicate something",
-          "worth checking, such as missing values or a coordinate reference system mismatch."
-        )
-      )
-      return(tab_help[[tab_val]] %||% paste0("Tab: ", tab_val, "."))
+      return(HELP_TAB_TEXTS[[tab_val]] %||% paste0("The ", tab_val, " tab."))
     }
-
-    texts[[btn_id]] %||% paste0(
-      "No help available for this button (id: ", btn_id, ")."
+    HELP_TEXTS[[btn_id]] %||% paste0(
+      if (nzchar(label)) paste0(label, " — ") else "",
+      "no detailed help is available for this button yet."
     )
   }
 
@@ -2758,7 +3124,8 @@ server <- function(input, output, session) {
     req(nzchar(btn_id %||% ""))
     showModal(modalDialog(
       title     = "Help",
-      tags$p(help_text_for(btn_id), style = "line-height: 1.6;"),
+      tags$p(help_text_for(btn_id, trimws(input$help_button_clicked$label %||% "")),
+             style = "line-height: 1.6;"),
       footer    = modalButton("OK"),
       easyClose = TRUE
     ))
@@ -2957,24 +3324,24 @@ server <- function(input, output, session) {
   })
 
   # --- File browser and workspace object picker -----------------------------
-  volumes     <- build_volumes()
-  default_loc <- compute_default_root_and_path(volumes, wd = PROJECT_ROOT)
+  volumes <- build_volumes()
+  dialog_roots <- function() file_dialog_roots(volumes)
 
-  shinyFileChoose(input, "file_select", roots = volumes, session = session,
-                   defaultRoot = default_loc$root, defaultPath = default_loc$path)
+  shinyFileChoose(input, "file_select", roots = dialog_roots, session = session,
+                   defaultRoot = "Working directory", defaultPath = "")
 
   observeEvent(input$file_select, {
-    file_info <- parseFilePaths(volumes, input$file_select)
+    file_info <- parseFilePaths(dialog_roots(), input$file_select)
     if (nrow(file_info) > 0)
       selected_files(union(selected_files(), file_info$datapath))
   })
 
-  shinyFileChoose(input, "load_workspace", roots = volumes, session = session,
-                   defaultRoot = default_loc$root, defaultPath = default_loc$path,
+  shinyFileChoose(input, "load_workspace", roots = dialog_roots, session = session,
+                   defaultRoot = "Working directory", defaultPath = "",
                    filetypes = c("RData", "rda", "rds"))
 
   observeEvent(input$load_workspace, {
-    file_info <- parseFilePaths(volumes, input$load_workspace)
+    file_info <- parseFilePaths(dialog_roots(), input$load_workspace)
     if (nrow(file_info) > 0) {
       path <- file_info$datapath[[1]]
       tryCatch(
@@ -2986,12 +3353,12 @@ server <- function(input, output, session) {
     }
   })
 
-  shinyFileChoose(input, "load_script", roots = volumes, session = session,
-                   defaultRoot = default_loc$root, defaultPath = default_loc$path,
+  shinyFileChoose(input, "load_script", roots = dialog_roots, session = session,
+                   defaultRoot = "Working directory", defaultPath = "",
                    filetypes = c("R", "r"))
 
   observeEvent(input$load_script, {
-    file_info <- parseFilePaths(volumes, input$load_script)
+    file_info <- parseFilePaths(dialog_roots(), input$load_script)
     if (nrow(file_info) == 0) return()
     path <- file_info$datapath[[1]]
     fname <- basename(path)
@@ -3035,25 +3402,159 @@ server <- function(input, output, session) {
     updateTabsetPanel(session, "main_tabs", selected = "Code")
   })
 
-  output$obj_picker_list <- renderUI({
-    filter_text <- tolower(trimws(if (is.null(input$obj_filter)) "" else input$obj_filter))
+  # --- Load Package Data -------------------------------------------------------
+  # Data that ships inside Classmate (listed from the package's own data index,
+  # so any dataset added later appears automatically).
+  pkg_datasets <- function() {
+    res <- tryCatch(utils::data(package = "classmate")$results, error = function(e) NULL)
+    if (is.null(res) || nrow(res) == 0) return(NULL)
+    data.frame(name  = sub(" \\(.*$", "", res[, "Item"]),
+               title = res[, "Title"], stringsAsFactors = FALSE)
+  }
+  pkg_dataset_value <- function(nm) {
+    e <- new.env()
+    utils::data(list = nm, package = "classmate", envir = e)
+    get(nm, envir = e)
+  }
+  describe_pkg_dataset <- function(nm) {
+    o <- tryCatch(pkg_dataset_value(nm), error = function(e) NULL)
+    if (is.null(o)) return("")
+    paste0(class(o)[1],
+           if (!is.null(dim(o)) && length(dim(o)) == 2)
+             paste0(", ", nrow(o), " rows x ", ncol(o), " columns") else "")
+  }
+  pkgdata_pending <- reactiveVal(character(0))
+
+  do_load_pkg_data <- function(nms) {
+    ok <- vapply(nms, function(nm)
+      tryCatch({ utils::data(list = nm, package = "classmate", envir = .GlobalEnv); TRUE },
+               error = function(e) FALSE), logical(1))
+    removeModal()
+    if (any(ok)) {
+      loaded <- nms[ok]
+      selected_objects(union(selected_objects(), loaded))
+      showNotification(paste0("Loaded ", paste(loaded, collapse = ", "),
+                              " into your workspace and added it to the context."),
+                       type = "message", duration = 6)
+    }
+    if (any(!ok))
+      showNotification(paste("Could not load:", paste(nms[!ok], collapse = ", ")),
+                       type = "error", duration = 8)
+  }
+
+  observeEvent(input$load_package_data, {
+    ds <- pkg_datasets()
+    if (is.null(ds)) {
+      showNotification("No data is packaged with Classmate.", type = "warning", duration = 5)
+      return(invisible(NULL))
+    }
+    showModal(modalDialog(
+      title = "Load package data",
+      tags$p("Choose data that comes with Classmate. It is loaded into your R",
+             "workspace and added to the context for your prompt."),
+      checkboxGroupInput("pkgdata_choice", NULL,
+        choiceNames = lapply(seq_len(nrow(ds)), function(i)
+          tagList(tags$strong(ds$name[i]), " \u2014 ", ds$title[i],
+                  tags$br(),
+                  tags$span(style = "color: #888; font-size: 0.85em;",
+                            describe_pkg_dataset(ds$name[i])))),
+        choiceValues = ds$name,
+        selected = if (nrow(ds) == 1) ds$name else character(0)),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("pkgdata_load", "Load", class = "btn-primary")
+      ),
+      easyClose = FALSE
+    ))
+  })
+
+  observeEvent(input$pkgdata_load, {
+    chosen <- input$pkgdata_choice
+    if (length(chosen) == 0) {
+      showNotification("Tick at least one dataset to load.", type = "warning", duration = 4)
+      return(invisible(NULL))
+    }
+    # Never silently overwrite the student's own object of the same name
+    conflicts <- Filter(function(nm)
+      exists(nm, envir = .GlobalEnv, inherits = FALSE) &&
+        !identical(get(nm, envir = .GlobalEnv), tryCatch(pkg_dataset_value(nm), error = function(e) NULL)),
+      chosen)
+    if (length(conflicts) > 0) {
+      pkgdata_pending(chosen)
+      showModal(modalDialog(
+        title = "Replace existing objects?",
+        tags$p("Your workspace already has ", tags$strong(paste(conflicts, collapse = ", ")),
+               " with different contents. Loading the package data will replace ",
+               if (length(conflicts) == 1) "it." else "them."),
+        footer = tagList(
+          modalButton("Cancel"),
+          actionButton("pkgdata_replace", "Replace and load", class = "btn-warning")
+        ),
+        easyClose = FALSE
+      ))
+      return(invisible(NULL))
+    }
+    do_load_pkg_data(chosen)
+  })
+  observeEvent(input$pkgdata_replace, do_load_pkg_data(pkgdata_pending()))
+
+  obj_pick_sel <- reactiveVal(character(0))
+
+  obj_pick_matches <- reactive({
+    name_filter <- tolower(trimws(input$obj_filter %||% ""))
     all_objs    <- ls(envir = .GlobalEnv)
-    if (length(all_objs) == 0) return(tags$p(em("No objects in workspace yet.")))
-    matched <- if (nzchar(filter_text))
-      all_objs[grepl(filter_text, tolower(all_objs), fixed = TRUE)]
-    else
-      all_objs
-    if (length(matched) == 0) return(tags$p(em("No objects match the filter.")))
-    div(style = "max-height: 300px; overflow-y: auto;",
-      checkboxGroupInput("obj_picker_checked", label = NULL,
-                          choices = matched, selected = character(0))
+    by_name <- if (nzchar(name_filter))
+      all_objs[grepl(name_filter, tolower(all_objs), fixed = TRUE)]
+    else all_objs
+    tf <- filter_objects_by_type(by_name, input$obj_type_filter %||% "")
+    list(n_all = length(all_objs), matched = tf$matched, unrecognised = tf$unrecognised)
+  })
+
+  output$obj_picker_list <- renderUI({
+    m <- obj_pick_matches()
+    if (m$n_all == 0) return(tags$p(em("No objects in workspace yet.")))
+    if (length(m$matched) == 0) {
+      if (length(m$unrecognised) > 0)
+        return(tags$p(em(paste0(
+          "Classmate does not recognise '", paste(m$unrecognised, collapse = "', '"),
+          "' as an object type. Try, for example: sf, raster, data table, mappable, ",
+          "model, text, number, function."))))
+      return(tags$p(em("No objects match the filters.")))
+    }
+    cls <- vapply(m$matched, function(nm)
+      tryCatch(class(get(nm, envir = .GlobalEnv))[1], error = function(e) ""), character(1))
+    div(
+      if (length(m$unrecognised) > 0)
+        tags$p(style = "color: #b45f06; font-size: 0.85em;",
+          paste0("Not recognised as a type: '", paste(m$unrecognised, collapse = "', '"), "'.")),
+      div(style = "max-height: 300px; overflow-y: auto;",
+        checkboxGroupInput("obj_picker_checked", label = NULL,
+          choiceNames = lapply(seq_along(m$matched), function(i)
+            tagList(m$matched[i],
+                    tags$span(style = "color: #888; font-size: 0.85em;",
+                              if (nzchar(cls[i])) paste0("  (", cls[i], ")") else ""))),
+          choiceValues = m$matched,
+          selected = intersect(isolate(obj_pick_sel()), m$matched))
+      )
     )
   })
 
+  # Keep ticks while the filters change: update only the currently visible items
+  observeEvent(input$obj_picker_checked, {
+    vis <- isolate(obj_pick_matches()$matched)
+    obj_pick_sel(union(setdiff(obj_pick_sel(), vis), input$obj_picker_checked %||% character(0)))
+  }, ignoreNULL = FALSE)
+
   observeEvent(input$add_objects, {
+    obj_pick_sel(character(0))
     showModal(modalDialog(
-      title = "Add workspace objects as context",
+      title = "Select workspace objects as context",
       textInput("obj_filter", "Filter by name:", value = "", placeholder = "Type to filter..."),
+      textInput("obj_type_filter", "Filter by type:", value = "",
+                placeholder = "e.g. sf, data table, mappable, model"),
+      tags$p(style = "color: #888; font-size: 0.85em; margin-top: -8px;",
+        "Optional. Use R classes (sf, raster, integer, list) or plain words",
+        "(mappable, data table, text, number, function). Separate several with commas."),
       uiOutput("obj_picker_list"),
       footer = tagList(
         modalButton("Cancel"),
@@ -3063,7 +3564,7 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$confirm_add_objects, {
-    to_add <- input$obj_picker_checked
+    to_add <- obj_pick_sel()
     if (!is.null(to_add) && length(to_add) > 0)
       selected_objects(union(selected_objects(), to_add))
     removeModal()
@@ -3121,28 +3622,10 @@ server <- function(input, output, session) {
     removeModal()
   })
 
-  observeEvent(input$clear_workspace, {
-    showModal(modalDialog(
-      title = "Clear workspace?",
-      "Are you sure? This will remove all objects from the R workspace (rm(list = ls())).",
-      footer = tagList(
-        modalButton("Cancel"),
-        actionButton("confirm_clear_workspace", "Yes, clear workspace",
-          style = "background-color: #e67e22; border-color: #ca6f1e; color: white;")
-      )
-    ))
-  })
-
-  observeEvent(input$confirm_clear_workspace, {
-    rm(list = ls(envir = .GlobalEnv), envir = .GlobalEnv)
-    selected_objects(character(0))
-    removeModal()
-  })
-
   # --- Restore paused state (if any) ----------------------------------------
-  ps <- if (file.exists(PAUSE_FILE)) {
-    saved <- tryCatch(readRDS(PAUSE_FILE), error = function(e) NULL)
-    unlink(PAUSE_FILE)
+  ps <- if (file.exists(pause_file())) {
+    saved <- tryCatch(readRDS(pause_file()), error = function(e) NULL)
+    unlink(pause_file())
     saved
   } else NULL
 
@@ -3162,9 +3645,9 @@ server <- function(input, output, session) {
 
   # log_path is generated fresh each time Save Code Log is pressed (date-time stamped)
   make_log_path <- function()
-    file.path(PROJECT_ROOT,
+    file.path(project_root(),
       paste0("classmate_log_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".Rmd"))
-  log_path <- reactiveVal(file.path(PROJECT_ROOT, "classmate_log.Rmd"))  # placeholder
+  log_path <- reactiveVal(file.path(project_root(), "classmate_log.Rmd"))  # placeholder
 
   clarify_restore_prompt <- reactiveVal("")
 
@@ -3323,7 +3806,7 @@ server <- function(input, output, session) {
     img_format      = pref_val("img_format",       "png"),
     img_quality     = pref_val("img_quality",      "Medium"),
     img_size        = pref_val("img_size",         "Journal double col. (180x120 mm)"),
-    max_lines       = min(pref_val("max_lines",    50), isolate(max_lines_cap_val())),
+    max_lines       = isolate(max_lines_cap_val()),
     comment_density = pref_val("comment_density",  "Minimal"),
     language        = {
       .lp <- file.path(tools::R_user_dir("classmate", "config"), "language.rds")
@@ -3388,16 +3871,13 @@ server <- function(input, output, session) {
       tags$h5("Code style"),
       fluidRow(
         column(6,
-          selectInput("pref_max_lines", "Maximum code length (lines):",
-            choices = {
-              cap  <- isolate(max_lines_cap_val())
-              opts <- sort(unique(c(Filter(function(x) x <= cap, c(25, 50, 75, 100)),
-                                    if (is.finite(cap)) cap)))
-              ch <- setNames(opts, paste(opts, "lines"))
-              if (is.infinite(cap)) ch <- c(ch, "Unlimited" = Inf)
-              ch
-            },
-            selected = prefs$max_lines)
+          tags$label("Maximum code length:"),
+          tags$p(
+            style = "margin: 6px 0 0 0;",
+            tags$strong(if (is.infinite(isolate(max_lines_cap_val()))) "Unlimited"
+                        else paste(isolate(max_lines_cap_val()), "lines")),
+            tags$span(style = "color: #888;", " (set by your key)")
+          )
         ),
         column(6,
           selectInput("pref_comment_density", "Comments in generated code:",
@@ -3406,9 +3886,9 @@ server <- function(input, output, session) {
         )
       ),
       tags$p(em(
-        "Maximum length is a soft target: Claude will aim to stay within it but may",
-        "exceed it when the task genuinely requires more. Scripts you load directly",
-        "will also generate a warning if they exceed this limit.",
+        "Maximum length is set by your key. It is a soft target: Claude will aim to stay",
+        "within it but may exceed it when the task genuinely requires more. Scripts you",
+        "load directly will also generate a warning if they exceed this limit.",
         "Comment levels — None: no comments at all; Minimal: brief section markers only",
         "(e.g. '# Load data'); Most: section markers plus short notes on non-obvious lines.",
         "Even at Most, line-by-line commenting is avoided."
@@ -3464,7 +3944,7 @@ server <- function(input, output, session) {
     current <- prefs$language
     updateSelectInput(session, "lang_picker_select",
       choices  = langs,
-      selected = if (current %in% langs) current else if (length(langs) > 0) langs[[1]] else character(0))
+      selected = if (current %in% langs) current else character(0))
   }, ignoreNULL = FALSE)
 
   # OK — save selection and return to Preferences
@@ -3490,10 +3970,6 @@ server <- function(input, output, session) {
   observeEvent(input$pref_img_format,      { prefs$img_format      <- input$pref_img_format })
   observeEvent(input$pref_img_quality,     { prefs$img_quality     <- input$pref_img_quality })
   observeEvent(input$pref_img_size,        { prefs$img_size        <- input$pref_img_size })
-  observeEvent(input$pref_max_lines, {
-    v <- input$pref_max_lines
-    prefs$max_lines <- if (v == "Inf") Inf else as.integer(v)
-  })
   observeEvent(input$pref_comment_density, {
     old_density <- prefs$comment_density
     new_density <- input$pref_comment_density
@@ -3665,6 +4141,19 @@ server <- function(input, output, session) {
   # --- Quick Console ---------------------------------------------------------
   qc_history <- reactiveVal(list())  # list of list(input, output, is_error, plot_path)
 
+  # Current working directory, shown in the Quick Console; changes via the
+  # Change Working Directory button or setwd() in the console.
+  wd_rv <- reactiveVal(project_root())
+  note_wd_change <- function(path) {
+    wd_rv(path)
+    showNotification(paste("Working directory changed to", path),
+                     type = "message", duration = 6)
+  }
+  output$qc_wd_ui <- renderUI(
+    tags$p(style = "font-size: 0.8em; color: #555; margin: 0 0 4px 0;",
+           "Working directory: ", tags$code(wd_rv()))
+  )
+
   show_qc_modal <- function() {
     showModal(modalDialog(
       title = "Quick Console",
@@ -3681,12 +4170,15 @@ server <- function(input, output, session) {
         showLineNumbers = FALSE, highlightActiveLine = FALSE,
         hotkeys = list(run_key = list(win = "Ctrl-Return", mac = "Command-Return"))
       ),
+      uiOutput("qc_wd_ui"),
       tags$p(em(style = "font-size:0.8em; color:#888;",
         "Same workspace as the main app. ",
         "q() and quit() close the Quick Console, not your R session.")),
       footer = tagList(
         actionButton("qc_run",   "Run",         class = "btn-success"),
         actionButton("qc_clear", "Clear output", style = "margin-left: 4px;"),
+        actionButton("qc_clear_workspace", "Clear Workspace", style = "margin-left: 4px;"),
+        actionButton("qc_chdir", "Change Working Directory", style = "margin-left: 4px;"),
         tags$span(style = "flex: 1;"),
         modalButton("Close")
       ),
@@ -3716,7 +4208,7 @@ server <- function(input, output, session) {
     warnings_seen  <- character(0)
     console_output <- character(0)
     # Run in the user's project directory, not the Shiny app directory
-    old_wd <- setwd(PROJECT_ROOT)
+    old_wd <- setwd(project_root())
     on.exit(setwd(old_wd), add = TRUE)
     # Temporarily shadow q/quit/stopApp/ask in globalenv to intercept them
     .qc_classmate_fns <- c("talk", "whisper", "raisehand", "rh", "ssshh",
@@ -3737,7 +4229,7 @@ server <- function(input, output, session) {
     assign("stopApp", function(...) stop("__QC_STOPAPP__"), envir = .GlobalEnv)
     .qc_not_here_msg <- paste0(
       "This function is not available inside Classmate's Quick Console.\n",
-      "Please close or pause Classmate and run it from your main R console."
+      "Please leave Classmate (using Save or Quit with Code Log) and run it from your main R console."
     )
     for (.qc_fn in .qc_classmate_fns)
       assign(.qc_fn, local({ msg <- .qc_not_here_msg; function(...) message(msg) }), envir = .GlobalEnv)
@@ -3787,6 +4279,17 @@ server <- function(input, output, session) {
         return(list(output = "Timed out after 30 seconds. The operation was interrupted.", is_error = TRUE, plot_path = NULL))
       list(output = strip_ansi(msg), is_error = TRUE, plot_path = NULL)
     })
+    # If the code changed the working directory (setwd()), make that the new root
+    now_wd <- tryCatch(normalizePath(getwd(), winslash = "/"), error = function(e) NA_character_)
+    if (!is.na(now_wd) && !identical(now_wd, project_root())) {
+      r <- cm_set_root(now_wd)
+      if (isTRUE(r$ok) && isTRUE(r$changed)) {
+        result$wd_changed <- r$path
+        result$output <- paste0(
+          if (nzchar(trimws(result$output))) paste0(result$output, "\n") else "",
+          "[Classmate] Working directory is now ", r$path)
+      }
+    }
     result
   }
 
@@ -3823,6 +4326,7 @@ server <- function(input, output, session) {
     code <- isolate(input$qc_input %||% "")
     if (!nzchar(trimws(code))) return()
     result <- run_in_qc(code)
+    if (!is.null(result$wd_changed)) wd_rv(result$wd_changed)
     qc_history(c(qc_history(), list(list(
       input     = code,
       output    = result$output,
@@ -3855,6 +4359,118 @@ server <- function(input, output, session) {
 
   observeEvent(input$qc_clear, {
     qc_history(list())
+  })
+
+  add_qc_entry <- function(input, output, is_error = FALSE)
+    qc_history(c(qc_history(), list(list(
+      input = input, output = output, is_error = is_error, plot_path = NULL))))
+
+  # --- Clear Workspace (from the Quick Console) -------------------------------
+  observeEvent(input$qc_clear_workspace, {
+    showModal(modalDialog(
+      title = "Clear workspace?",
+      "Are you sure? This will remove all objects from the R workspace (rm(list = ls())).",
+      footer = tagList(
+        actionButton("qc_cw_cancel", "Cancel"),
+        actionButton("qc_cw_confirm", "Yes, clear workspace",
+          style = "background-color: #e67e22; border-color: #ca6f1e; color: white;")
+      ),
+      easyClose = FALSE
+    ))
+  })
+  observeEvent(input$qc_cw_cancel, show_qc_modal())
+  observeEvent(input$qc_cw_confirm, {
+    rm(list = ls(envir = .GlobalEnv), envir = .GlobalEnv)
+    selected_objects(character(0))
+    add_qc_entry("rm(list = ls())", "[Classmate] Workspace cleared.")
+    show_qc_modal()
+  })
+
+  # --- Change Working Directory (from the Quick Console) ----------------------
+  chdir_path <- reactiveVal(project_root())
+
+  show_chdir_modal <- function(start = project_root()) {
+    chdir_path(start)
+    showModal(modalDialog(
+      title = "Change working directory",
+      tags$p("Current working directory: ", tags$code(wd_rv())),
+      fluidRow(
+        column(9, textInput("chdir_text", NULL, value = start, width = "100%")),
+        column(3, actionButton("chdir_goto", "Go to", width = "100%"))
+      ),
+      div(style = "display: flex; gap: 6px; margin-bottom: 8px;",
+        actionButton("chdir_up",   "Up one level", class = "btn-sm"),
+        actionButton("chdir_home", "Home",         class = "btn-sm"),
+        actionButton("chdir_cur",  "Current folder", class = "btn-sm")
+      ),
+      uiOutput("chdir_list_ui"),
+      tags$p(style = "color: #888; font-size: 0.85em; margin-top: 6px;",
+        "Click a folder to open it, then press Use this folder.",
+        "Your R session (e.g. RStudio) will be switched to the same folder."),
+      footer = tagList(
+        actionButton("chdir_cancel", "Cancel"),
+        actionButton("chdir_use", "Use this folder", class = "btn-primary")
+      ),
+      easyClose = FALSE
+    ))
+  }
+
+  browse_to <- function(path) {
+    p <- tryCatch(normalizePath(path.expand(path), winslash = "/", mustWork = TRUE),
+                  error = function(e) NA_character_)
+    if (is.na(p) || !dir.exists(p)) {
+      showNotification("That folder could not be found.", type = "error", duration = 5)
+      return(invisible(FALSE))
+    }
+    chdir_path(p)
+    updateTextInput(session, "chdir_text", value = p)
+    invisible(TRUE)
+  }
+
+  output$chdir_list_ui <- renderUI({
+    p <- chdir_path()
+    dirs <- tryCatch(list.dirs(p, full.names = FALSE, recursive = FALSE),
+                     error = function(e) NULL, warning = function(w) NULL)
+    if (is.null(dirs))
+      return(tags$p(em("This folder cannot be read.")))
+    dirs <- sort(dirs[!startsWith(dirs, ".")])
+    div(
+      style = paste0("height: 240px; overflow-y: auto; border: 1px solid #ddd;",
+                     " border-radius: 4px; padding: 4px 8px; background: #fafafa;"),
+      if (length(dirs) == 0) tags$p(em("No sub-folders here."), style = "margin: 4px 0;")
+      else lapply(dirs, function(d)
+        tags$div(tags$a(href = "#", class = "cm-chdir-item", `data-name` = d,
+                        paste0("\U0001F4C1 ", d))))
+    )
+  })
+
+  observeEvent(input$qc_chdir, show_chdir_modal())
+  observeEvent(input$chdir_enter, browse_to(file.path(chdir_path(), input$chdir_enter$name)))
+  observeEvent(input$chdir_up,   browse_to(dirname(chdir_path())))
+  observeEvent(input$chdir_home, browse_to("~"))
+  observeEvent(input$chdir_cur,  browse_to(project_root()))
+  observeEvent(input$chdir_goto, browse_to(input$chdir_text %||% ""))
+  observeEvent(input$chdir_cancel, show_qc_modal())
+  observeEvent(input$chdir_use, {
+    target <- chdir_path()
+    r <- cm_set_root(target)
+    if (!isTRUE(r$ok)) {
+      showNotification(r$error %||% "Could not change the working directory.",
+                       type = "error", duration = 6)
+      return(invisible(NULL))
+    }
+    if (isTRUE(r$changed)) {
+      wd_rv(r$path)
+      add_qc_entry(paste0('setwd("', r$path, '")'),
+                   paste0("[Classmate] Working directory is now ", r$path))
+      if (!isTRUE(r$outputs_ok))
+        showNotification(paste("Classmate could not create an outputs folder in this",
+                               "directory; it may be read-only."),
+                         type = "warning", duration = 8)
+    } else {
+      add_qc_entry("# working directory unchanged", paste("[Classmate] Already in", r$path))
+    }
+    show_qc_modal()
   })
 
   # --- Ask for Code ----------------------------------------------------------
@@ -4773,6 +5389,7 @@ server <- function(input, output, session) {
 
   # Helper: after a run_result, update console output + plots, switch tabs
   handle_run_result <- function(run_result, stay_on_code = FALSE) {
+    if (!is.null(run_result$wd_changed)) note_wd_change(run_result$wd_changed)
     base_output <- run_result$output %||% character(0)
     if (!isTRUE(run_result$success)) {
       err_line <- sub("^Error running code:\\s*\\n?\\s*", "", run_result$message %||% "")
@@ -4819,8 +5436,8 @@ server <- function(input, output, session) {
       ),
       tags$ul(
         tags$li("start a ", tags$strong("New Conversation")),
-        tags$li(tags$strong("Pause"), " the app"),
-        tags$li(tags$strong("Quit"), " the app")
+        tags$li("use ", tags$strong("Save")),
+        tags$li("use ", tags$strong("Quit with Code Log"))
       ),
       tags$p(
         tags$strong("One notebook is created per conversation."),
@@ -4831,8 +5448,8 @@ server <- function(input, output, session) {
       ),
       tags$p(
         "In the notebook you can review and re-run each code chunk individually.",
-        tags$strong(" Remember to Pause or Quit Classmate before running code",
-                    " in the notebook to avoid conflicts.")
+        tags$strong(" Remember to close Classmate (using Save or Quit with Code Log)",
+                    " before running code in the notebook to avoid conflicts.")
       ),
       footer = modalButton("Close"),
       easyClose = TRUE
@@ -4860,7 +5477,7 @@ server <- function(input, output, session) {
     else
       paste0("classmate_block_", format(Sys.time(), "%Y%m%d_%H%M%S"))
     stem <- sub("_+$", "", substr(stem, 1, 60))
-    p <- file.path(PROJECT_ROOT, paste0(stem, ".R"))
+    p <- file.path(project_root(), paste0(stem, ".R"))
     writeLines(code_text, p)
     open_log_file(p)
     output$run_status <- renderUI(tags$span(
@@ -4869,11 +5486,11 @@ server <- function(input, output, session) {
     ))
   })
 
-  # --- Save & Pause ----------------------------------------------------------
+  # --- Save (pause) ----------------------------------------------------------
   observeEvent(input$pause_app, {
     showModal(modalDialog(
-      title = "Save & Pause",
-      tags$p(tags$strong("Save your session and pause Classmate.")),
+      title = "Save",
+      tags$p(tags$strong("Save your session and close Classmate.")),
       tags$p(paste(
         "The current session — prompt, code, context files and objects,",
         "conversation history, and preferences — will be saved and restored",
@@ -4884,7 +5501,7 @@ server <- function(input, output, session) {
       )),
       footer = tagList(
         modalButton("Cancel"),
-        actionButton("confirm_pause_app", "Save & Pause", class = "btn-primary")
+        actionButton("confirm_pause_app", "Save", class = "btn-primary")
       )
     ))
   })
@@ -4920,7 +5537,7 @@ server <- function(input, output, session) {
     )
     if (length(all_log_entries()) > 0) do_save_log()
     tryCatch(
-      saveRDS(pause_state, PAUSE_FILE),
+      saveRDS(pause_state, pause_file()),
       error = function(e)
         showNotification(paste("Could not save pause state:", conditionMessage(e)),
                          type = "error", duration = 8)
@@ -4940,7 +5557,7 @@ server <- function(input, output, session) {
     else
       "There is nothing to save."
     showModal(modalDialog(
-      title = "Quit Classmate?",
+      title = "Quit with Code Log?",
       tags$p("Are you sure you want to quit? Your R workspace will not be cleared."),
       tags$p(save_note),
       footer = tagList(

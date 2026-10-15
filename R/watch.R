@@ -744,7 +744,8 @@ reset_key <- function() {
 #'
 #' This function will refuse to run while \code{whisper()} is active or while
 #' a paused \code{talk()} session exists. Stop \code{whisper()} with
-#' \code{ssshh()} first, or quit the app before resetting.
+#' \code{ssshh()} first, or resume the app and use \emph{Quit with Code Log}
+#' before resetting.
 #'
 #' @return Invisible NULL (called for side effects).
 #' @export
@@ -767,7 +768,7 @@ classmate_reset <- function() {
   if (file.exists(pause_file)) {
     message(
       "classmate_reset() cannot run while a paused Classmate session exists.\n",
-      "Please open Classmate and quit the app normally before resetting."
+      "Please open Classmate and close it with Quit with Code Log before resetting."
     )
     return(invisible(NULL))
   }

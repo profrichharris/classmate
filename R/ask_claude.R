@@ -50,6 +50,18 @@ talk <- function() {
   suppressWarnings(suppressMessages(
     shiny::runApp(app_dir, launch.browser = TRUE)
   ))
+
+  # runApp() restores the working directory it found. If the user changed it
+  # inside Classmate (Change Working Directory, or setwd() in the Quick Console),
+  # carry the change back to this R session (and so to RStudio).
+  final_wd <- getOption(".classmate_project_root")
+  if (!is.null(final_wd) && dir.exists(final_wd)) {
+    final_wd <- normalizePath(final_wd, winslash = "/")
+    if (!identical(final_wd, normalizePath(getwd(), winslash = "/"))) {
+      setwd(final_wd)
+      message("Classmate: your working directory is now ", final_wd)
+    }
+  }
   invisible(NULL)
 }
 

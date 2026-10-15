@@ -48,13 +48,13 @@ Each is an `sf` object ready to use with `tmap`, `ggplot2`, etc.
 | Feature | Detail |
 |---|---|
 | **Ask for Code** | Sends your prompt to Claude; extracted R code lands in the editable code box |
-| **Ask** | Same as above but runs the code immediately — no editor step |
+| **Ask (no code)** | Same as above but runs the code immediately — no editor step |
 | **Run** | Executes whatever is in the code box in your live R session |
 | **Auto-install** | If code fails with a missing-package error, installs it and reruns (once per package) |
 | **Save Code Log** | Appends all successfully-run code blocks to `claude_session_log.R` in your working directory |
-| **Add files / Add objects** | Attach file paths or workspace object summaries as context for Claude |
+| **Import files / Select objects** | Attach file paths or workspace object summaries as context for Claude |
 | **Load Workspace** | Load an `.RData` / `.rds` file into the session without adding it to the context list |
-| **Pause App** | Saves full session state; restored automatically on next `ask()` call |
+| **Save** | Saves full session state and closes the app; restored automatically on the next `talk()` call |
 | **Preferences** | Set default coding/plotting/mapping style and image export defaults |
 | **Outputs folder** | All saved files go to `outputs/` inside your current working directory |
 

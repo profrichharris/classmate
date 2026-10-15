@@ -148,7 +148,7 @@ On every fresh launch of the app (not on pause-resume), the prompt input box is 
 >
 > *Press Clear to continue.*
 
-Every button in the app is disabled until the student presses **Clear** — with the sole exception of **Quit**. This includes the Ask, Ask for Code, Run, Explain, Fix, New Conversation, Add files, Add objects, Load Workspace, Clear Workspace, Quick Console, Save &amp; Pause, Preferences, and key-management buttons. During this period, the **Clear** button is highlighted in yellow to draw attention to it, and the **Clear Workspace** button is shown in white (its normal orange colour is suppressed) so that students are not misled into pressing the wrong button. This ensures the student actively reads and dismisses the reminder before doing anything else in the app. It appears on every fresh launch — not just once — to make data protection awareness a habitual part of the workflow.
+Every button in the app is disabled until the student presses **Clear** — with the sole exception of **Quit with Code Log**. This includes the Ask (no code), Ask for Code, Run, Explain, Fix, New Conversation, Import files, Select objects, Load Workspace, Quick Console (and so its Clear Workspace and Change Working Directory buttons), Save, Preferences, and key-management buttons. During this period, the **Clear** button is highlighted in yellow to draw attention to it. This ensures the student actively reads and dismisses the reminder before doing anything else in the app. It appears on every fresh launch — not just once — to make data protection awareness a habitual part of the workflow.
 
 ---
 

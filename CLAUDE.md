@@ -27,7 +27,7 @@ There is a single mode (the old Student / Non-student distinction was removed in
 | `cost_limit`, `reset_period` | Spend cap per period (`NULL` = unlimited) |
 | `final_expiry` | Date the key stops working |
 | `max_conversations` | Conversations per app start, 1–25 (`NULL` = unlimited) |
-| `max_lines` | Ceiling for the code-length preference (`Inf` = unlimited; keys without the field behave as 100) |
+| `max_lines` | Code-length limit (`Inf` = unlimited; keys without the field behave as 50). Shown read-only in Preferences — not a user choice |
 
 An instructor/developer who wants unlimited use generates their own key with `classmate_make_key()`. `cost_limit`, `max_conversations` and `max_lines` set to `NULL` each require a Y/N confirmation and are never the default. `whisper()` still accepts a raw API key (console only, no quota).
 
@@ -85,6 +85,7 @@ Everything interesting is in `inst/app/app.R`. It is a single-file Shiny app.
 - A modal REPL that also runs in `globalenv()` — same workspace, no syncing needed.
 - The main app is frozen (modal open, `shinyjs` disables buttons) while Quick Console is active.
 - `setTimeLimit(elapsed = 30, transient = TRUE)` enforces a 30-second timeout.
+- Footer buttons: Run, Clear output, Clear Workspace (confirm pop-up), Change Working Directory (folder-browser pop-up), Close. Both pop-ups return to the Quick Console on Cancel/Done. The current working directory is shown above the footer.
 - `q()`, `quit()`, `stopApp()`, and `talk()` are temporarily shadowed in globalenv with informative messages (no harmful side effects).
 - History displayed as blue prompts / coloured output (red for errors).
 - Ctrl+Enter / Cmd+Enter submits from the Ace editor.
@@ -150,7 +151,7 @@ Accessible via the Preferences modal. Persisted to `tools::R_user_dir("classmate
 | Coding style | tidyverse / base R / data.table | |
 | Plotting | ggplot2 / base R | |
 | Mapping | tmap / ggplot2 / leaflet | tmap triggers tmap v4 system prompt |
-| Max code lines | 25/50/75/100/Unlimited | Unlimited only in non-student mode; default 50 |
+| Max code lines | (read-only) | Set by the key's `max_lines`; Preferences just displays it |
 | Comment density | None / Minimal / Most | Change triggers Haiku rewrite of current editor code |
 | Image format | PNG / PDF / TIFF / JPEG | |
 | Image quality | Low / Medium / High | |
@@ -172,12 +173,12 @@ Accessible via the Preferences modal. Persisted to `tools::R_user_dir("classmate
 
 | Button | Frozen when |
 |--------|-------------|
-| Ask / Ask for Code | `ui_busy` is TRUE, or `protection_notice_active` is TRUE |
+| Ask (no code) / Ask for Code | `ui_busy` is TRUE, or `protection_notice_active` is TRUE |
 | Run | `ui_busy` TRUE, or editor content matches `last_run_code` |
 | Save Code Log | No entries in `all_log_entries` |
 | Save Code Block | Not on Code tab, or `ui_busy` TRUE |
-| New Conversation | Nothing yet generated (no Ask/Ask for Code completed) |
-| Remove checked / Remove all | No files or objects in context |
+| New Conversation | Nothing yet generated (no Ask (no code)/Ask for Code completed) |
+| Remove checked / Remove all | Hidden (and disabled) when no files or objects in context; shown in help mode |
 | Quick Console | `ui_busy` TRUE |
 
 All buttons are also disabled during the busy state via the central `observe()` block.
@@ -187,12 +188,13 @@ All buttons are also disabled during the busy state via the central `observe()` 
 ## Button layout (top bar, right side)
 
 ```
-[?]  [Quick Console]  [Save & Close]
+[About Classmate]  [?]  [Quick Console]  [Save]  [New conversation] [Quit with Code Log]
 ```
 
 - `?` — toggles help mode
 - `Quick Console` — opens REPL modal (white fill normally, black in help mode)
-- `Save & Pause` — save session + close (formerly "Pause App"); name chosen so students understand the session can be resumed
+- `Save` — save session + close (formerly "Save & Pause", originally "Pause App"); the session can be resumed with `talk()`
+- `Quit with Code Log` — close and save the code log as an R Notebook (formerly "Quit"); the session is not kept for resuming
 
 ---
 
@@ -200,6 +202,7 @@ All buttons are also disabled during the busy state via the central `observe()` 
 
 ```bash
 cd /Users/ggrjh/Dropbox/Claude/classmate
+(cd classmate && Rscript tools/check_help.R)   # Help mode covers every button/tab? MUST pass before a release
 R -e "devtools::document('classmate')"   # regenerates NAMESPACE and man/ from @export tags
 R CMD build classmate
 R -e "devtools::install('classmate', quiet=TRUE)"
@@ -210,6 +213,8 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 `gh` is at `/opt/homebrew/bin/gh`. Add to PATH if needed: `export PATH="/opt/homebrew/bin:$PATH"`
 
+**Help mode check (required before every release).** Help mode text lives in top-level tables in `inst/app/app.R` (`HELP_TEXTS`, `HELP_TAB_TEXTS`, `HELP_EXEMPT`, `HELP_ID_PATTERNS`). `tools/check_help.R` parses `app.R` and fails if a main-screen button or tab has no entry, or an entry refers to something that no longer exists. Whenever a button, tab or label is added, renamed or removed, update those tables (including wording that mentions the changed feature) and run the script. Buttons inside pop-up windows (`modalDialog`) or on the startup key screen are ignored because the overlay is off there. The script is excluded from the built package via `.Rbuildignore`. At runtime, any button that still lacks text shows "<label> — no detailed help is available for this button yet" rather than an id.
+
 **NAMESPACE** is managed by roxygen2 (`# Generated by roxygen2: do not edit by hand`). Never edit it manually — add/remove `@export` tags in the R source and run `devtools::document()`. Switched over in v0.5.54.
 
 **Do NOT bump the version or push to GitHub unless the user explicitly says "Update package".**
@@ -218,10 +223,23 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.85 (2026-10-15)  
-**Current version:** 0.5.85
+**Last released:** 0.5.86 (2026-10-15)  
+**Current version:** 0.5.86
 
-Released in 0.5.83–0.5.85 (no unreleased changes):
+Released in 0.5.86 (no unreleased changes):
+- Import files dialog (was Add files) gains an optional "Filter files by name" box (injected JS in app.R beside the splash script; targets `#file_select-modal`; folders stay visible, files are filtered case-insensitively by substring, re-applied when the list rebuilds).
+- Select objects dialog (was Add objects) gains "Filter by type" (`filter_objects_by_type()` in app.R, local/offline, no API call): accepts formal R classes (sf, integer, lm...) and natural wording via the `.TYPE_CATS` vocabulary (data table, mappable, model, text, number, function, polygons, raster...). Terms separated by commas/or/and are alternatives; typos fuzzy-matched; unrecognised terms produce a hint. Each listed object shows its class; ticks persist while filters change (`obj_pick_sel`).
+- Working directory is now changeable during a session. `PROJECT_ROOT`/`OUTPUTS_DIR`/`PAUSE_FILE` constants replaced by `project_root()`, `outputs_dir()`, `pause_file()` (backed by mutable env `.cm`) and `cm_set_root()` (app.R top). Run, Quick Console, logs, saved scripts, pause file, the AI's save-location instruction and the file dialogs (dynamic "Working directory" root) all follow it. It changes via the new Change Working Directory folder browser in the Quick Console, or by `setwd()` typed in the Quick Console / run code (detected after each run). `cm_set_root()` also calls `rstudioapi::filesPaneNavigate()`; `talk()` calls `setwd()` on the final `.classmate_project_root` after `runApp()` returns (quit or pause) so the R session/RStudio ends in the same folder.
+- Clear Workspace moved from the main screen into the Quick Console (footer: Run, Clear output, Clear Workspace, Change Working Directory, Close); Help text for it folded into the Quick Console entry.
+- New **Load Package Data** button (between Select objects and Load Workspace): pop-up lists the package's own datasets (from `utils::data(package = "classmate")`, so new data appears automatically) with title and dimensions; Load puts them in `.GlobalEnv` via `data()` and adds them to the prompt context (`selected_objects`). If an object of that name exists with different contents a "Replace existing objects?" confirmation appears; an identical one loads straight through. Frozen during the data-protection notice like the other context buttons; help entry `load_package_data`.
+- Button labels renamed: Add files → **Import files**, Add objects → **Select objects**, Ask → **Ask (no code)**, Save & Pause → **Save**, Quit → **Quit with Code Log** (button ids unchanged). Help text, pop-up titles (Save, Quit with Code Log?, Select workspace objects as context), the code-log notebook note, README.md and SECURITY.md updated to match. Startup-screen and disclaimer Quit buttons keep the label "Quit".
+- Help mode: text moved to top-level tables (`HELP_TEXTS` etc.) and audited against the current UI (added Load key file, Past conversations tab; updated Preferences, Add files/objects, Remove, New conversation, Quick Console, Clear, Help wording). New `tools/check_help.R` (run in the release workflow) flags buttons/tabs without help; fallback message now uses the button's label.
+- Context area: the "Files and objects added as context:" heading was removed; the line "Are there any files or objects you want the prompt to work with?" now sits between the prompt box and the Add files row.
+- Remove checked / Remove all are hidden (same position) until a file or object has been added; always shown in help mode so they can be explained (observer beside `help_mode` in app.R).
+- Preferences: Maximum code length is now a read-only display of the key's `max_lines` (the dropdown and `pref_max_lines` observer were removed; legacy keys without the field use 50, not 100).
+- Language picker: filtering no longer auto-selects the first match (previously typing e.g. "gr" then OK silently saved Greek); with nothing selected, OK keeps the current language. The language is stored in `language.rds` in the user config dir (survives sessions and updates); default is English.
+
+Released in 0.5.83–0.5.85:
 - "Or / Load from Web" button + "Enter web address" box added under Browse in the Load key file modal and the startup key panel. `fetch_key_from_web()` (app.R, top level) accepts an https address of a .key file, or of a page listing .key links (newest by `created` is used); fails with informative modals. GitHub blob and Dropbox share links are rewritten to direct downloads.
 - 0.5.84: removed Student/Personal mode distinction (see Key-driven behaviour above): removed "Student mode" label, Change API key, paste-a-key option, `app_mode`; `classmate_make_key()` gains `max_lines`, and unlimited cost/lines need Y/N confirmation; Preferences code-length choices are capped by the key.
 - 0.5.85: `max_conversations` in `classmate_make_key()` now follows the same pattern: omitted = prompt (default 3, max 25); `NULL` or `none` = unlimited with Y/N confirmation (numbers are clamped to 1–25).
@@ -281,3 +299,4 @@ Released in 0.5.83–0.5.85 (no unreleased changes):
 | 0.5.83 | "Load from Web" for key files (https address of a .key file or a page listing them; newest key used) |
 | 0.5.84 | Student/Personal mode removed; key now sets cost, expiry, conversations and code-length cap; Change API key and paste-a-key removed; `max_lines` added to keys |
 | 0.5.85 | `max_conversations` in `classmate_make_key()` follows the same prompt/NULL-with-confirmation pattern as cost and code length |
+| 0.5.86 | Import files name filter; Select objects type filter (formal classes + plain words); Load Package Data; Load from Web already in 0.5.83; read-only code length from key; language-picker fix; changeable working directory (Change Working Directory + Clear Workspace moved into Quick Console); renamed buttons (Import files, Select objects, Ask (no code), Save, Quit with Code Log); Remove buttons hidden until needed; Help mode audited, moved to `HELP_TEXTS` tables, `tools/check_help.R` added |

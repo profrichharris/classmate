@@ -224,7 +224,7 @@ classmate_config_show <- function() {
       cat("  Key file loaded\n")
       cat("  Cost limit:  ", if (is.null(cfg$cost_limit)) "none"
                              else paste0("$", cfg$cost_limit, " per ", cfg$reset_period), "\n")
-      cat("  Code length: ", if (is.null(cfg$max_lines)) "100 lines (key predates this setting)"
+      cat("  Code length: ", if (is.null(cfg$max_lines)) "50 lines (key predates this setting)"
                              else if (is.infinite(cfg$max_lines)) "unlimited"
                              else paste(cfg$max_lines, "lines"), "\n")
       cat("  Key created: ", format(cfg$created, "%Y-%m-%d %H:%M"), "\n")
