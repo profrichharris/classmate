@@ -993,7 +993,14 @@ code_too_long <- function(code, max_lines) {
 compute_diff <- function(old_code, new_code) {
   old_lines <- strsplit(old_code, "\n", fixed = TRUE)[[1]]
   new_lines <- strsplit(new_code, "\n", fixed = TRUE)[[1]]
-  strip_trailing_op <- function(x) trimws(sub("[+,|&]\\s*$", "", trimws(x)))
+  # Comments are ignored: a trailing comment is dropped (only when the line has no quotes, so a
+  # "#" inside a string is safe) and comment-only lines are treated as blank.
+  strip_trailing_op <- function(x) {
+    x <- trimws(x)
+    x <- ifelse(grepl("[\"']", x), x, sub("\\s*#.*$", "", x))
+    x[startsWith(x, "#")] <- ""
+    trimws(sub("[+,|&]\\s*$", "", x))
+  }
   old_norm  <- strip_trailing_op(old_lines)
   new_norm  <- strip_trailing_op(new_lines)
   n_old <- length(old_lines)
@@ -4626,9 +4633,7 @@ server <- function(input, output, session) {
       title = "Preferences",
       actionButton("pref_load_key", "Load new key file", class = "btn-default btn-sm"),
       tags$div(style = "margin-bottom: 10px;"),
-      tags$label("Claude Model:"),
-      tags$p(style = "margin: 6px 0 0 0;", tags$strong(MODEL_SONNET_LABEL),
-             tags$span(style = "color: #888;", " (fixed)")),
+      tags$p(style = "margin: 0;", tags$label("Claude Model:"), " ", MODEL_SONNET_LABEL),
       hr(),
       fluidRow(
         column(8, selectInput("pref_language", "Response language:",
