@@ -236,10 +236,13 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.95 (2026-10-16)  
-**Current version:** 0.5.95
+**Last released:** 0.5.96 (2026-10-16)  
+**Current version:** 0.5.96
 
-Released in 0.5.95 (no unreleased changes):
+Released in 0.5.96 (no unreleased changes):
+- Quick Console install warning and timeout pop-ups: the **Pause Classmate** button now pauses immediately (the `confirm_pause_app` observer also listens to `qc_install_pause` / `qc_timeout_pause`); the 0.5.94 Cancel-returns-to-Quick-Console code was removed. Bug fix: **Quit with Code Log** stayed disabled after a package-install run (user-reported; reproduced with `library(zzfakepkg)`): `"quit"` was in the busy-state disable list but not in the re-enable list of the button-state observer, so it was disabled during an install (the only busy phase that spans a flush) and never re-enabled. Now re-enabled with Pause / Quick Console.
+
+Released in 0.5.95:
 - **Silent in-session auto-update** (`R/ask_claude.R`, `R/watch.R`): after installing a newer release, `classmate_do_update()` no longer asks the user to restart R. It first forces all lazy-load promises of the running copy (`classmate_force_lazy_objects()`), installs, then `classmate_reload_and_relaunch()` unloads the namespace, loads the new one (re-attaching if it was attached) and calls `talk()` / `whisper(key = key)` again from it (`classmate_preflight(relaunch, args)`). If the reload fails it falls back to the old "please restart R" message. Tested with a scratch library (0.5.80 -> 0.5.94, attached and not attached). Machines running 0.5.94 or older still show the restart message once, because the update is performed by the old code.
 - README install line now `profrichharris/classmate`; release workflow notes to always attach the tarball.
 
@@ -349,6 +352,7 @@ Released in 0.5.83–0.5.85:
 | 0.5.87 | **Answer button** (was Ask (no code)) is now a two-stage answer pipeline: Claude answers directly from object/file summaries or requests a small read-only calculation, which runs in a sandbox and whose scrubbed summary output Claude turns into a plain-English answer. New Answer / Past answers tabs replace Code / R output / Past code while in the Answer view (tabs follow the most recent ask); Run/Explain/Fix/Load Script/Save Code Block are frozen there; "Show my working" reveals code and output; not written to the code-log notebook. |
 | 0.5.88 | Answer button privacy hardening (coded copies of identifying columns, refusal of string/sort/location tricks, geometry scrubbing, decline record requests); fixed under-counted API cost (`calc_cost`); startup disclaimer personal-data warnings split into two bold dark-red bullets |
 | 0.5.89 | Recall (Past prompts / Past code) restores answers or code with R output, plots, warnings and Changes; Back to Code / Back to Answer buttons; fixed-height Answer panes; fixed `compute_diff` crash on a changed first line; fixed session crash when the project folder or the app's own folder disappears (`cm_enter_root`, `cm_ensure_root`); help for Past code / prompts / conversations Recall buttons |
+| 0.5.96 | Quick Console Pause button pauses immediately; Quit with Code Log no longer stays disabled after a package install |
 | 0.5.95 | Auto-update is silent: new version loaded in-session without restarting R; README install line fixed |
 | 0.5.94 | Cancel on the Pause pop-up returns to the Quick Console when opened from it |
 | 0.5.93 | Quick Console: install-package warning (Close / Install here anyway / Pause), 30 s timeout pop-up with Pause, time limit always cleared |

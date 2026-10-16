@@ -3645,7 +3645,7 @@ server <- function(input, output, session) {
       document.getElementById('clear_prompt').style.borderColor = '';
       document.getElementById('clear_prompt').style.color = '';
     ")
-    for (btn in c("help_toggle", "quick_console", "pause_app",
+    for (btn in c("help_toggle", "quick_console", "pause_app", "quit",
                   "add_objects", "load_package_data", "preferences",
                   "file_select", "load_workspace"))
       shinyjs::enable(btn)
@@ -5226,14 +5226,12 @@ server <- function(input, output, session) {
   observeEvent(input$qc_input_run_key, { do_qc_run() })
 
   observeEvent(input$qc_timeout_close, { removeModal(); show_qc_modal() })
-  observeEvent(input$qc_timeout_pause, show_pause_modal(from_qc = TRUE))
-  observeEvent(input$qc_install_close, {
+    observeEvent(input$qc_install_close, {
     removeModal()
     show_qc_modal()
     shinyAce::updateAceEditor(session, "qc_input", value = qc_pending_code())   # keep what they typed
   })
-  observeEvent(input$qc_install_pause, show_pause_modal(from_qc = TRUE))
-  observeEvent(input$qc_install_anyway, {
+    observeEvent(input$qc_install_anyway, {
     removeModal()
     show_qc_modal()
     do_qc_run(qc_pending_code(), allow_install = TRUE)
@@ -6560,7 +6558,7 @@ server <- function(input, output, session) {
   })
 
   # --- Pause ----------------------------------------------------------
-  show_pause_modal <- function(from_qc = FALSE)
+  show_pause_modal <- function()
     showModal(modalDialog(
       title = "Pause",
       tags$p(tags$strong("Pause Classmate: your session is saved and Classmate closes.")),
@@ -6573,14 +6571,14 @@ server <- function(input, output, session) {
         "The API key is not saved; it will be picked up from the R environment automatically."
       )),
       footer = tagList(
-        if (from_qc) actionButton("pause_cancel_to_qc", "Cancel") else modalButton("Cancel"),
+        modalButton("Cancel"),
         actionButton("confirm_pause_app", "Pause", class = "btn-primary")
       )
     ))
   observeEvent(input$pause_app, show_pause_modal())
-  observeEvent(input$pause_cancel_to_qc, { removeModal(); show_qc_modal() })   # Pause was offered from the Quick Console
 
-  observeEvent(input$confirm_pause_app, {
+  # Pause is also offered directly by the Quick Console's install warning and timeout pop-ups
+  observeEvent(c(input$confirm_pause_app, input$qc_timeout_pause, input$qc_install_pause), {
     removeModal()
     capture_active_code()
     pause_state <- list(
