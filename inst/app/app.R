@@ -2415,6 +2415,14 @@ answer_code_violations <- function(code) {
 
 # Runs the Answer button's code in a throw-away environment, with graphics going
 # nowhere. Returns list(success, message, output, warnings).
+# TRUE when the code installs or updates packages (these are exempt from the Quick Console time limit)
+code_installs_packages <- function(code) {
+  grepl(paste0("\\b(install\\.packages|update\\.packages|install_github|install_gitlab|install_bitbucket|",
+               "install_url|install_git|install_cran|install_local|install_version|pkg_install|",
+               "pak\\s*\\(|pak::|BiocManager::install|devtools::install|renv::(install|restore))"),
+        paste(code, collapse = "\n"), perl = TRUE)
+}
+
 run_answer_code <- function(code, timeout = 60, objects = list()) {
   env <- new.env(parent = globalenv())
   .enter <- cm_enter_root()
@@ -5081,9 +5089,11 @@ server <- function(input, output, session) {
     png(plot_file, width = 900, height = 650, res = 96)
     dev_qc <- dev.cur()
     on.exit({ if (dev.cur() == dev_qc) dev.off() }, add = TRUE)
+    # Package installs routinely take longer than the 30 s limit and cannot be interrupted
+    # part-way, so they run without one.
+    installing <- code_installs_packages(code)
     result <- tryCatch({
-      setTimeLimit(elapsed = 30, transient = TRUE)
-      on.exit({ setTimeLimit(elapsed = Inf, transient = FALSE) }, add = TRUE)
+      if (!installing) setTimeLimit(elapsed = 30, transient = TRUE)
       console_output <- capture.output({
         withCallingHandlers(
           source(textConnection(code), local = FALSE, print.eval = TRUE),
@@ -5108,8 +5118,11 @@ server <- function(input, output, session) {
       if (grepl("__QC_STOPAPP__", msg))
         return(list(output = "(stopApp() is not available inside the Quick Console)", is_error = FALSE, plot_path = NULL))
       if (grepl("reached elapsed time limit", msg))
-        return(list(output = "Timed out after 30 seconds. The operation was interrupted.", is_error = TRUE, plot_path = NULL))
+        return(list(output = "Timed out after 30 seconds. The operation was interrupted.", is_error = TRUE, plot_path = NULL, timed_out = TRUE))
       list(output = strip_ansi(msg), is_error = TRUE, plot_path = NULL)
+    }, finally = {
+      # Always clear the limit straight away, so a late expiry can never surface outside the handler
+      tryCatch(setTimeLimit(elapsed = Inf, transient = FALSE), error = function(e) NULL)
     })
     # If the code changed the working directory (setwd()), make that the new root
     now_wd <- tryCatch(normalizePath(getwd(), winslash = "/"), error = function(e) NA_character_)
@@ -5154,9 +5167,26 @@ server <- function(input, output, session) {
     show_qc_modal()
   })
 
-  do_qc_run <- function() {
-    code <- isolate(input$qc_input %||% "")
+  qc_pending_code <- reactiveVal("")
+
+  do_qc_run <- function(code = isolate(input$qc_input %||% ""), allow_install = FALSE) {
     if (!nzchar(trimws(code))) return()
+    if (!allow_install && code_installs_packages(code)) {
+      qc_pending_code(code)
+      showModal(modalDialog(
+        title = "Installing packages? Better done in RStudio",
+        tags$p("The Quick Console is designed for quick operations. Installing packages can take several minutes and cannot be interrupted, so Classmate may seem frozen while it runs."),
+        tags$p("We recommend that you Pause Classmate (your session is saved), install the package in the main RStudio console, and then restart Classmate to carry on where you left off."),
+        tags$p(em("You can still install it here if you prefer: Classmate will wait for it to finish.")),
+        footer = tagList(
+          actionButton("qc_install_close", "Close"),
+          actionButton("qc_install_anyway", "Install here anyway"),
+          actionButton("qc_install_pause", "Pause Classmate", class = "btn-primary")
+        ),
+        easyClose = FALSE
+      ))
+      return(invisible(NULL))
+    }
     result <- run_in_qc(code)
     if (!is.null(result$wd_changed)) wd_rv(result$wd_changed)
     qc_history(c(qc_history(), list(list(
@@ -5166,7 +5196,18 @@ server <- function(input, output, session) {
       plot_path = result$plot_path
     ))))
     shinyAce::updateAceEditor(session, "qc_input", value = "")
-    if (!is.null(result$plot_path)) {
+    if (isTRUE(result$timed_out)) {
+      showModal(modalDialog(
+        title = "That took too long for the Quick Console",
+        tags$p("The Quick Console is designed for quick operations, so it stops any command that runs for more than 30 seconds. Your command was interrupted."),
+        tags$p("For a longer process, we recommend that you Pause Classmate (your session is saved), run the command in the main RStudio console, and then restart Classmate to carry on where you left off."),
+        footer = tagList(
+          actionButton("qc_timeout_close", "Close"),
+          actionButton("qc_timeout_pause", "Pause Classmate", class = "btn-primary")
+        ),
+        easyClose = FALSE
+      ))
+    } else if (!is.null(result$plot_path)) {
       plot_src <- paste0("classmate_plots/", basename(result$plot_path))
       showModal(modalDialog(
         title = "Plot",
@@ -5183,6 +5224,20 @@ server <- function(input, output, session) {
 
   observeEvent(input$qc_run,          { do_qc_run() })
   observeEvent(input$qc_input_run_key, { do_qc_run() })
+
+  observeEvent(input$qc_timeout_close, { removeModal(); show_qc_modal() })
+  observeEvent(input$qc_timeout_pause, show_pause_modal())
+  observeEvent(input$qc_install_close, {
+    removeModal()
+    show_qc_modal()
+    shinyAce::updateAceEditor(session, "qc_input", value = qc_pending_code())   # keep what they typed
+  })
+  observeEvent(input$qc_install_pause, show_pause_modal())
+  observeEvent(input$qc_install_anyway, {
+    removeModal()
+    show_qc_modal()
+    do_qc_run(qc_pending_code(), allow_install = TRUE)
+  })
 
   observeEvent(input$qc_plot_close, {
     removeModal()
@@ -6505,7 +6560,7 @@ server <- function(input, output, session) {
   })
 
   # --- Pause ----------------------------------------------------------
-  observeEvent(input$pause_app, {
+  show_pause_modal <- function()
     showModal(modalDialog(
       title = "Pause",
       tags$p(tags$strong("Pause Classmate: your session is saved and Classmate closes.")),
@@ -6522,7 +6577,7 @@ server <- function(input, output, session) {
         actionButton("confirm_pause_app", "Pause", class = "btn-primary")
       )
     ))
-  })
+  observeEvent(input$pause_app, show_pause_modal())
 
   observeEvent(input$confirm_pause_app, {
     removeModal()
