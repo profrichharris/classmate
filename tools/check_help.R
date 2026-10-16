@@ -29,7 +29,7 @@ if (length(missing_tables) > 0)
 
 # --- Walk the code collecting buttons and tabs ------------------------------
 button_fns <- c("actionButton", "shinyFilesButton", "shinySaveButton",
-                "shinyDirButton", "downloadButton", "actionLink")
+                "shinyDirButton", "downloadButton", "actionLink", "checkboxInput")
 found <- list()   # each: kind, id, hidden (TRUE = help overlay not active there)
 
 fn_name <- function(call) {

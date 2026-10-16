@@ -236,10 +236,13 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.96 (2026-10-16)  
-**Current version:** 0.5.96
+**Last released:** 0.5.97 (2026-10-16)  
+**Current version:** 0.5.97
 
-Released in 0.5.96 (no unreleased changes):
+Released in 0.5.97 (no unreleased changes):
+- **AutoRun Code** tick box (`autorun_code`, right of Clear, default off, not saved on Pause): when ticked, `do_ask_code()` runs the freshly generated code straight away through `do_run_code(code_text)` (the Run button's observer body, now a function; the generated text is passed directly because `input$code_editor` has not synced yet). Ask for Code only, not Fix. Skipped on every early-return path (too long, disclosure risk, etc.). Help overlay JS now recognises Shiny checkboxes; `tools/check_help.R` treats `checkboxInput` like a button.
+
+Released in 0.5.96:
 - Quick Console install warning and timeout pop-ups: the **Pause Classmate** button now pauses immediately (the `confirm_pause_app` observer also listens to `qc_install_pause` / `qc_timeout_pause`); the 0.5.94 Cancel-returns-to-Quick-Console code was removed. Bug fix: **Quit with Code Log** stayed disabled after a package-install run (user-reported; reproduced with `library(zzfakepkg)`): `"quit"` was in the busy-state disable list but not in the re-enable list of the button-state observer, so it was disabled during an install (the only busy phase that spans a flush) and never re-enabled. Now re-enabled with Pause / Quick Console.
 
 Released in 0.5.95:
@@ -352,6 +355,7 @@ Released in 0.5.83–0.5.85:
 | 0.5.87 | **Answer button** (was Ask (no code)) is now a two-stage answer pipeline: Claude answers directly from object/file summaries or requests a small read-only calculation, which runs in a sandbox and whose scrubbed summary output Claude turns into a plain-English answer. New Answer / Past answers tabs replace Code / R output / Past code while in the Answer view (tabs follow the most recent ask); Run/Explain/Fix/Load Script/Save Code Block are frozen there; "Show my working" reveals code and output; not written to the code-log notebook. |
 | 0.5.88 | Answer button privacy hardening (coded copies of identifying columns, refusal of string/sort/location tricks, geometry scrubbing, decline record requests); fixed under-counted API cost (`calc_cost`); startup disclaimer personal-data warnings split into two bold dark-red bullets |
 | 0.5.89 | Recall (Past prompts / Past code) restores answers or code with R output, plots, warnings and Changes; Back to Code / Back to Answer buttons; fixed-height Answer panes; fixed `compute_diff` crash on a changed first line; fixed session crash when the project folder or the app's own folder disappears (`cm_enter_root`, `cm_ensure_root`); help for Past code / prompts / conversations Recall buttons |
+| 0.5.97 | AutoRun Code tick box: generated code is run automatically (Ask for Code only; off by default) |
 | 0.5.96 | Quick Console Pause button pauses immediately; Quit with Code Log no longer stays disabled after a package install |
 | 0.5.95 | Auto-update is silent: new version loaded in-session without restarting R; README install line fixed |
 | 0.5.94 | Cancel on the Pause pop-up returns to the Quick Console when opened from it |
