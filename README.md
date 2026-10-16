@@ -14,7 +14,7 @@ classmate::ask()
 install.packages("remotes")
 
 # Install classmate from GitHub
-remotes::install_github("your-github-username/classmate")
+remotes::install_github("profrichharris/classmate")
 ```
 
 All other dependencies (shiny, shinyjs, shinyFiles, callr, rstudioapi, httr2) are

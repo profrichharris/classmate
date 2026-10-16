@@ -376,7 +376,7 @@ whisper <- function(key = NULL) {
   }
 
   # --- Preflight update check ------------------------------------------------
-  updated <- classmate_preflight(relaunch = "whisper")
+  updated <- classmate_preflight(relaunch = "whisper", args = list(key = key))
   if (isTRUE(updated)) return(invisible(NULL))
 
   # --- Resolve API key -------------------------------------------------------

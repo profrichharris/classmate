@@ -222,6 +222,8 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
   --repo profrichharris/classmate --title "vX.Y.Z" --notes "..."
 ```
 
+**Always attach the built `classmate_X.Y.Z.tar.gz` to the release** (the command above does). The auto-updater (`classmate_preflight()` in `R/ask_claude.R`) only looks for a `.tar.gz` release asset and silently skips the update if there is none; releases 0.5.91–0.5.94 were first created without it (so PCs on 0.5.90 did not update) and the tarballs were uploaded afterwards. After releasing, check with `gh release view vX.Y.Z --json assets`.
+
 `gh` is at `/opt/homebrew/bin/gh`. Add to PATH if needed: `export PATH="/opt/homebrew/bin:$PATH"`
 
 **Help mode check (required before every release).** Help mode text lives in top-level tables in `inst/app/app.R` (`HELP_TEXTS`, `HELP_TAB_TEXTS`, `HELP_EXEMPT`, `HELP_ID_PATTERNS`). `tools/check_help.R` parses `app.R` and fails if a main-screen button or tab has no entry, or an entry refers to something that no longer exists. Whenever a button, tab or label is added, renamed or removed, update those tables (including wording that mentions the changed feature) and run the script. Buttons inside pop-up windows (`modalDialog`) or on the startup key screen are ignored because the overlay is off there. The script is excluded from the built package via `.Rbuildignore`. At runtime, any button that still lacks text shows "<label> — no detailed help is available for this button yet" rather than an id.
@@ -234,10 +236,14 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.94 (2026-10-16)  
-**Current version:** 0.5.94
+**Last released:** 0.5.95 (2026-10-16)  
+**Current version:** 0.5.95
 
-Released in 0.5.94 (no unreleased changes):
+Released in 0.5.95 (no unreleased changes):
+- **Silent in-session auto-update** (`R/ask_claude.R`, `R/watch.R`): after installing a newer release, `classmate_do_update()` no longer asks the user to restart R. It first forces all lazy-load promises of the running copy (`classmate_force_lazy_objects()`), installs, then `classmate_reload_and_relaunch()` unloads the namespace, loads the new one (re-attaching if it was attached) and calls `talk()` / `whisper(key = key)` again from it (`classmate_preflight(relaunch, args)`). If the reload fails it falls back to the old "please restart R" message. Tested with a scratch library (0.5.80 -> 0.5.94, attached and not attached). Machines running 0.5.94 or older still show the restart message once, because the update is performed by the old code.
+- README install line now `profrichharris/classmate`; release workflow notes to always attach the tarball.
+
+Released in 0.5.94:
 - Pause pop-up opened from the Quick Console (install warning / timeout pop-up) has a Cancel that returns to the Quick Console (`show_pause_modal(from_qc = TRUE)`, `pause_cancel_to_qc`). The 0.5.93 Quick Console pop-ups were then tested in the live app (install warning with Close / Install here anyway / Pause, 30 s timeout pop-up). Note: in a non-RStudio session `install.packages` can fail with "trying to use CRAN without setting a mirror" (not handled).
 
 Released in 0.5.93:
@@ -343,7 +349,7 @@ Released in 0.5.83–0.5.85:
 | 0.5.87 | **Answer button** (was Ask (no code)) is now a two-stage answer pipeline: Claude answers directly from object/file summaries or requests a small read-only calculation, which runs in a sandbox and whose scrubbed summary output Claude turns into a plain-English answer. New Answer / Past answers tabs replace Code / R output / Past code while in the Answer view (tabs follow the most recent ask); Run/Explain/Fix/Load Script/Save Code Block are frozen there; "Show my working" reveals code and output; not written to the code-log notebook. |
 | 0.5.88 | Answer button privacy hardening (coded copies of identifying columns, refusal of string/sort/location tricks, geometry scrubbing, decline record requests); fixed under-counted API cost (`calc_cost`); startup disclaimer personal-data warnings split into two bold dark-red bullets |
 | 0.5.89 | Recall (Past prompts / Past code) restores answers or code with R output, plots, warnings and Changes; Back to Code / Back to Answer buttons; fixed-height Answer panes; fixed `compute_diff` crash on a changed first line; fixed session crash when the project folder or the app's own folder disappears (`cm_enter_root`, `cm_ensure_root`); help for Past code / prompts / conversations Recall buttons |
-| 0.5.94 | Cancel on the Pause pop-up returns to the Quick Console when opened from it |
+| 0.5.95 | Auto-update is silent: new version loaded in-session without restarting R; README install line fixed |\n| 0.5.94 | Cancel on the Pause pop-up returns to the Quick Console when opened from it |
 | 0.5.93 | Quick Console: install-package warning (Close / Install here anyway / Pause), 30 s timeout pop-up with Pause, time limit always cleared |
 | 0.5.92 | Preferences model line simplified; Changes tab ignores comment-only differences |
 | 0.5.91 | Load new key file moved into Preferences; allowance/expired messages gain Close and Open Preferences buttons; Changes tab comparison made robust (LCS matching, shown when >= 60% of lines unchanged, notice when not possible) |

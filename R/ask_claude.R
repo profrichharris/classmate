@@ -70,7 +70,7 @@ talk <- function() {
 # Returns TRUE if a new version was installed and a fresh talk() was launched.
 # Returns FALSE (silently) in every other case, including all error paths.
 # ---------------------------------------------------------------------------
-classmate_preflight <- function(relaunch = "talk") {
+classmate_preflight <- function(relaunch = "talk", args = list()) {
 
   # Already checked this session, or this is a post-update re-entry
   if (isTRUE(getOption("classmate.update_checked"))) return(FALSE)
@@ -109,18 +109,24 @@ classmate_preflight <- function(relaunch = "talk") {
   if (length(tarball) == 0) return(FALSE)
   download_url <- tarball[[1]]$browser_download_url
 
-  classmate_do_update(latest_version, download_url, relaunch)
+  classmate_do_update(latest_version, download_url, relaunch, args)
 }
 
 # ---------------------------------------------------------------------------
-# Downloads and installs the new version silently, then asks the user to
-# restart R.  We do NOT attempt a live detach/reload — that causes the
-# "lazyload database corrupt" error because R still has open file handles
-# to the old .rdb when the new version writes over it.
+# Downloads and installs the new version silently and carries on with it.
+# A naive live detach/reload causes the "lazyload database corrupt" error
+# (R still needs the old .rdb when the new version overwrites it), so the
+# lazy-load promises are all forced before installing, then the namespace is
+# unloaded and loaded afresh (classmate_reload_and_relaunch()); if that fails
+# we fall back to asking the user to restart R.
 # Returns TRUE on success, FALSE if anything goes wrong (caller continues
 # with the existing version in that case).
 # ---------------------------------------------------------------------------
-classmate_do_update <- function(latest_version, download_url, relaunch = "talk") {
+classmate_do_update <- function(latest_version, download_url, relaunch = "talk", args = list()) {
+
+  # Pull every lazy-loaded object of the running copy into memory first, so that nothing in
+  # it needs to be read from the package files once the new version has overwritten them.
+  classmate_force_lazy_objects()
 
   success <- tryCatch({
     tmp <- tempfile(fileext = ".tar.gz")
@@ -146,12 +152,47 @@ classmate_do_update <- function(latest_version, download_url, relaunch = "talk")
     return(FALSE)
   }
 
+  # Swap the new version in and carry on, with no restart of R needed
+  if (classmate_reload_and_relaunch(relaunch, args)) return(TRUE)
+
   relaunch_call <- if (relaunch == "whisper") "whisper()" else "talk()"
   message(
     "Classmate has been updated to v", latest_version, ".\n",
     "Please restart R and then run ", relaunch_call, " to continue."
   )
   TRUE
+}
+
+
+# Evaluate every lazy-load promise in the classmate namespace and attached package environment.
+classmate_force_lazy_objects <- function() {
+  envs <- list(asNamespace("classmate"))
+  if ("package:classmate" %in% search()) envs <- c(envs, list(as.environment("package:classmate")))
+  for (e in envs)
+    for (n in ls(e, all.names = TRUE))
+      tryCatch(get(n, envir = e), error = function(err) NULL)
+  invisible(NULL)
+}
+
+# After a successful in-session update: unload the old copy, load the new one (re-attaching it if
+# it was attached) and start talk()/whisper() again from it. TRUE if that worked; FALSE means the
+# caller should ask for a restart of R instead.
+classmate_reload_and_relaunch <- function(relaunch = "talk", args = list()) {
+  attached <- "package:classmate" %in% search()
+  ok <- tryCatch({
+    unloadNamespace("classmate")
+    loadNamespace("classmate")
+    if (attached) suppressMessages(library("classmate", character.only = TRUE))
+    TRUE
+  }, error = function(e) FALSE)
+  if (!ok) return(FALSE)
+  tryCatch({
+    do.call(getExportedValue("classmate", relaunch), args)
+    TRUE
+  }, error = function(e) {
+    message("Classmate was updated but could not restart itself (", conditionMessage(e), ").")
+    TRUE
+  })
 }
 
 
