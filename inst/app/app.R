@@ -5226,13 +5226,13 @@ server <- function(input, output, session) {
   observeEvent(input$qc_input_run_key, { do_qc_run() })
 
   observeEvent(input$qc_timeout_close, { removeModal(); show_qc_modal() })
-  observeEvent(input$qc_timeout_pause, show_pause_modal())
+  observeEvent(input$qc_timeout_pause, show_pause_modal(from_qc = TRUE))
   observeEvent(input$qc_install_close, {
     removeModal()
     show_qc_modal()
     shinyAce::updateAceEditor(session, "qc_input", value = qc_pending_code())   # keep what they typed
   })
-  observeEvent(input$qc_install_pause, show_pause_modal())
+  observeEvent(input$qc_install_pause, show_pause_modal(from_qc = TRUE))
   observeEvent(input$qc_install_anyway, {
     removeModal()
     show_qc_modal()
@@ -6560,7 +6560,7 @@ server <- function(input, output, session) {
   })
 
   # --- Pause ----------------------------------------------------------
-  show_pause_modal <- function()
+  show_pause_modal <- function(from_qc = FALSE)
     showModal(modalDialog(
       title = "Pause",
       tags$p(tags$strong("Pause Classmate: your session is saved and Classmate closes.")),
@@ -6573,11 +6573,12 @@ server <- function(input, output, session) {
         "The API key is not saved; it will be picked up from the R environment automatically."
       )),
       footer = tagList(
-        modalButton("Cancel"),
+        if (from_qc) actionButton("pause_cancel_to_qc", "Cancel") else modalButton("Cancel"),
         actionButton("confirm_pause_app", "Pause", class = "btn-primary")
       )
     ))
   observeEvent(input$pause_app, show_pause_modal())
+  observeEvent(input$pause_cancel_to_qc, { removeModal(); show_qc_modal() })   # Pause was offered from the Quick Console
 
   observeEvent(input$confirm_pause_app, {
     removeModal()

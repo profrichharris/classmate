@@ -234,11 +234,14 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.93 (2026-10-16)  
-**Current version:** 0.5.93
+**Last released:** 0.5.94 (2026-10-16)  
+**Current version:** 0.5.94
 
-Released in 0.5.93 (no unreleased changes):
-- **Quick Console limits** (user-reported: installing packages in the Quick Console hung the app and ended with "Error: reached elapsed time limit" at the RStudio prompt). `run_in_qc()` always clears its 30 s `setTimeLimit` in a `finally`. Commands that install packages (`code_installs_packages()`: install.packages, update.packages, install_*, pak, BiocManager::install, renv install/restore) now first show a warning pop-up recommending Pause + install in RStudio, with **Close** (keeps the typed code), **Install here anyway** (runs with no time limit) and **Pause Classmate** buttons. Other commands that hit the 30 s limit show a pop-up (flag `timed_out`) saying the Quick Console is for quick operations, with **Close** and **Pause Classmate**. Pause pop-up refactored into `show_pause_modal()`. Interruptible R code is stopped at 30 s; uninterruptible calls (Sys.sleep, some system calls) are only stopped when they return. NOT tested in the live app before release (parse, Help check and install-detection unit test only).
+Released in 0.5.94 (no unreleased changes):
+- Pause pop-up opened from the Quick Console (install warning / timeout pop-up) has a Cancel that returns to the Quick Console (`show_pause_modal(from_qc = TRUE)`, `pause_cancel_to_qc`). The 0.5.93 Quick Console pop-ups were then tested in the live app (install warning with Close / Install here anyway / Pause, 30 s timeout pop-up). Note: in a non-RStudio session `install.packages` can fail with "trying to use CRAN without setting a mirror" (not handled).
+
+Released in 0.5.93:
+- **Quick Console limits** (user-reported: installing packages in the Quick Console hung the app and ended with "Error: reached elapsed time limit" at the RStudio prompt). `run_in_qc()` always clears its 30 s `setTimeLimit` in a `finally`. Commands that install packages (`code_installs_packages()`: install.packages, update.packages, install_*, pak, BiocManager::install, renv install/restore) now first show a warning pop-up recommending Pause + install in RStudio, with **Close** (keeps the typed code), **Install here anyway** (runs with no time limit) and **Pause Classmate** buttons. Other commands that hit the 30 s limit show a pop-up (flag `timed_out`) saying the Quick Console is for quick operations, with **Close** and **Pause Classmate**. Pause pop-up refactored into `show_pause_modal()`. Interruptible R code is stopped at 30 s; uninterruptible calls (Sys.sleep, some system calls) are only stopped when they return. Tested in the live app in 0.5.94.
 
 Released in 0.5.92:
 - Preferences shows one line, "Claude Model: Claude Sonnet 5.5" (no "(fixed)"). `compute_diff()` ignores comments: comment-only lines and trailing comments (on lines without quotes) are not compared or highlighted; comment-only edits give no Changes tab.
@@ -340,6 +343,7 @@ Released in 0.5.83–0.5.85:
 | 0.5.87 | **Answer button** (was Ask (no code)) is now a two-stage answer pipeline: Claude answers directly from object/file summaries or requests a small read-only calculation, which runs in a sandbox and whose scrubbed summary output Claude turns into a plain-English answer. New Answer / Past answers tabs replace Code / R output / Past code while in the Answer view (tabs follow the most recent ask); Run/Explain/Fix/Load Script/Save Code Block are frozen there; "Show my working" reveals code and output; not written to the code-log notebook. |
 | 0.5.88 | Answer button privacy hardening (coded copies of identifying columns, refusal of string/sort/location tricks, geometry scrubbing, decline record requests); fixed under-counted API cost (`calc_cost`); startup disclaimer personal-data warnings split into two bold dark-red bullets |
 | 0.5.89 | Recall (Past prompts / Past code) restores answers or code with R output, plots, warnings and Changes; Back to Code / Back to Answer buttons; fixed-height Answer panes; fixed `compute_diff` crash on a changed first line; fixed session crash when the project folder or the app's own folder disappears (`cm_enter_root`, `cm_ensure_root`); help for Past code / prompts / conversations Recall buttons |
+| 0.5.94 | Cancel on the Pause pop-up returns to the Quick Console when opened from it |
 | 0.5.93 | Quick Console: install-package warning (Close / Install here anyway / Pause), 30 s timeout pop-up with Pause, time limit always cleared |
 | 0.5.92 | Preferences model line simplified; Changes tab ignores comment-only differences |
 | 0.5.91 | Load new key file moved into Preferences; allowance/expired messages gain Close and Open Preferences buttons; Changes tab comparison made robust (LCS matching, shown when >= 60% of lines unchanged, notice when not possible) |
