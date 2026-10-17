@@ -2,7 +2,7 @@
 % Please edit documentation in R/watch.R
 \name{raisehand}
 \alias{raisehand}
-\title{Ask for help with the last R error or warning}
+\title{Ask for help with the last R error, warning or message}
 \usage{
 raisehand()
 }
@@ -10,12 +10,13 @@ raisehand()
 Invisible NULL (called for side effects).
 }
 \description{
-Sends the error or warning message, recent command history, and workspace
-summary to Claude and prints a plain-English explanation. Errors take
-priority over warnings if both have been captured. Also shows your remaining
-quota if a student key is in use.
+Sends the most recent error, warning or on-screen message (whichever came
+last), with the recent command history and a workspace summary, to Claude and
+prints a plain-English explanation. Any warnings and messages printed by the
+same command are included too. Also shows your remaining quota if a student
+key is in use.
 }
 \details{
-Can also be called without a prior error or warning just to check quota
+Can also be called before anything has been captured just to check quota
 remaining.
 }

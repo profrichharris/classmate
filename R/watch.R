@@ -19,6 +19,10 @@
 .watch_env$callback_id       <- NULL
 .watch_env$original_error    <- NULL
 
+.watch_env$last_notice       <- NULL
+.watch_env$pending           <- list()
+.watch_env$handlers_on       <- FALSE
+
 .WATCH_BUFFER_SIZE <- 30L
 .WATCH_MODEL       <- "claude-haiku-5-5"
 
@@ -111,6 +115,69 @@
        reset_label = reset_label,
        over_limit  = over,
        expired     = expired)
+}
+
+
+# ---------------------------------------------------------------------------
+# Warning and message capture
+#
+# Calling handlers registered with globalCallingHandlers() see every warning (including the
+# "immediate" ones that install.packages() issues, which never reach .Last.warning) and every
+# message(), without changing what is printed. They only record; the task callback installed by
+# whisper() turns what was recorded during a command into last_warning / last_notice (and adds
+# it to last_error), once the command has finished.
+# ---------------------------------------------------------------------------
+
+.watch_record_condition <- function(type, cond) {
+  if (!isTRUE(.watch_env$active)) return(invisible(NULL))
+  txt <- trimws(paste(conditionMessage(cond), collapse = " "))
+  if (!nzchar(txt) || grepl("^\\[classmate\\]|^classmate", txt)) return(invisible(NULL))
+  cl <- tryCatch(paste(deparse(conditionCall(cond))[1], collapse = ""), error = function(e) "")
+  if (identical(cl, "NULL")) cl <- ""
+  entry <- list(type = type, text = substr(txt, 1L, 1000L), call = substr(cl, 1L, 120L))
+  .watch_env$pending <- utils::tail(c(.watch_env$pending, list(entry)), 50L)
+  invisible(NULL)
+}
+.watch_warning_handler <- function(w) .watch_record_condition("warning", w)
+.watch_message_handler <- function(m) .watch_record_condition("message", m)
+
+# globalCallingHandlers() refuses to run with other handlers on the stack (inside tryCatch() and
+# the like), so only register when called straight from the console.
+.watch_can_register_now <- function() {
+  calls <- sys.calls()
+  !any(vapply(calls, function(cl) {
+    f <- cl[[1L]]
+    is.name(f) && as.character(f) %in% c("tryCatch", "try", "withCallingHandlers", "tryCatchList",
+                                          "tryCatchOne", "withRestarts", "doTryCatch")
+  }, logical(1)))
+}
+
+.watch_register_handlers <- function() {
+  if (!.watch_can_register_now()) return(FALSE)
+  globalCallingHandlers(warning = .watch_warning_handler, message = .watch_message_handler)
+  TRUE
+}
+
+.watch_unregister_handlers <- function() {
+  if (!.watch_can_register_now()) return(invisible(FALSE))
+  h <- globalCallingHandlers()
+  mine <- vapply(h, function(f) identical(f, .watch_warning_handler) || identical(f, .watch_message_handler),
+                 logical(1))
+  if (any(mine)) {
+    globalCallingHandlers(NULL)
+    keep <- h[!mine]
+    if (length(keep) > 0) do.call(globalCallingHandlers, keep)
+  }
+  invisible(TRUE)
+}
+
+# The conditions recorded during the last command, as lines of text for a prompt
+.watch_format_notices <- function(pend) {
+  if (length(pend) == 0) return("")
+  paste(vapply(pend, function(x)
+    paste0(if (identical(x$type, "warning")) "Warning" else "Message",
+           if (nzchar(x$call %||% "")) paste0(" (from ", x$call, ")") else "", ": ", x$text),
+    character(1)), collapse = "\n")
 }
 
 # ---------------------------------------------------------------------------
@@ -231,7 +298,25 @@
     "  this is a one-shot explanation with no reply mechanism."
   )
 
-  system_prompt <- if (mode == "warning") {
+  system_prompt <- if (mode == "message") {
+    paste(
+      "You are a friendly teaching assistant helping students who are learning R.",
+      "You will receive: (1) a numbered log of the student's recent R commands,",
+      "with [MESSAGES] marking the command that printed messages; (2) the messages",
+      "themselves; (3) a summary of their current R workspace.",
+      "",
+      "Your job is to explain in plain English what the messages mean.",
+      "Say clearly whether anything needs the student's attention. Many messages are",
+      "just progress notes from a package and need no action; if so, say that. If the",
+      "messages show that something did not work (for example a package that could not",
+      "be installed or found), say what the likely cause is and how to fix it.",
+      "Keep the explanation short.",
+      "",
+      formatting_rules,
+      "",
+      lang_clause
+    )
+  } else if (mode == "warning") {
     paste(
       "You are a friendly teaching assistant helping students who are learning R.",
       "You will receive: (1) a numbered log of the student's recent R commands,",
@@ -450,9 +535,38 @@ whisper <- function(key = NULL) {
       buf <- buf[(length(buf) - .WATCH_BUFFER_SIZE + 1L):length(buf)]
     .watch_env$history_buffer <- buf
 
-    # Detect new warnings via .Last.warning (R's native warning store).
-    # Only check on successful expressions — errors are handled separately.
-    if (ok) {
+    # Warnings and messages recorded by the calling handlers during this command
+    if (isTRUE(.watch_env$handlers_on)) {
+      pend <- .watch_env$pending
+      .watch_env$pending <- list()
+      if (length(pend) > 0) {
+        is_w <- vapply(pend, function(x) identical(x$type, "warning"), logical(1))
+        if (!ok) {
+          # The error hook has already stored the error; add what was printed before it
+          if (!is.null(.watch_env$last_error)) .watch_env$last_error$notices <- pend
+        } else {
+          ws_names <- tryCatch(ls(envir = .GlobalEnv), error = function(e) character(0))
+          ws <- lapply(setNames(ws_names, ws_names), function(nm)
+            tryCatch(.watch_schema(get(nm, envir = .GlobalEnv)), error = function(e) NULL))
+          if (any(is_w)) {
+            wl <- pend[is_w]
+            .watch_env$last_warning <- list(
+              message   = paste(unique(vapply(wl, function(x) x$text, character(1))), collapse = "\n\n"),
+              call      = wl[[1]]$call,
+              notices   = pend[!is_w],
+              cmd       = cmd, history = buf, workspace = ws, time = Sys.time())
+            message("  [classmate] Type raisehand() or rh() for help with this warning.")
+          } else {
+            .watch_env$last_notice <- list(
+              notices = pend, cmd = cmd, history = buf, workspace = ws, time = Sys.time())
+          }
+        }
+      }
+    }
+
+    # Fallback when the handlers could not be registered: detect new warnings via .Last.warning
+    # (R's native warning store). Only check on successful expressions - errors are handled separately.
+    if (ok && !isTRUE(.watch_env$handlers_on)) {
       lw  <- tryCatch(get(".Last.warning", envir = baseenv()), error = function(e) NULL)
       if (!is.null(lw) && length(lw) > 0) {
         sig <- paste0(length(lw), ":",
@@ -507,6 +621,11 @@ whisper <- function(key = NULL) {
     message("  [classmate] Type raisehand() or rh() for help with this error.")
   })
 
+  # Hook 3: see every warning and message (not just those kept in .Last.warning)
+  .watch_env$pending     <- list()
+  .watch_env$last_notice <- NULL
+  .watch_env$handlers_on <- .watch_register_handlers()
+
   # Install rh() shortcut for raisehand()
   .watch_env$rh_existed <- exists("rh", .GlobalEnv, inherits = FALSE)
   assign("rh", raisehand, envir = .GlobalEnv)
@@ -523,7 +642,7 @@ whisper <- function(key = NULL) {
   }, onexit = TRUE)
 
   .watch_env$active <- TRUE
-  message("classmate whisper is running. Type raisehand() or rh() if your code generates an error or warning, or ssshh() to stop.")
+  message("classmate whisper is running. Type raisehand() or rh() to have an error, warning or message explained, or ssshh() to stop.")
   invisible(NULL)
 }
 
@@ -531,14 +650,15 @@ whisper <- function(key = NULL) {
 # raisehand()
 # ---------------------------------------------------------------------------
 
-#' Ask for help with the last R error or warning
+#' Ask for help with the last R error, warning or message
 #'
-#' Sends the error or warning message, recent command history, and workspace
-#' summary to Claude and prints a plain-English explanation. Errors take
-#' priority over warnings if both have been captured. Also shows your remaining
-#' quota if a student key is in use.
+#' Sends the most recent error, warning or on-screen message (whichever came
+#' last), with the recent command history and a workspace summary, to Claude and
+#' prints a plain-English explanation. Any warnings and messages printed by the
+#' same command are included too. Also shows your remaining quota if a student
+#' key is in use.
 #'
-#' Can also be called without a prior error or warning just to check quota
+#' Can also be called before anything has been captured just to check quota
 #' remaining.
 #'
 #' @return Invisible NULL (called for side effects).
@@ -570,8 +690,9 @@ raisehand <- function() {
   # --- Nothing captured yet --------------------------------------------------
   e <- .watch_env$last_error
   w <- .watch_env$last_warning
-  if (is.null(e) && is.null(w)) {
-    msg <- "No error or warning has been captured yet."
+  n <- .watch_env$last_notice
+  if (is.null(e) && is.null(w) && is.null(n)) {
+    msg <- "Nothing has been captured yet: no error, warning or message."
     if (!is.null(quota)) {
       msg <- paste0(msg, sprintf(
         "\nUsage so far: $%.4f of $%.2f (resets %s).",
@@ -582,10 +703,30 @@ raisehand <- function() {
     return(invisible(NULL))
   }
 
-  # --- Choose most recent, errors taking priority over warnings -------------
-  use_warning <- !is.null(w) && (is.null(e) || w$time > e$time)
+  # --- Choose whichever of the error, warning or message came last ----------
+  t_of <- function(x) if (is.null(x)) -Inf else as.numeric(x$time)
+  use_notice  <- !is.null(n) && t_of(n) > max(t_of(e), t_of(w))
+  use_warning <- !use_notice && !is.null(w) && (is.null(e) || w$time > e$time)
 
-  if (use_warning) {
+  if (use_notice) {
+    # --- Build prompt for on-screen messages ----------------------------------
+    history_lines <- vapply(seq_along(n$history), function(i) {
+      h    <- n$history[[i]]
+      flag <- if (identical(h$cmd, n$cmd)) " [MESSAGES]" else ""
+      paste0(i, ". ", h$cmd, flag)
+    }, character(1))
+    prompt <- paste0(
+      "Recent commands (oldest to newest):\n",
+      paste(history_lines, collapse = "\n"),
+      "\n\nMessages shown on screen by the last command:\n",
+      .watch_format_notices(n$notices),
+      "\n\nWorkspace:\n",
+      .watch_format_workspace(n$workspace)
+    )
+    message("classmate is thinking...")
+    result <- .watch_call_claude(prompt, .watch_env$api_key, mode = "message")
+
+  } else if (use_warning) {
     # --- Build warning prompt -----------------------------------------------
     history_lines <- vapply(seq_along(w$history), function(i) {
       h    <- w$history[[i]]
@@ -602,6 +743,8 @@ raisehand <- function() {
       "\n\nWarning message:\n",
       trimws(w$message),
       warn_call,
+      if (length(w$notices) > 0)
+        paste0("\n\nOther messages shown by the same command:\n", .watch_format_notices(w$notices)) else "",
       "\n\nWorkspace at time of warning:\n",
       .watch_format_workspace(w$workspace)
     )
@@ -627,6 +770,9 @@ raisehand <- function() {
       paste(history_lines, collapse = "\n"),
       "\n\nError message:\n",
       .watch_scrub_error_message(trimws(e$message)),
+      if (length(e$notices) > 0)
+        paste0("\n\nWarnings and messages shown by the same command before the error:\n",
+               .watch_format_notices(e$notices)) else "",
       "\n\nCall stack at time of error:\n",
       tb_lines,
       "\n\nWorkspace at time of error:\n",
@@ -681,6 +827,10 @@ ssshh <- function() {
   }
   options(error = .watch_env$original_error)
   tryCatch(removeTaskCallback(.watch_env$callback_id), error = function(e) NULL)
+  .watch_unregister_handlers()
+  .watch_env$handlers_on <- FALSE
+  .watch_env$pending     <- list()
+  .watch_env$last_notice <- NULL
   # Remove rh() shortcut unless it existed before whisper() was called
   if (!isTRUE(.watch_env$rh_existed))
     if (exists("rh", .GlobalEnv, inherits = FALSE)) rm(list = "rh", envir = .GlobalEnv)

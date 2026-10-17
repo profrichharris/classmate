@@ -186,13 +186,10 @@ classmate_reload_and_relaunch <- function(relaunch = "talk", args = list()) {
     TRUE
   }, error = function(e) FALSE)
   if (!ok) return(FALSE)
-  tryCatch({
-    do.call(getExportedValue("classmate", relaunch), args)
-    TRUE
-  }, error = function(e) {
-    message("Classmate was updated but could not restart itself (", conditionMessage(e), ").")
-    TRUE
-  })
+  # Not inside tryCatch(): whisper() registers global calling handlers, which R only allows when
+  # no other handlers are on the stack.
+  do.call(getExportedValue("classmate", relaunch), args)
+  TRUE
 }
 
 
