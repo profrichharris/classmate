@@ -2069,7 +2069,7 @@ ui <- fluidPage(
     condition = "output.has_key == true",
 
     tabsetPanel(id = "prompt_tabs", type = "tabs",
-      tabPanel("New prompt",
+      tabPanel("Your prompt",
         tags$div(style = "margin-top: 8px;",
           textAreaInput("prompt", label = NULL, rows = 4, width = "100%")
         )
@@ -3026,8 +3026,8 @@ HELP_TEXTS <- list(
 )
 
 HELP_TAB_TEXTS <- list(
-  "New prompt" = paste(
-    "New Prompt tab — This is where you type your question or instruction for the AI.",
+  "Your prompt" = paste(
+    "Your Prompt tab — This is where you type your question or instruction for the AI.",
     "Once submitted with Answer or Ask for Code, the prompt box clears ready for the next step."
   ),
   "Past prompts" = paste(
@@ -3054,10 +3054,12 @@ HELP_TAB_TEXTS <- list(
     "appends the R code that saves the plot to the end of the Code window."
   ),
   "Past code" = paste(
-    "Past Code tab — A record of every code block that has been run successfully in",
-    "this conversation. Use the Recall button next to any entry to reload that code",
-    "into the editor; if its run was captured, its prompt, R output, plots and warnings",
-    "come back too."
+    "Past Code tab — A record of the code in this conversation, newest first. A block marked",
+    "(confirmed) has been run successfully; one marked (unconfirmed) was generated or loaded",
+    "but has not been run successfully, and is replaced by a confirmed entry once it is. Use",
+    "the Recall button next to any entry to reload that code into the editor. A confirmed",
+    "entry also brings back its R output, plots and warnings; an unconfirmed one brings back",
+    "the changes from the previous version, if it had them, but no output."
   ),
   "Answer" = paste(
     "Answer tab — Shows the plain-English answer to your last question asked with the Answer button.",
@@ -3100,7 +3102,8 @@ HELP_ID_PATTERNS <- list(
   "^repeat_code_" = paste(
     "Recall (Past code) — Reloads this earlier code block into the Code editor so you can",
     "run it again or use it as a starting point. If the run of that code was captured, its",
-    "prompt, R output, plots and warnings come back with it."
+    "R output, plots and warnings come back with it. You are always taken to the Code tab, and",
+    "the prompt box is left as it is; recall a prompt from Past prompts to bring its text back."
   ),
   "^recall_prompt_" = paste(
     "Recall (Past prompts) — Brings back this earlier prompt and everything it produced: the",
@@ -3591,7 +3594,7 @@ server <- function(input, output, session) {
     if (!changes_tab_shown()) {
       insertTab("main_tabs",
         tabPanel("Changes", uiOutput("diff_ui")),
-        target = "Past code", position = "after", select = FALSE)
+        target = "Code", position = "after", select = FALSE)   # tab order: Code, Changes, R output, Past code
       changes_tab_shown(TRUE)
     }
     goto_tab("Changes")
@@ -3630,7 +3633,7 @@ server <- function(input, output, session) {
   hide_past_convs_tab <- function() {
     if (past_convs_tab_shown()) {
       if (isTRUE(isolate(input$prompt_tabs) == "Past conversations"))
-        updateTabsetPanel(session, "prompt_tabs", selected = "New prompt")
+        updateTabsetPanel(session, "prompt_tabs", selected = "Your prompt")
       removeTab("prompt_tabs", "Past conversations")
       past_convs_tab_shown(FALSE)
     }
@@ -3671,13 +3674,14 @@ server <- function(input, output, session) {
     capture_active_code()
     ph <- prompt_history()
     rh <- run_history()
-    if (length(ph) == 0 && length(rh) == 0) return(invisible(NULL))
+    if (length(ph) == 0 && length(rh) == 0 && length(unconf_code()) == 0) return(invisible(NULL))
     summary <- make_conversation_summary(ph, api_key_val())
     entry <- list(
       id          = as.numeric(Sys.time()),
       summary     = summary,
       prompts     = ph,
       codes       = rh,
+      unconf      = unconf_code(),
       log_entries = all_log_entries(),
       files       = unique(selected_files()),
       objects     = unique(selected_objects()),
@@ -4151,7 +4155,8 @@ server <- function(input, output, session) {
     full_history <- run_history()
     # Keep original indices so button IDs match the observer's lookup
     keep_idx <- which(vapply(full_history, function(e) identical(e$source, "ask_code"), logical(1)))
-    if (length(keep_idx) == 0)
+    unconf   <- unconf_code()
+    if (length(keep_idx) == 0 && length(unconf) == 0)
       return(tags$p(em("No code blocks yet."), style = "color: #999; margin: 4px 0; font-size: 0.9em;"))
 
     make_label <- function(entry) {
@@ -4167,32 +4172,65 @@ server <- function(input, output, session) {
       }
       if (nchar(lbl) > 60) paste0(substr(lbl, 1, 57), "...") else lbl
     }
+    ts_of <- function(e) if (is.null(e$ts)) 0 else as.numeric(e$ts)
 
-    # Newest at top — iterate in reverse order, using original indices
-    items <- lapply(rev(keep_idx), function(i) {
-      entry  <- full_history[[i]]
-      label  <- make_label(entry)
-      btn_id <- paste0("repeat_code_", i)
-      div(style = "display: flex; align-items: flex-start; border-bottom: 1px solid #eee; padding: 3px 0;",
-        tags$p(label, style = paste0(
-          "margin: 0; flex: 1; font-size: 0.85em; color: #444;",
-          "white-space: pre-wrap; word-break: break-word;"
-        )),
-        actionButton(btn_id, "Recall",
-          style = paste0(
-            "flex-shrink: 0; margin-left: 6px; padding: 1px 6px;",
-            "font-size: 0.75em; background: white;",
-            "border: 1px solid #bbb; border-radius: 3px;",
-            "cursor: pointer; color: #555; height: auto;"
-          )
-        )
+    # Confirmed (run successfully) and unconfirmed entries together, newest first
+    rows <- c(lapply(keep_idx, function(i) list(kind = "confirmed", i = i, e = full_history[[i]], pos = i)),
+              lapply(unconf, function(e) list(kind = "unconfirmed", e = e, pos = 0L)))
+    ord  <- order(-vapply(rows, function(r) ts_of(r$e), numeric(1)), -vapply(rows, function(r) r$pos, numeric(1)))
+    btn_style <- paste0(
+      "flex-shrink: 0; margin-left: 6px; padding: 1px 6px;",
+      "font-size: 0.75em; background: white;",
+      "border: 1px solid #bbb; border-radius: 3px;",
+      "cursor: pointer; color: #555;")
+    items <- lapply(rows[ord], function(r) {
+      conf <- identical(r$kind, "confirmed")
+      div(style = "display: flex; align-items: flex-start; border-bottom: 1px solid #eee; padding: 2px 0;",
+        tags$p(make_label(r$e), style = paste0(
+          "margin: 0; flex: 1;",
+          "font-size: 0.85em; color: #444;",
+          "white-space: pre-wrap; word-break: break-word;")),
+        tags$span(style = "flex-shrink: 0; margin: 2px 6px 0 6px; font-size: 0.72em; color: #888;",
+                  if (conf) "(confirmed)" else "(unconfirmed)"),
+        if (conf)
+          tags$button("Recall", id = paste0("repeat_code_", r$i), style = btn_style,
+                      onclick = paste0("Shiny.setInputValue('repeat_code_", r$i,
+                                       "', Math.random(), {priority: 'event'});"))
+        else
+          tags$button("Recall", id = paste0("recall_unconf_", r$e$uid), style = btn_style,
+                      onclick = paste0("Shiny.setInputValue('recall_unconf_code', ", as.integer(r$e$uid),
+                                       ", {priority: 'event'});"))
       )
     })
     tagList(items)
   })
 
+  # Recall an unconfirmed entry: its code, and the changes from the previous version if it had them,
+  # but no R output (it has not been run)
+  observeEvent(input$recall_unconf_code, {
+    e <- Filter(function(x) identical(as.integer(x$uid), as.integer(input$recall_unconf_code)), unconf_code())
+    req(length(e) == 1)
+    e <- e[[1]]
+    capture_active_code()
+    rec <- NULL
+    if (!is.null(e$seq)) for (r in interactions()) if (identical(r$seq, e$seq)) { rec <- r; break }
+    if (!is.null(rec)) {
+      recall_interaction(rec, code_override = e$code, prefer = "code")
+    } else {
+      set_ask_mode("code")
+      hide_changes_tab()
+      updateAceEditor(session, "code_editor", value = e$code)
+      last_run_code(NULL)
+      last_prompt_for_code(e$prompt %||% "")      # what this code is, if it is later run and confirmed
+      last_code_description(if (identical(e$source, "script")) "" else (e$description %||% ""))
+      loaded_script_name(if (identical(e$source, "script")) e$description else NULL)
+      goto_tab("Code")
+    }
+    unconf_code(lapply(unconf_code(), function(x) { if (identical(x$uid, e$uid)) x$ts <- Sys.time(); x }))
+  })
+
   # Past code "Recall": reload that code block; if it is the code that produced a captured
-  # run, bring back its prompt, R output, plots and warnings too. Observers are registered
+  # run, bring back its R output, plots and warnings too (not its prompt: use Past prompts for that). Observers are registered
   # once per button (button i = i-th entry of the current run history).
   repeat_obs <- new.env()
   observe({
@@ -4206,18 +4244,20 @@ server <- function(input, output, session) {
           h <- run_history()
           if (ii > length(h)) return()
           entry <- h[[ii]]
-          run_history(c(list(entry), h[-ii]))
+          h[[ii]]$ts <- Sys.time()      # brings it to the top of the list
+          run_history(h)
           capture_active_code()
           rec <- NULL
           for (r in interactions())
             if (identical(r$kind, "code") && !is.null(r$last_run_code) &&
                 identical(trimws(r$last_run_code), trimws(entry$code))) { rec <- r; break }
           if (!is.null(rec)) {
-            recall_interaction(rec, code_override = entry$code)
-            if (nzchar(entry$prompt %||% "")) updateTextAreaInput(session, "prompt", value = entry$prompt)
+            recall_interaction(rec, code_override = entry$code, prefer = "code")   # the prompt box is left alone: Past prompts recalls prompts
           } else {
             updateAceEditor(session, "code_editor", value = entry$code)
             last_run_code(NULL)
+            last_prompt_for_code(entry$prompt %||% "")
+            last_code_description(entry$description %||% "")
             goto_tab("Code")
           }
         }, ignoreInit = TRUE)
@@ -4236,7 +4276,7 @@ server <- function(input, output, session) {
     if (!is.null(rec)) recall_interaction(rec)
     # An Export entry has no prompt of its own, so the prompt box is left blank
     updateTextAreaInput(session, "prompt", value = if (isTRUE(rec$export)) "" else p)
-    updateTabsetPanel(session, "prompt_tabs", selected = "New prompt")
+    updateTabsetPanel(session, "prompt_tabs", selected = "Your prompt")
   })
 
   # --- Past Conversations ----------------------------------------------------
@@ -4304,6 +4344,7 @@ server <- function(input, output, session) {
     # Restore prompts, code history, and file/object context
     prompt_history(recalled$prompts)
     run_history(recalled$codes)
+    unconf_code(recalled$unconf %||% list())
     selected_files(  recalled$files   %||% character(0))
     selected_objects(recalled$objects %||% character(0))
     # Restore log entries so the notebook continues from where this conversation left off
@@ -4413,6 +4454,8 @@ server <- function(input, output, session) {
     }
     loaded_script_name(fname)
     last_prompt_for_code("")    # a loaded script has no prompt behind it
+    last_code_description("")   # and is described by its file name (loaded_script_name)
+    unconf_add(script_text, "", fname, "script")
     updateAceEditor(session, "code_editor", value = script_text)
     goto_tab("Code")
   })
@@ -4718,15 +4761,20 @@ server <- function(input, output, session) {
       r   <- recs[[i[1]]]
       cur <- input$main_tabs
       r$editor_code   <- input$code_editor %||% ""
-      r$console       <- console_output_rv()
-      r$warnings      <- warnings_rv()
-      r$plots         <- plot_files_rv()
-      r$last_run_code <- last_run_code()
-      r$failed        <- isTRUE(last_run_failed())
-      r$error         <- last_error_msg()
+      # The run state belongs to this interaction only if the last run was of its code (as generated or
+      # as now edited); otherwise it is left over from an earlier interaction and is not kept
+      lr       <- last_run_code()
+      ran_this <- !is.null(lr) && (identical(trimws(lr), trimws(r$editor_code)) ||
+                                   identical(trimws(lr), trimws(r$code %||% "")))
+      r$last_run_code <- if (ran_this) lr else NULL
+      r$console       <- if (ran_this) console_output_rv() else character(0)
+      r$warnings      <- if (ran_this) warnings_rv()       else character(0)
+      r$plots         <- if (ran_this) plot_files_rv()     else character(0)
+      r$failed        <- ran_this && isTRUE(last_run_failed())
+      r$error         <- if (ran_this) last_error_msg() else ""
       r$diff          <- diff_rv()
       r$tab <- if (identical(ask_mode(), "answer")) prior_code_tab()
-               else if (isTRUE(cur %in% CODE_SIDE_TABS)) cur else (r$tab %||% "Code")
+               else if (isTRUE(cur %in% setdiff(CODE_SIDE_TABS, "Past code"))) cur else (r$tab %||% "Code")   # Past code is only a list, not a place to return to
       recs[[i[1]]] <- r
       interactions(recs)
     })
@@ -4736,7 +4784,11 @@ server <- function(input, output, session) {
     for (r in isolate(interactions())) if (identical(r$prompt, p)) return(r)
     NULL
   }
-  recall_interaction <- function(rec, code_override = NULL) {
+  # `prefer` decides which tab a code recall opens: "prompt" (from Past prompts) takes the R output if
+  # there is any, else the Changes tab if there are changes, else Code; "code" (from Past code)
+  # always opens the Code tab. An answer always opens the Answer tab.
+  recall_interaction <- function(rec, code_override = NULL, prefer = c("prompt", "code")) {
+    prefer <- match.arg(prefer)
     capture_active_code()
     if (identical(rec$kind, "answer")) {
       ent    <- rec$entry
@@ -4765,8 +4817,12 @@ server <- function(input, output, session) {
     code_before_fix(NULL)
     diff_rv(rec$diff)
     if (!is.null(rec$diff)) show_changes_tab()
-    tab <- rec$tab %||% "Code"
-    if (identical(tab, "Changes") && is.null(rec$diff)) tab <- "Code"
+    has_output <- (length(rec$console %||% character(0)) > 0 && any(nzchar(rec$console))) ||
+                  length(isolate(plot_files_rv())) > 0 || length(rec$warnings %||% character(0)) > 0
+    tab <- if (identical(prefer, "code")) "Code"
+           else if (has_output) "R output"
+           else if (!is.null(rec$diff)) "Changes"
+           else "Code"
     goto_tab(tab)
     output$run_status <- renderUI(NULL)
     active_code_id(rec$seq)
@@ -4787,6 +4843,23 @@ server <- function(input, output, session) {
   last_code_description <- reactiveVal("")
   loaded_script_name    <- reactiveVal(NULL)
   run_history          <- reactiveVal(if (!is.null(ps)) ps$run_history          else list())
+  # Code that has been generated or loaded but not (yet) run successfully, newest first; each entry:
+  # uid, code, prompt, description, source ("ask" / "script"), seq (its interaction, if any), ts.
+  # It is listed in Past code as "(unconfirmed)" and replaced by a confirmed entry once run.
+  unconf_code          <- reactiveVal(if (!is.null(ps)) (ps$unconf_code %||% list()) else list())
+  # Unique ids for the entries (next_seq() only counts interactions, so it cannot be used for this)
+  unconf_uid_n <- max(c(0L, vapply(isolate(unconf_code()), function(e) as.integer(e$uid %||% 0L), integer(1))))
+  unconf_next_uid <- function() { unconf_uid_n <<- unconf_uid_n + 1L; unconf_uid_n }
+  unconf_add <- function(code, prompt = "", description = "", source = "ask", seq = NULL) {
+    if (!nzchar(trimws(code %||% ""))) return(invisible(NULL))
+    keep <- Filter(function(e) !identical(trimws(e$code), trimws(code)), isolate(unconf_code()))
+    unconf_code(c(list(list(uid = unconf_next_uid(), code = code, prompt = prompt %||% "",
+                            description = description %||% "", source = source, seq = seq,
+                            ts = Sys.time())), keep))
+    invisible(NULL)
+  }
+  unconf_remove_code <- function(code)
+    unconf_code(Filter(function(e) !identical(trimws(e$code), trimws(code)), isolate(unconf_code())))
   pending_log_entries  <- reactiveVal(if (!is.null(ps)) ps$pending_log_entries  else list())
   all_log_entries      <- reactiveVal(if (!is.null(ps)) ps$all_log_entries      else list())
   last_logged_code     <- reactiveVal(if (!is.null(ps)) ps$last_logged_code     else "")
@@ -5224,6 +5297,7 @@ server <- function(input, output, session) {
     hide_changes_tab()
     conversation_history(list())
     run_history(list())
+    unconf_code(list())
     answer_latest(NULL)
     answer_hist(list())
     interactions(list())
@@ -5824,9 +5898,6 @@ server <- function(input, output, session) {
       if (!is.null(d)) show_changes_tab() else {
         hide_changes_tab()
         goto_tab("Code")
-        if (nzchar(trimws(old_editor_code)) && !identical(trimws(old_editor_code), trimws(parts$code)))
-          showNotification("The new code differs too much from the previous code to show a side-by-side comparison.",
-                           type = "message", duration = 6)
       }
       sq <- add_interaction(list(kind = "code", prompt = current_prompt, code = parts$code,
                                  description = parts$description %||% "", editor_code = parts$code,
@@ -5834,6 +5905,7 @@ server <- function(input, output, session) {
                                  last_run_code = NULL, failed = FALSE, error = "", diff = d,
                                  tab = if (!is.null(d)) "Changes" else "Code"))
       active_code_id(sq)
+      unconf_add(parts$code, current_prompt, parts$description, "ask", sq)
       if (isTRUE(input$autorun_code) && nzchar(trimws(parts$code))) autorun_text <- parts$code
     }, finally = { enable("ask_code"); enable("ask_plain") })
     # AutoRun Code: run what was just generated (passed directly, as the editor's own value has not
@@ -6630,6 +6702,7 @@ server <- function(input, output, session) {
         if (run_result$success) {
           last_run_failed(FALSE)
           last_error_msg("")
+          unconf_remove_code(code_text)    # now confirmed (listed under its confirmed entry)
           new_pkgs <- vapply(extract_pkg_info(code_text), `[[`, character(1), "pkg")
           loaded_packages(unique(c(loaded_packages(), new_pkgs)))
           if (!identical(trimws(code_text), trimws(last_logged_code()))) {
@@ -6642,7 +6715,7 @@ server <- function(input, output, session) {
               ""
             }
             entry <- list(prompt = last_prompt_for_code(), code = code_text,
-                          description = desc, source = "ask_code")
+                          description = desc, source = "ask_code", ts = Sys.time())
             run_history(c(run_history(), list(entry)))
             pending_log_entries(c(pending_log_entries(), list(entry)))
             all_log_entries(c(all_log_entries(), list(entry)))
@@ -6792,7 +6865,8 @@ server <- function(input, output, session) {
         last_run_failed(FALSE)
         code_before_fix(NULL)
         entry <- list(prompt = last_prompt_for_code(), code = captured_fixed_code,
-                      description = last_code_description(), source = "ask_code")
+                      description = last_code_description(), source = "ask_code", ts = Sys.time())
+        unconf_remove_code(captured_fixed_code)
         run_history(c(run_history(), list(entry)))
         pending_log_entries(c(pending_log_entries(), list(entry)))
         all_log_entries(c(all_log_entries(), list(entry)))
@@ -7000,6 +7074,7 @@ server <- function(input, output, session) {
       conversation_history = conversation_history(),
       saved_conversations  = saved_conversations(),
       run_history          = run_history(),
+      unconf_code          = unconf_code(),
       pending_log_entries  = pending_log_entries(),
       all_log_entries      = all_log_entries(),
       last_extracted_code  = last_extracted_code(),
