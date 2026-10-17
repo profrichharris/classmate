@@ -990,7 +990,7 @@ code_too_long <- function(code, max_lines) {
 # LCS-based diff: matches new lines forward through old lines, extracts just the
 # old section that corresponds to the new code, and identifies changed lines in both
 # panels. Returns NULL when there is no difference or the change is too substantial (< 60% of lines unchanged).
-compute_diff <- function(old_code, new_code) {
+compute_diff <- function(old_code, new_code, max_changed_frac = 0.4) {
   old_lines <- strsplit(old_code, "\n", fixed = TRUE)[[1]]
   new_lines <- strsplit(new_code, "\n", fixed = TRUE)[[1]]
   # Comments are ignored: a trailing comment is dropped (only when the line has no quotes, so a
@@ -1027,7 +1027,7 @@ compute_diff <- function(old_code, new_code) {
   changed_new <- which(is.na(new_to_old) & nzchar(new_norm))
   n_changed   <- length(changed_new)
   if (n_changed == 0) return(NULL)
-  if (n_changed / max(length(ni), 1L) > 0.4) return(NULL)   # need >= 60% of lines unchanged
+  if (n_changed / max(length(ni), 1L) > max_changed_frac) return(NULL)   # default: need >= 60% of lines unchanged
 
   matched_old <- sort(unique(new_to_old[!is.na(new_to_old)]))
   if (length(matched_old) < 1) return(NULL)   # codes too different to be comparable
@@ -1056,6 +1056,9 @@ compute_diff <- function(old_code, new_code) {
       old_changed <- c(old_changed, rel[rel >= 1L & rel <= n_old_sec])
     }
   }
+
+  # Comment-only and blank lines on the old side are not "changed" lines (comments are ignored)
+  old_changed <- old_changed[nzchar(old_norm[old_start + old_changed - 1L])]
 
   list(
     old_lines   = old_section,
@@ -1120,6 +1123,52 @@ start_pkg_install <- function(cran_pkgs, github_refs, repos) {
   )
 }
 
+# For each plot shown in the R output tab (keyed by the path of its PNG): the lines of code that
+# drew it, found while the code ran (see run_code()). Used to write the "save this plot" code.
+plot_code_cache <- new.env(parent = emptyenv())
+
+# Width, height and units of a "Target size" choice from Preferences, e.g.
+# "Journal double col. (180x120 mm)" -> list(w = 180, h = 120, units = "mm")
+plot_export_size <- function(label) {
+  m <- regmatches(label, regexec("([0-9.]+)x([0-9.]+) *(mm|in|cm)", label))[[1]]
+  if (length(m) < 4) return(list(w = 7, h = 5, units = "in"))
+  list(w = as.numeric(m[2]), h = as.numeric(m[3]), units = if (m[4] == "cm") "cm" else m[4])
+}
+plot_export_dpi <- function(quality) switch(quality, Low = 96, Medium = 150, High = 300, 150)
+
+# A free name for a plot object: map (tmap), p (ggplot2) or fig, with a number added if it is taken
+tidy_plot_name <- function(cls, code) {
+  base_nm <- if ("tmap" %in% cls) "map" else if (any(c("gg", "ggplot") %in% cls)) "p" else "fig"
+  used <- c(ls(envir = globalenv()),
+            tryCatch(all.names(parse(text = code, keep.source = FALSE)), error = function(e) character(0)))
+  nm <- base_nm; k <- 1L
+  while (nm %in% used) { k <- k + 1L; nm <- paste0(base_nm, k) }
+  nm
+}
+
+# The R code that saves a plot: open the device with the chosen options, draw, close the device.
+# `snippet` is the code that draws the plot; `file` is relative to the working directory.
+build_plot_export_code <- function(snippet, file, format, quality, size) {
+  sz  <- plot_export_size(size); dpi <- plot_export_dpi(quality)
+  num <- function(x) format(round(x, 2), trim = TRUE, nsmall = 0)
+  q   <- deparse(file)
+  dims <- sprintf("width = %s, height = %s, units = \"%s\"", num(sz$w), num(sz$h), sz$units)
+  jq   <- switch(quality, Low = 70, Medium = 85, High = 95, 85)
+  to_in <- function(x) x / switch(sz$units, mm = 25.4, cm = 2.54, `in` = 1)
+  dev_call <- switch(format,
+    png = sprintf("png(%s, %s, res = %d)", q, dims, dpi),
+    jpg = sprintf("jpeg(%s, %s, res = %d, quality = %d)", q, dims, dpi, jq),
+    tif = sprintf("tiff(%s, %s, res = %d, compression = \"lzw\")", q, dims, dpi),
+    bmp = sprintf("bmp(%s, %s, res = %d)", q, dims, dpi),
+    pdf = sprintf("pdf(%s, width = %s, height = %s)", q, num(to_in(sz$w)), num(to_in(sz$h))),
+    stop("Unknown format"))
+  what <- if (identical(format, "pdf"))
+    sprintf("pdf, %s x %s in", num(to_in(sz$w)), num(to_in(sz$h)))
+  else sprintf("%s, %d dpi, %s x %s %s", format, dpi, num(sz$w), num(sz$h), sz$units)
+  paste(c(sprintf("# Save the plot to a file (%s)", what), dev_call,
+          trimws(snippet, which = "right"), "invisible(dev.off())"), collapse = "\n")
+}
+
 run_code <- function(code_text) {
   warnings_seen  <- character(0)
   console_output <- character(0)
@@ -1140,10 +1189,36 @@ run_code <- function(code_text) {
   grDevices::png(tmp_pattern, width = 900, height = 675, res = 120, bg = "white")
   plot_dev <- grDevices::dev.cur()
 
+  # Note which top-level statement starts each new plot page (base, grid, ggplot2, tmap...), so that
+  # the code that drew a plot can be found later (see plot_code_cache). The code is evaluated one
+  # statement at a time, as source(print.eval = TRUE) would.
+  grDevices::dev.control("enable")     # keep the display list, to see which statements draw
+  exprs <- NULL; cur_expr <- 0L; starts <- integer(0); drew <- integer(0); n_prev <- 0L
+  vis_cls <- list()    # statement number -> class of the value it printed, when it printed one
+  note_page <- function(...) starts <<- c(starts, cur_expr)
+  hook_names <- c("before.plot.new", "before.grid.newpage")
+  old_hooks  <- lapply(hook_names, getHook)
+  for (h in hook_names) setHook(h, note_page, "append")
+  on.exit({
+    for (i in seq_along(hook_names)) setHook(hook_names[i], old_hooks[[i]], "replace")
+  }, add = TRUE)
+
   result <- tryCatch({
     console_output <- capture.output({
       withCallingHandlers({
-        source(textConnection(code_text), local = FALSE, print.eval = TRUE)
+        exprs <- parse(text = code_text, keep.source = TRUE)
+        for (i in seq_along(exprs)) {
+          cur_expr <- i
+          yy <- withVisible(eval(exprs[[i]], envir = globalenv()))
+          if (yy$visible && !is.null(yy$value)) vis_cls[[as.character(i)]] <- class(yy$value)
+          if (yy$visible) {
+            if (isS4(yy$value)) methods::show(yy$value) else print(yy$value)
+          }
+          # Did this statement draw anything? (a new page, or a change to the current page)
+          n_now <- tryCatch(length(grDevices::recordPlot()[[1]]), error = function(e) n_prev)
+          if (n_now != n_prev || i %in% starts) drew <- c(drew, i)
+          n_prev <- n_now
+        }
       }, warning = function(w) {
         warnings_seen <<- c(warnings_seen, strip_ansi(conditionMessage(w)))
         invokeRestart("muffleWarning")
@@ -1160,7 +1235,32 @@ run_code <- function(code_text) {
   # Close device and collect any non-blank plot files (blank PNG ≈ < 8 KB)
   tryCatch(grDevices::dev.off(plot_dev), error = function(e) invisible(NULL))
   candidates <- sort(Sys.glob(paste0(tmp_base, "*.png")))
-  plot_files <- candidates[file.exists(candidates) & file.size(candidates) > 8192]
+  keep       <- file.exists(candidates) & file.size(candidates) > 8192
+  plot_files <- candidates[keep]
+  # Work out the lines of code behind each plot page. Only when the statements line up one-to-one
+  # with the pages written, and each page began in a different statement; otherwise no code is offered.
+  if (isTRUE(result$success) && !is.null(exprs) && length(starts) == length(candidates) &&
+      length(starts) > 0 && !anyDuplicated(starts)) {
+    refs  <- attr(exprs, "srcref")
+    lines <- strsplit(code_text, "\n", fixed = TRUE)[[1]]
+    if (!is.null(refs)) for (i in which(keep)) {
+      span_end <- if (i < length(starts)) starts[i + 1L] - 1L else length(exprs)
+      in_span  <- drew[drew >= starts[i] & drew <= span_end]
+      last_expr <- if (length(in_span) > 0) max(in_span) else starts[i]   # drop trailing non-drawing statements
+      from <- refs[[starts[i]]][1L]; to <- refs[[last_expr]][3L]
+      # What kind of statement drew it? "value": one statement whose printed value is the plot (a ggplot
+      # or tmap object typed without assigning it); "symbol": just an object's name; "plain": anything
+      # else (plot(), lines(), print(p) ... which draw as a side effect and are repeated as they are).
+      single <- identical(last_expr, starts[i])
+      cls    <- vis_cls[[as.character(starts[i])]]
+      kind   <- if (single && !is.null(cls) && is.name(exprs[[starts[i]]])) "symbol"
+                else if (single && !is.null(cls)) "value" else "plain"
+      assign(candidates[i], list(code = paste(lines[from:to], collapse = "\n"), kind = kind,
+                                 cls = cls %||% character(0),
+                                 sym = if (identical(kind, "symbol")) as.character(exprs[[starts[i]]]) else ""),
+             envir = plot_code_cache)
+    }
+  }
 
   # If the code changed the working directory (setwd()), make that the new root
   wd_changed <- NULL
@@ -1907,26 +2007,7 @@ ui <- fluidPage(
     })();
   ")),
 
-  # Lightbox overlay for plot thumbnails
-  tags$div(
-    id = "classmate-lb-overlay",
-    style = paste0(
-      "display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;",
-      "background: rgba(0,0,0,0.75); z-index: 99998;",
-      "align-items: center; justify-content: center;"
-    ),
-    onclick = "this.style.display='none';",
-    tags$img(
-      id    = "classmate-lb-img",
-      src   = "",
-      style = paste0(
-        "max-width: 90%; max-height: 90vh;",
-        "border-radius: 6px; box-shadow: 0 4px 24px rgba(0,0,0,0.5);"
-      )
-    )
-  ),
-
-  # Tell-me-more inner window (sits above the explanation modal, below the lightbox)
+  # Tell-me-more inner window (sits above the explanation modal)
   tags$div(
     id = "tell-more-overlay",
     style = paste0(
@@ -2104,6 +2185,25 @@ ui <- fluidPage(
           document.getElementById('mode_switch_answer_lbl').style.fontWeight = cb.checked ? 'bold' : 'normal';
         }
         window.cmSetModeSwitch = function(answer) { cb.checked = !!answer; paint(); };
+        // Highlight (and scroll to) a prompt in the Past prompts list
+        function cmHighlight(msg) {
+          document.querySelectorAll('.cm-prompt-row.cm-hl').forEach(function(r) { r.classList.remove('cm-hl'); });
+          if (!msg || !msg.text) return;
+          var rows = document.querySelectorAll('.cm-prompt-row');
+          for (var i = 0; i < rows.length; i++) {
+            if (rows[i].getAttribute('data-p') === msg.text) {
+              rows[i].classList.add('cm-hl');
+              rows[i].scrollIntoView({block: 'nearest'});
+              break;
+            }
+          }
+        }
+        function cmRegister() {
+          if (window.Shiny && Shiny.addCustomMessageHandler) Shiny.addCustomMessageHandler('cm_highlight_prompt',
+            function(msg) { setTimeout(function() { cmHighlight(msg); }, 150); });
+          else setTimeout(cmRegister, 200);
+        }
+        cmRegister();
         cb.addEventListener('change', function() {
           paint();
           if (window.Shiny) Shiny.setInputValue('mode_switch_clicked', cb.checked ? 'answer' : 'code', {priority: 'event'});
@@ -2115,6 +2215,7 @@ ui <- fluidPage(
       #main_tabs .cm-switch-li { float: left; margin: 0 0 0 16px; padding-top: 7px; font-size: 0.85em; color: #333; }
       #main_tabs .cm-switch-li > * { vertical-align: middle; }
       .cm-switch-lbl { display: inline-block; margin: 0 6px; }
+      .cm-prompt-row.cm-hl { background-color: #fff3b0; border-radius: 3px; }
       .cm-switch { position: relative; display: inline-block; width: 36px; height: 18px; margin: 0; }
       .cm-switch input { opacity: 0; width: 0; height: 0; }
       .cm-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
@@ -2837,9 +2938,9 @@ HELP_TEXTS <- list(
   mode_switch = paste(
     "Code / Answer switch — Appears at the end of the tab bar once you have both code and an",
     "answer. The slider shows which you are looking at (Code on the left, Answer on the right):",
-    "click it to switch between the code tabs and the Answer tabs; the prompt behind what you are",
-    "now viewing returns to the prompt box (blank for a loaded script). It also moves by itself",
-    "when you use Ask for Code (to Code) or the Answer button (to Answer)."
+    "click it to switch between the code tabs and the Answer tabs; the Past prompts tab then opens",
+    "with the prompt behind what you are now viewing highlighted (none for a loaded script). It also",
+    "moves by itself when you use Ask for Code (to Code) or the Answer button (to Answer)."
   ),
   run_code = paste(
     "Run — Executes the code currently in the editor. Results and any plots",
@@ -2937,10 +3038,10 @@ HELP_TAB_TEXTS <- list(
   ),
   "Past prompts" = paste(
     "Past Prompts tab — Shows a history of all the prompts you have sent to the AI",
-    "in this conversation, marked Answer or Code according to what they produced. Use the",
-    "Recall button beside an entry to bring it all back: the prompt returns to the prompt",
-    "box, and you are taken back to its answer, or to its code with the R output, plots and",
-    "warnings it produced if it was run."
+    "in this conversation, marked Answer or Code according to what they produced; code added",
+    "to save a plot appears as an Export entry. Use the Recall button beside an entry to bring",
+    "it all back: the prompt returns to the prompt box (blank for an Export entry), and you are",
+    "taken back to its answer, or to its code with the R output, plots and warnings it produced."
   ),
   "Past conversations" = paste(
     "Past Conversations tab — Appears once you have started a New Conversation and",
@@ -2954,7 +3055,9 @@ HELP_TAB_TEXTS <- list(
   "R output" = paste(
     "R Output tab — Displays the results of running your code: printed values, tables,",
     "statistical summaries, and plots. When more than one type of output is produced,",
-    "separate Plots, Results, and Warnings sub-tabs appear."
+    "separate Plots, Results, and Warnings sub-tabs appear. Click a plot to enlarge it; in",
+    "that window you can choose a file name, format, quality and size and press Add to code, which",
+    "appends the R code that saves the plot to the end of the Code window."
   ),
   "Past code" = paste(
     "Past Code tab — A record of every code block that has been run successfully in",
@@ -3007,8 +3110,8 @@ HELP_ID_PATTERNS <- list(
   ),
   "^recall_prompt_" = paste(
     "Recall (Past prompts) — Brings back this earlier prompt and everything it produced: the",
-    "prompt returns to the prompt box, and you are taken back to its answer, or to its code",
-    "with the R output, plots and warnings if it was run."
+    "prompt returns to the prompt box (blank for an Export entry), and you are taken back to",
+    "its answer, or to its code with the R output, plots and warnings if it was run."
   ),
   "^recall_answer_" = paste(
     "Recall (Past answers) — Brings this earlier answer back into the Answer tab. The answer it",
@@ -3618,6 +3721,122 @@ server <- function(input, output, session) {
     )
   })
 
+  # --- Expanded plot: add code that saves it to a file -----------------------------------
+  # The expanded plot offers the Preferences image options plus a file name, and appends standard
+  # R code (png(), pdf()... around the statements that drew the plot) to the Code window. Running
+  # that block runs only the block, not the whole script (see pending_export).
+  expanded_plot  <- reactiveVal(NULL)   # full path of the PNG being shown
+  pending_export <- reactiveVal(NULL)   # list(snippet = <block appended>, full = <editor text after>)
+  export_ext     <- function(fmt) switch(fmt, jpg = "jpg", tif = "tif", fmt)
+  observeEvent(input$plot_expand, {
+    f <- plot_files_rv()
+    f <- f[basename(f) == input$plot_expand]
+    req(length(f) == 1)
+    expanded_plot(f)
+    has_code <- exists(f, envir = plot_code_cache, inherits = FALSE)
+    showModal(modalDialog(
+      title = "Plot",
+      size  = "l",
+      tags$div(style = "text-align: center; max-height: 45vh; overflow: auto;",
+        tags$img(src = paste0("/classmate_plots/", basename(f)),
+                 style = "max-width: 100%; height: auto; border: 1px solid #ddd;")),
+      tags$hr(),
+      if (has_code) tagList(
+        tags$h5("Save this plot to a file"),
+        fluidRow(
+          column(3, textInput("plot_exp_name", "File name:", value = paste0("plot_", length(plot_files_rv()), "_", match(f, plot_files_rv()), ""))),
+          column(3, selectInput("plot_exp_format", "Format:",
+            choices = c("png", "jpg", "pdf", "tif", "bmp"), selected = prefs$img_format)),
+          column(3, selectInput("plot_exp_quality", "Quality / resolution:",
+            choices = c("Low", "Medium", "High"), selected = prefs$img_quality)),
+          column(3, selectInput("plot_exp_size", "Target size:",
+            choices = c(
+              "Journal single col. (90x90 mm)",
+              "Journal double col. (180x120 mm)",
+              "A4 (210x297 mm)", "A3 (297x420 mm)", "Letter (8.5x11 in)",
+              "4x6 in / 10x15 cm", "5x7 in / 13x18 cm", "8x10 in / 20x25 cm",
+              "Square 6x6 in"
+            ), selected = prefs$img_size))
+        ),
+        uiOutput("plot_exp_note"),
+        tags$p(em("Add to code appends the R code that saves the plot, in your working directory, to the end of the Code window."),
+               style = "font-size: 0.85em; color: #888;")
+      ) else tags$p(em("Classmate could not work out which lines of code drew this plot, so it cannot write the saving code for it."),
+                    style = "font-size: 0.85em; color: #888;"),
+      footer = tagList(
+        modalButton("Close"),
+        if (has_code) actionButton("plot_exp_add", "Add to code", class = "btn-primary")),
+      easyClose = TRUE
+    ))
+  })
+  plot_exp_file <- reactive({
+    nm  <- trimws(basename(input$plot_exp_name %||% ""))
+    fmt <- input$plot_exp_format %||% "png"
+    if (!nzchar(nm)) nm <- "plot"
+    nm <- sub("\\.[A-Za-z0-9]{1,4}$", "", nm)      # the extension always follows the format
+    paste0(nm, ".", export_ext(fmt))
+  })
+  output$plot_exp_note <- renderUI({
+    if (file.exists(file.path(project_root(), plot_exp_file())))
+      tags$p(paste0(plot_exp_file(), " already exists in your working directory and will be overwritten."),
+             style = "color: #b36b00; font-size: 0.85em;")
+  })
+  observeEvent(input$plot_exp_add, {
+    f <- expanded_plot(); req(f)
+    capture_active_code()    # keep the code and output that made the plot, for Recall
+    info <- get(f, envir = plot_code_cache)
+    base <- sub("[[:space:]]+$", "", input$code_editor %||% "")
+    draw <- info$code
+    create_line <- NULL
+    if (identical(info$kind, "symbol")) {
+      draw <- paste0("print(", info$sym, ")")
+    } else if (identical(info$kind, "value")) {
+      # An unassigned plot object (a ggplot or tmap map typed out): tidy the code so that the object
+      # is created once, shown, and then drawn again to the file.
+      nm   <- tidy_plot_name(info$cls, base)
+      new_base <- NULL
+      if (lengths(regmatches(base, gregexpr(info$code, base, fixed = TRUE))) == 1L) {
+        at   <- regexpr(info$code, base, fixed = TRUE)
+        cand <- paste0(substr(base, 1L, at - 1L), nm, " <- ", info$code, "\nprint(", nm, ")",
+                       substr(base, at + nchar(info$code), nchar(base)))
+        ok <- tryCatch({ ex <- parse(text = cand, keep.source = FALSE); TRUE }, error = function(e) FALSE)
+        if (ok) new_base <- cand
+      }
+      if (!is.null(new_base)) {
+        base <- new_base; draw <- paste0("print(", nm, ")")
+        create_line <- paste0(nm, " <- ", info$code)   # the rewritten statement has not been run yet
+      } else draw <- paste0("print(", info$code, ")")
+    }
+    block <- build_plot_export_code(draw, plot_exp_file(), input$plot_exp_format %||% "png",
+                                    input$plot_exp_quality %||% "Medium",
+                                    input$plot_exp_size %||% prefs$img_size)
+    full <- paste0(base, if (nzchar(base)) "\n\n" else "", block)
+    # What is run: the block, preceded by the statement that creates the plot object if that was rewritten
+    to_run <- if (!is.null(create_line)) paste0(create_line, "\n\n", block) else block
+    file   <- plot_exp_file()
+    removeModal()
+    pending_export(list(snippet = to_run, full = full, file = file))
+    old_code <- input$code_editor %||% ""
+    updateAceEditor(session, "code_editor", value = full)
+    # Show what was added in the Changes tab (however much of a short script it is)
+    d <- if (nzchar(trimws(old_code))) compute_diff(old_code, full, max_changed_frac = Inf) else NULL
+    diff_rv(d)
+    if (!is.null(d)) show_changes_tab() else goto_tab("Code")
+    # Adding the export code counts as a prompt of its own (type Export): it is listed in Past prompts
+    # and Recall brings the code back, with a blank prompt box
+    what  <- sub("^# Save the plot to a file \\((.*)\\)$", "\\1", strsplit(block, "\n", fixed = TRUE)[[1]][1])
+    label <- paste0("Save plot as ", file, " (", what, ")")
+    last_extracted_code(full); last_prompt_for_code(label); last_code_description(label)
+    sq <- add_interaction(list(kind = "code", export = TRUE, prompt = label, code = full,
+                               description = label, editor_code = full,
+                               console = console_output_rv(), warnings = warnings_rv(),
+                               plots = plot_files_rv(), last_run_code = NULL, failed = FALSE,
+                               error = "", diff = d, tab = if (!is.null(d)) "Changes" else "Code"))
+    active_code_id(sq)
+    prompt_history(c(label, prompt_history()))
+    if (isTRUE(input$autorun_code)) do_run_export(to_run, full, file)
+  })
+
   output$console_output_ui <- renderUI({
     lines    <- console_output_rv()
     plots    <- plot_files_rv()
@@ -3654,10 +3873,8 @@ server <- function(input, output, session) {
               "border: 1px solid #ccc; border-radius: 4px;",
               "transition: box-shadow 0.15s;"
             ),
-            onclick = paste0(
-              "document.getElementById('classmate-lb-img').src='", src, "';",
-              "document.getElementById('classmate-lb-overlay').style.display='flex';"
-            ),
+            onclick = paste0("Shiny.setInputValue('plot_expand', '", basename(plots[[i]]),
+                             "', {priority: 'event'});"),
             onmouseover = "this.style.boxShadow='0 2px 8px rgba(0,0,0,0.25)';",
             onmouseout  = "this.style.boxShadow='';"
           )
@@ -3903,13 +4120,15 @@ server <- function(input, output, session) {
       return(tags$p(em("No prompts yet."), style = "color: #999; margin: 0; font-size: 0.9em;"))
     kind_of <- function(p) {
       r <- find_interaction_by_prompt(p)
-      if (is.null(r)) "" else if (identical(r$kind, "answer")) "Answer" else "Code"
+      if (is.null(r)) "" else if (identical(r$kind, "answer")) "Answer"
+      else if (isTRUE(r$export)) "Export" else "Code"
     }
     digest_id <- function(p) match(p, history)
     tagList(lapply(history, function(p) {
       # Escape single quotes in the prompt text so it survives the onclick string.
       p_escaped <- gsub("'", "\\\\'", p, fixed = TRUE)
-      div(style = "display: flex; align-items: flex-start; border-bottom: 1px solid #eee; padding: 2px 0;",
+      div(class = "cm-prompt-row", `data-p` = p,
+        style = "display: flex; align-items: flex-start; border-bottom: 1px solid #eee; padding: 2px 0;",
         tags$p(p, style = paste0(
           "margin: 0; flex: 1;",
           "font-size: 0.85em; color: #444;",
@@ -4021,7 +4240,8 @@ server <- function(input, output, session) {
     prompt_history(ph)
     rec <- find_interaction_by_prompt(p)       # bring back everything the prompt produced
     if (!is.null(rec)) recall_interaction(rec)
-    updateTextAreaInput(session, "prompt", value = p)
+    # An Export entry has no prompt of its own, so the prompt box is left blank
+    updateTextAreaInput(session, "prompt", value = if (isTRUE(rec$export)) "" else p)
     updateTabsetPanel(session, "prompt_tabs", selected = "Your prompt")
   })
 
@@ -5480,6 +5700,7 @@ server <- function(input, output, session) {
     if (isTRUE(quota_exceeded())) { show_quota_modal(); return(invisible(NULL)) }
     capture_active_code()    # save what the previous code interaction looked like before it is cleared
     autorun_text <- NULL
+    pending_export(NULL)
     hide_changes_tab()
     console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); diff_rv(NULL)
     disable("ask_code"); disable("ask_plain")
@@ -5917,16 +6138,18 @@ server <- function(input, output, session) {
                            if (identical(ask_mode(), "answer")) "true" else "false"))
   })
   observeEvent(input$mode_switch_clicked, {
-    # The prompt box shows the prompt behind what is now on view (blank for a loaded script)
+    # Show Past prompts with the prompt behind what is now on view highlighted (none for a loaded script)
     if (identical(input$mode_switch_clicked, "answer")) {
       set_ask_mode("answer")
       updateTabsetPanel(session, "main_tabs", selected = "Answer")
-      updateTextAreaInput(session, "prompt", value = answer_latest()$question %||% "")
+      hl <- answer_latest()$question %||% ""
     } else {
       set_ask_mode("code")
       updateTabsetPanel(session, "main_tabs", selected = "Code")
-      updateTextAreaInput(session, "prompt", value = last_prompt_for_code() %||% "")
+      hl <- last_prompt_for_code() %||% ""
     }
+    updateTabsetPanel(session, "prompt_tabs", selected = "Past prompts")
+    session$sendCustomMessage("cm_highlight_prompt", list(text = hl))
   })
 
   # --- Answer tab ------------------------------------------------------------------
@@ -6400,8 +6623,8 @@ server <- function(input, output, session) {
 
   # --- Run the code ----------------------------------------------------------
   do_run_code <- function(code_text) {
+    pending_export(NULL)
     ui_busy(TRUE)
-    updateTextAreaInput(session, "prompt", value = "")
     console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0))
 
     check_and_install_if_needed(code_text, function() {
@@ -6439,7 +6662,38 @@ server <- function(input, output, session) {
       }, finally = { code_running(FALSE); ui_busy(FALSE) })
     })
   }
-  observeEvent(input$run_code, do_run_code(input$code_editor))
+  # Running a block of "save this plot" code appended by the expanded-plot window runs only that block:
+  # everything before it has already been run and need not be repeated.
+  do_run_export <- function(block, full, file) {
+    ui_busy(TRUE); code_running(TRUE)
+    on.exit({ code_running(FALSE); ui_busy(FALSE) }, add = TRUE)
+    res <- withProgress(message = "Saving the plot...", value = 0.5, run_code(block))
+    if (isTRUE(res$success)) {
+      pending_export(NULL)
+      last_run_code(full); last_run_failed(FALSE); last_error_msg("")
+      entry <- list(prompt = "Save the plot to a file", code = block, description = "", source = "export")
+      pending_log_entries(c(pending_log_entries(), list(entry)))
+      all_log_entries(c(all_log_entries(), list(entry)))
+      last_logged_code(full)
+      output$run_status <- renderUI(tags$span(
+        paste0("Saved ", file, " in ", project_root()),
+        style = "color: #2e7d32; font-weight: bold;"))
+    } else {
+      err <- sub("^Error running code:\\s*\\n?\\s*", "", res$message %||% "")
+      output$run_status <- renderUI(tags$span(paste("Could not save the plot:", err),
+                                              style = "color: #b22222; font-weight: bold;"))
+    }
+    invisible(NULL)
+  }
+  observeEvent(input$run_code, {
+    pe <- pending_export()
+    if (!is.null(pe) && identical(trimws(input$code_editor %||% ""), trimws(pe$full)))
+      do_run_export(pe$snippet, pe$full, pe$file)
+    else {
+      pending_export(NULL)
+      do_run_code(input$code_editor)
+    }
+  })
 
   # --- Fix button ------------------------------------------------------------
   code_before_fix <- reactiveVal(NULL)
@@ -6617,6 +6871,8 @@ server <- function(input, output, session) {
     plot_files_rv(plots)
     warnings_rv(run_result$warnings %||% character(0))
     output$run_status <- renderUI(run_status_ui(run_result$success))
+    # A successful run (Run, AutoRun or Fix) finishes with the prompt, so the prompt box is cleared
+    if (isTRUE(run_result$success)) updateTextAreaInput(session, "prompt", value = "")
     has_output <- nzchar(trimws(paste(base_output, collapse = "\n"))) || length(plots) > 0
     if (!stay_on_code && has_output) {
       goto_tab("R output")
