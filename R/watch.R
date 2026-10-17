@@ -325,11 +325,8 @@
       message("No file selected.")
       return(NULL)
     }
-    payload <- tryCatch(readRDS(path), error = function(e) NULL)
-    if (is.null(payload) || !nzchar(payload$api_key %||% "")) {
-      message("That file does not appear to be a valid classmate key.")
-      return(NULL)
-    }
+    payload <- classmate_unlock_key_file(path, .watch_load_cfg())
+    if (is.null(payload)) return(NULL)
     tryCatch(saveRDS(payload, .watch_cfg_path()), error = function(e) NULL)
     message("Key loaded and saved for future sessions.")
     return(payload$api_key)
@@ -385,7 +382,7 @@ whisper <- function(key = NULL) {
   # 1. Explicit argument — could be a .key file path or a raw API key string
   if (!is.null(key) && nzchar(key)) {
     if (file.exists(key)) {
-      payload <- tryCatch(readRDS(key), error = function(e) NULL)
+      payload <- classmate_unlock_key_file(key, .watch_load_cfg())
       if (!is.null(payload) && nzchar(payload$api_key %||% "")) {
         tryCatch(saveRDS(payload, .watch_cfg_path()), error = function(e) NULL)
         api_key <- payload$api_key

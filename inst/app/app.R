@@ -1978,7 +1978,8 @@ ui <- fluidPage(
       uiOutput("key_status_message"),
       tags$h5("Load a key file"),
       tags$p(em("Load the classmate.key file provided by your instructor,",
-                "or enter the web address where it is stored.")),
+                "or enter the web address where it is stored. You will be asked for the PIN",
+                "your instructor gave you.")),
       fileInput("key_file", NULL, accept = ".key", width = "100%",
                 buttonLabel = "Browse...", placeholder = "classmate.key"),
       web_key_ui("key_web_url", "load_key_web_btn"),
@@ -2205,7 +2206,7 @@ fetch_key_from_web <- function(url) {
     on.exit(unlink(tmp), add = TRUE)
     writeBin(raw_body, tmp)
     p <- tryCatch(readRDS(tmp), error = function(e) NULL, warning = function(w) NULL)
-    if (is.list(p) && is.character(p$api_key) && nzchar(p$api_key[1])) p else NULL
+    if (!identical(classmate:::classmate_key_kind(p), "invalid")) p else NULL
   }
 
   first <- tryCatch(get_raw(url), error = function(e) NULL)
@@ -3244,7 +3245,7 @@ server <- function(input, output, session) {
   show_load_key_file_modal <- function() {
     showModal(modalDialog(
       title = "Load key file",
-      tags$p("Select the classmate.key file provided by your instructor.",
+      tags$p("Select the classmate.key file provided by your instructor (you will be asked for its PIN).",
              "If it differs from the currently loaded key, your usage quota",
              "will be reset in line with the new key's settings."),
       fileInput("mid_session_key_file", NULL, accept = ".key", width = "100%",
@@ -3288,9 +3289,37 @@ server <- function(input, output, session) {
     })
   })
 
+  # A key file is "sealed" with a PIN (see R/key_pin.R). The PIN is asked for once, when a key is
+  # first loaded on this computer; the same key is not asked for again.
+  pending_key <- reactiveVal(NULL)    # list(x = sealed key, on_success = function)
+  pin_msg     <- reactiveVal("")
+  output$key_pin_msg <- renderUI({
+    m <- pin_msg()
+    if (nzchar(m)) tags$p(m, style = "color: #b22222; margin-top: 8px;")
+  })
+  show_pin_modal <- function() {
+    showModal(modalDialog(
+      title = "Enter your PIN",
+      tags$p("This key is protected by a 6-digit PIN, which your instructor will have given you.",
+             "You only need to enter it once."),
+      passwordInput("key_pin", NULL, placeholder = "6-digit PIN", width = "100%"),
+      uiOutput("key_pin_msg"),
+      footer = tagList(actionButton("key_pin_cancel", "Cancel"),
+                       actionButton("key_pin_ok", "Unlock", class = "btn-primary")),
+      easyClose = FALSE
+    ))
+  }
   load_key_file <- function(path, on_success = function() invisible(NULL)) {
-    payload <- tryCatch(readRDS(path), error = function(e) NULL)
-    if (is.null(payload) || is.null(payload$api_key)) {
+    x    <- tryCatch(readRDS(path), error = function(e) NULL)
+    kind <- classmate:::classmate_key_kind(x)
+    if (identical(kind, "legacy")) {
+      showModal(modalDialog(
+        title = "Key file no longer supported",
+        "This key file is from an older version of Classmate. Please ask your instructor for a new one.",
+        footer = modalButton("OK")))
+      return(invisible(NULL))
+    }
+    if (identical(kind, "invalid")) {
       showModal(modalDialog(
         title = "Invalid key file",
         "This file does not appear to be a valid classmate key file.",
@@ -3298,6 +3327,40 @@ server <- function(input, output, session) {
       ))
       return(invisible(NULL))
     }
+    cfg <- tryCatch(readRDS(active_cfg_path()), error = function(e) NULL)
+    if (!is.null(cfg) && !is.null(x$key_id) && identical(cfg$key_id, x$key_id))
+      return(activate_key(cfg, on_success))       # already unlocked on this computer
+    if (classmate:::classmate_pin_locked()) {
+      showModal(modalDialog(title = "Too many incorrect PINs",
+                            classmate:::CLASSMATE_PIN_LOCKED_MSG, footer = modalButton("OK")))
+      return(invisible(NULL))
+    }
+    pending_key(list(x = x, on_success = on_success))
+    pin_msg("")
+    show_pin_modal()
+    invisible(NULL)
+  }
+  observeEvent(input$key_pin_ok, {
+    pk <- pending_key(); req(pk)
+    if (classmate:::classmate_pin_locked()) {
+      pin_msg(classmate:::CLASSMATE_PIN_LOCKED_MSG); return(invisible(NULL))
+    }
+    payload <- classmate:::classmate_open_key(pk$x, trimws(input$key_pin %||% ""))
+    if (is.null(payload)) {
+      classmate:::classmate_pin_fail()
+      pin_msg(if (classmate:::classmate_pin_locked()) classmate:::CLASSMATE_PIN_LOCKED_MSG
+              else paste0("That PIN is not correct. ", classmate:::classmate_pin_tries_left(),
+                          " attempt(s) left."))
+      shinyjs::reset("key_pin")
+      return(invisible(NULL))
+    }
+    pending_key(NULL)
+    removeModal()
+    activate_key(payload, pk$on_success)
+  })
+  observeEvent(input$key_pin_cancel, { pending_key(NULL); removeModal() })
+
+  activate_key <- function(payload, on_success = function() invisible(NULL)) {
     withProgress(message = "Checking key...", value = 0.5, {
       ok <- validate_api_key(payload$api_key)
     })

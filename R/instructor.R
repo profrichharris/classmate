@@ -35,6 +35,10 @@
 #'   generate. Default \code{50}. If omitted, you are prompted to confirm or
 #'   change the default. Passing \code{NULL} (or typing \code{none} at the
 #'   prompt) removes the limit; you are asked to confirm this with Y/N.
+#' @param pin A 6-digit PIN (a string such as \code{"482915"}). The key file is encrypted with
+#'   it, so it is of no use without the PIN; students enter the PIN once, when they first load
+#'   the key. The PIN is not stored in the file, so tell students the PIN separately. If omitted
+#'   you are asked to choose one, or press Enter to have one generated.
 #' @param output_file Path for the key file. Default \code{"classmate.key"} in
 #'   the current working directory.
 #'
@@ -46,6 +50,7 @@ classmate_make_key <- function(api_key           = NULL,
                                 final_expiry      = NULL,
                                 max_conversations,
                                 max_lines,
+                                pin               = NULL,
                                 output_file       = "classmate.key") {
 
   confirm_unlimited <- function(what) {
@@ -60,6 +65,18 @@ classmate_make_key <- function(api_key           = NULL,
     api_key <- trimws(readline("Paste Anthropic API key: "))
     if (!nzchar(api_key)) stop("No API key provided.", call. = FALSE)
   }
+
+  if (is.null(pin)) {
+    message("Students will need a 6-digit PIN to use this key; it is not stored in the key file.")
+    repeat {
+      ans <- trimws(readline("Choose a 6-digit PIN (or press Enter to generate one): "))
+      if (!nzchar(ans)) { pin <- sprintf("%06d", sample(0L:999999L, 1L)); break }
+      if (classmate_pin_ok(ans)) { pin <- ans; break }
+      message("The PIN must be exactly 6 digits.")
+    }
+  }
+  if (!classmate_pin_ok(pin))
+    stop("pin must be exactly 6 digits, for example \"482915\".", call. = FALSE)
 
   if (missing(cost_limit)) {
     ans <- trimws(readline(paste0(
@@ -186,10 +203,11 @@ classmate_make_key <- function(api_key           = NULL,
     max_lines         = max_lines,
     created           = Sys.time()
   )
-  saveRDS(payload, output_file)
+  saveRDS(classmate_seal_key(payload, pin), output_file)
 
   out <- normalizePath(output_file)
   message("Key file created: ", out)
+  message("  PIN:          ", pin, "   (give this to students separately; it is not stored in the file)")
   if (!is.null(cost_limit))
     message("  Cost limit:   $", cost_limit, " per ", reset_period)
   else

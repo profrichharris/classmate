@@ -138,7 +138,9 @@ This means:
 - Keys expire automatically at the end of the module period
 - A student whose key expires receives a clear message and cannot make further API calls
 
-The key file is stored locally on the student's machine in R's standard user configuration directory. It is not transmitted anywhere other than being used to authenticate API calls.
+The key file is encrypted with a 6-digit PIN chosen by the instructor (AES-256 under a key derived from the PIN with a slow key-derivation function, authenticated so that a wrong PIN is detected). The PIN is not stored in the file and is given to students separately; a student enters it once, when the key is first loaded, after which the key is saved on that computer and the PIN is not asked for again. After 10 wrong PINs Classmate refuses further attempts until R is restarted. This is a deterrent against a leaked key file being used by someone who does not have the PIN, not strong protection (there are only a million 6-digit PINs, and the lock-out cannot stop guessing outside Classmate). The ultimate safeguard is that the instructor can revoke the underlying API key at Anthropic.
+
+Once loaded, the key is stored locally on the student's machine in R's standard user configuration directory. It is not transmitted anywhere other than being used to authenticate API calls.
 
 ---
 
