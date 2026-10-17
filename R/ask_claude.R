@@ -39,6 +39,10 @@ talk <- function() {
   updated <- classmate_preflight()
   if (isTRUE(updated)) return(invisible(NULL))   # new talk() launched inside preflight
 
+  # Drop the private copy of the student's API key however the app ends (Pause, Quit, Escape in
+  # the console, an error)
+  on.exit(cm_clear_key(), add = TRUE)
+
   # --- Pass the caller's working directory to the app -----------------------
   options(.classmate_project_root = getwd())
 

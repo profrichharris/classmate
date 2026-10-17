@@ -228,13 +228,12 @@ classmate_make_key <- function(api_key           = NULL,
 #' Show the current classmate configuration
 #'
 #' Prints the active cost limit and reset period stored in the most recently
-#' loaded key file, along with the paths to the config and usage-log files.
+#' loaded key file.
 #'
 #' @return Invisible \code{NULL}.
 #' @export
 classmate_config_show <- function() {
-  cfg_path   <- file.path(tools::R_user_dir("classmate", "config"), "active_config.rds")
-  usage_path <- file.path(tools::R_user_dir("classmate", "data"),   "usage_log.rds")
+  cfg_path <- classmate_state_path("config")
 
   cat("classmate configuration\n")
   if (file.exists(cfg_path)) {
@@ -251,8 +250,6 @@ classmate_config_show <- function() {
   } else {
     cat("  No key file loaded\n")
   }
-  cat("  Config file: ", cfg_path,   "\n")
-  cat("  Usage file:  ", usage_path, "\n")
   invisible(NULL)
 }
 

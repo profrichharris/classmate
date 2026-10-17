@@ -935,7 +935,7 @@ format_log_entries <- function(entries) {
 # "ok" (the API accepted the request), "invalid" (authentication/permission refused: 401/403) or
 # "unknown" (network trouble, overload, rate limit...). Success is the API accepting the request,
 # not any particular reply text: with a tiny max_tokens the 5.x models return an empty reply.
-claude_key_status <- function(key = Sys.getenv("ANTHROPIC_API_KEY")) {
+claude_key_status <- function(key = classmate:::cm_get_key()) {
   tryCatch({
     call_claude(
       messages     = list(list(role = "user", content = "Hi")),
@@ -952,10 +952,8 @@ claude_key_status <- function(key = Sys.getenv("ANTHROPIC_API_KEY")) {
 }
 
 validate_api_key <- function(key) {
-  old_key <- Sys.getenv("ANTHROPIC_API_KEY")
-  Sys.setenv(ANTHROPIC_API_KEY = key)
   ok <- identical(claude_key_status(key), "ok")
-  if (!ok) Sys.setenv(ANTHROPIC_API_KEY = old_key)
+  if (ok) classmate:::cm_set_key(key)    # held privately, not in the ANTHROPIC_API_KEY variable
   ok
 }
 
@@ -1546,12 +1544,8 @@ usage_data_dir <- function() {
   d
 }
 
-usage_log_path   <- function() file.path(usage_data_dir(), "usage_log.rds")
-active_cfg_path  <- function() {
-  d <- tools::R_user_dir("classmate", "config")
-  dir.create(d, showWarnings = FALSE, recursive = TRUE)
-  file.path(d, "active_config.rds")
-}
+usage_log_path   <- function() classmate:::classmate_state_path("usage")
+active_cfg_path  <- function() classmate:::classmate_state_path("config")
 
 prefs_path <- function() {
   d <- tools::R_user_dir("classmate", "config")
@@ -1578,7 +1572,7 @@ read_usage_log <- function() {
 append_usage_entry <- function(cost_usd) {
   log <- read_usage_log()
   log <- c(log, list(list(timestamp = Sys.time(), cost_usd = cost_usd)))
-  tryCatch(saveRDS(log, usage_log_path()), error = function(e) invisible(NULL))
+  tryCatch(classmate:::classmate_save_state(log, usage_log_path()), error = function(e) invisible(NULL))
   log
 }
 
@@ -1642,7 +1636,7 @@ next_reset_time <- function(log, reset_period) {
 # --- Direct Anthropic API call with prompt caching ---------------------------
 
 call_claude <- function(messages, model, max_tokens, system_prompt = NULL,
-                         api_key = Sys.getenv("ANTHROPIC_API_KEY"),
+                         api_key = classmate:::cm_get_key(),
                          cache_system = TRUE) {
   system_block <- if (!is.null(system_prompt) && nzchar(system_prompt)) {
     cc <- if (cache_system) list(type = "ephemeral") else NULL
@@ -3132,11 +3126,11 @@ server <- function(input, output, session) {
     later::later(function() stopApp(), delay = 0.4)
   }
 
-  # Clear the instructor API key from the R environment when the session ends
-  # (covers Quit button, Pause, browser-tab close, and network drop).
-  # Personal users keep their own key — only student mode is cleared.
+  # Drop the student's API key when the session ends (covers Quit button, Pause, browser-tab close
+  # and network drop; talk() also drops it if R is interrupted). A personal ANTHROPIC_API_KEY set
+  # by the user is left alone.
   session$onEnded(function() {
-    Sys.unsetenv("ANTHROPIC_API_KEY")
+    classmate:::cm_clear_key()
     # Remove any package-bound symbols the app may have left in .GlobalEnv
     # (e.g. q/quit/stopApp/talk shadowed during Quick Console if R was restarted
     # while the modal was open). Prevents "package:X may not be available" warning
@@ -3329,7 +3323,7 @@ server <- function(input, output, session) {
   # If a student key was saved from a prior session, restore it into the
   # environment so the app starts ready without requiring re-upload.
   if (!is.null(.saved_cfg) && nzchar(.saved_cfg$api_key %||% "")) {
-    Sys.setenv(ANTHROPIC_API_KEY = .saved_cfg$api_key)
+    classmate:::cm_set_key(.saved_cfg$api_key)
   }
   key_is_set   <- reactiveVal(!is.null(.saved_cfg) && nzchar(.saved_cfg$api_key %||% ""))
 
@@ -3479,7 +3473,7 @@ server <- function(input, output, session) {
     }
 
     # Save active config for classmate_config_show()
-    tryCatch(saveRDS(payload, active_cfg_path()), error = function(e) invisible(NULL))
+    tryCatch(classmate:::classmate_save_state(payload, active_cfg_path()), error = function(e) invisible(NULL))
     cost_limit_val(       payload$cost_limit)
     reset_period_val(     payload$reset_period)
     final_expiry_val(     payload$final_expiry)

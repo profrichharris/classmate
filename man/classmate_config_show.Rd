@@ -11,5 +11,5 @@ Invisible \code{NULL}.
 }
 \description{
 Prints the active cost limit and reset period stored in the most recently
-loaded key file, along with the paths to the config and usage-log files.
+loaded key file.
 }

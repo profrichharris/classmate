@@ -5,7 +5,7 @@
 # history, then explains them in plain English via Claude when the student
 # calls raisehand().  No Shiny UI — works entirely in the R console.
 #
-# Key sharing: uses the same active_config.rds and usage_log.rds as talk(),
+# Key sharing: uses the same saved key settings and usage log (classmate_state_path()) as talk(),
 # so a key loaded in either place is immediately available in the other.
 # ---------------------------------------------------------------------------
 
@@ -34,17 +34,9 @@
 # Shared path helpers (identical to those in app.R so files are the same)
 # ---------------------------------------------------------------------------
 
-.watch_cfg_path <- function() {
-  d <- tools::R_user_dir("classmate", "config")
-  dir.create(d, showWarnings = FALSE, recursive = TRUE)
-  file.path(d, "active_config.rds")
-}
+.watch_cfg_path <- function() classmate_state_path("config")
 
-.watch_usage_path <- function() {
-  d <- tools::R_user_dir("classmate", "data")
-  dir.create(d, showWarnings = FALSE, recursive = TRUE)
-  file.path(d, "usage_log.rds")
-}
+.watch_usage_path <- function() classmate_state_path("usage")
 
 .watch_load_cfg <- function() {
   p <- .watch_cfg_path()
@@ -61,7 +53,7 @@
 .watch_append_usage <- function(cost_usd) {
   log <- .watch_read_usage()
   log <- c(log, list(list(timestamp = Sys.time(), cost_usd = cost_usd)))
-  tryCatch(saveRDS(log, .watch_usage_path()), error = function(e) NULL)
+  tryCatch(classmate_save_state(log, .watch_usage_path()), error = function(e) NULL)
   invisible(log)
 }
 
@@ -412,7 +404,7 @@
     }
     payload <- classmate_unlock_key_file(path, .watch_load_cfg())
     if (is.null(payload)) return(NULL)
-    tryCatch(saveRDS(payload, .watch_cfg_path()), error = function(e) NULL)
+    tryCatch(classmate_save_state(payload, .watch_cfg_path()), error = function(e) NULL)
     message("Key loaded and saved for future sessions.")
     return(payload$api_key)
 
@@ -469,7 +461,7 @@ whisper <- function(key = NULL) {
     if (file.exists(key)) {
       payload <- classmate_unlock_key_file(key, .watch_load_cfg())
       if (!is.null(payload) && nzchar(payload$api_key %||% "")) {
-        tryCatch(saveRDS(payload, .watch_cfg_path()), error = function(e) NULL)
+        tryCatch(classmate_save_state(payload, .watch_cfg_path()), error = function(e) NULL)
         api_key <- payload$api_key
         message("Key file loaded and saved for future sessions.")
       } else {
@@ -485,7 +477,7 @@ whisper <- function(key = NULL) {
     }
   }
 
-  # 2. Saved student key from active_config.rds (written by talk() or prior whisper())
+  # 2. Saved student key settings (written by talk() or a prior whisper())
   if (is.null(api_key)) {
     cfg <- .watch_load_cfg()
     if (!is.null(cfg) && nzchar(cfg$api_key %||% ""))
@@ -868,6 +860,7 @@ reset_key <- function() {
     removed <- TRUE
   }
 
+  cm_clear_key()
   if (nzchar(Sys.getenv("ANTHROPIC_API_KEY"))) {
     Sys.unsetenv("ANTHROPIC_API_KEY")
     message("ANTHROPIC_API_KEY cleared from environment.")
@@ -941,6 +934,7 @@ classmate_reset <- function() {
     message("Saved key file removed.")
   }
 
+  cm_clear_key()
   if (nzchar(Sys.getenv("ANTHROPIC_API_KEY"))) {
     Sys.unsetenv("ANTHROPIC_API_KEY")
     message("ANTHROPIC_API_KEY cleared from environment.")
