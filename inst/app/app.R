@@ -2069,7 +2069,7 @@ ui <- fluidPage(
     condition = "output.has_key == true",
 
     tabsetPanel(id = "prompt_tabs", type = "tabs",
-      tabPanel("Your prompt",
+      tabPanel("New prompt",
         tags$div(style = "margin-top: 8px;",
           textAreaInput("prompt", label = NULL, rows = 4, width = "100%")
         )
@@ -3026,8 +3026,8 @@ HELP_TEXTS <- list(
 )
 
 HELP_TAB_TEXTS <- list(
-  "Your prompt" = paste(
-    "Your Prompt tab — This is where you type your question or instruction for the AI.",
+  "New prompt" = paste(
+    "New Prompt tab — This is where you type your question or instruction for the AI.",
     "Once submitted with Answer or Ask for Code, the prompt box clears ready for the next step."
   ),
   "Past prompts" = paste(
@@ -3630,7 +3630,7 @@ server <- function(input, output, session) {
   hide_past_convs_tab <- function() {
     if (past_convs_tab_shown()) {
       if (isTRUE(isolate(input$prompt_tabs) == "Past conversations"))
-        updateTabsetPanel(session, "prompt_tabs", selected = "Your prompt")
+        updateTabsetPanel(session, "prompt_tabs", selected = "New prompt")
       removeTab("prompt_tabs", "Past conversations")
       past_convs_tab_shown(FALSE)
     }
@@ -4236,7 +4236,7 @@ server <- function(input, output, session) {
     if (!is.null(rec)) recall_interaction(rec)
     # An Export entry has no prompt of its own, so the prompt box is left blank
     updateTextAreaInput(session, "prompt", value = if (isTRUE(rec$export)) "" else p)
-    updateTabsetPanel(session, "prompt_tabs", selected = "Your prompt")
+    updateTabsetPanel(session, "prompt_tabs", selected = "New prompt")
   })
 
   # --- Past Conversations ----------------------------------------------------
@@ -6662,6 +6662,7 @@ server <- function(input, output, session) {
     ui_busy(TRUE); code_running(TRUE)
     on.exit({ code_running(FALSE); ui_busy(FALSE) }, add = TRUE)
     res <- withProgress(message = "Saving the plot...", value = 0.5, run_code(block))
+    run_status_is_run(TRUE)
     if (isTRUE(res$success)) {
       pending_export(NULL)
       last_run_code(full); last_run_failed(FALSE); last_error_msg("")
@@ -6852,7 +6853,19 @@ server <- function(input, output, session) {
   }
 
   # Helper: after a run_result, update console output + plots, switch tabs
+  # The "Success!" / error line under Run describes the code as it was when run: once the code in the
+  # editor changes (typing, Add to code...) it is removed until the code has been run again.
+  run_status_is_run <- reactiveVal(FALSE)
+  observeEvent(input$code_editor, {
+    if (isTRUE(run_status_is_run()) &&
+        !identical(trimws(input$code_editor %||% ""), trimws(last_run_code() %||% ""))) {
+      output$run_status <- renderUI(NULL)
+      run_status_is_run(FALSE)
+    }
+  }, ignoreInit = TRUE)
+
   handle_run_result <- function(run_result, stay_on_code = FALSE) {
+    run_status_is_run(TRUE)
     if (!is.null(run_result$wd_changed)) note_wd_change(run_result$wd_changed)
     base_output <- run_result$output %||% character(0)
     if (!isTRUE(run_result$success)) {
