@@ -68,6 +68,11 @@ walk <- function(x, hidden = FALSE) {
       kind = "button", id = if (is.character(id)) id else NA_character_,
       expr = paste(deparse(id), collapse = ""), hidden = here_hidden)
   }
+  if (!is.null(names(x)) && "data-help-id" %in% names(x) && is.character(x[["data-help-id"]])) {
+    found[[length(found) + 1]] <<- list(
+      kind = "button", id = x[["data-help-id"]],
+      expr = paste(deparse(x[["data-help-id"]]), collapse = ""), hidden = here_hidden)
+  }
   if (nm == "tabPanel" && length(x) >= 2) {
     ttl <- x[[2]]
     if (!is.null(names(x)) && "title" %in% names(x)) ttl <- x[["title"]]

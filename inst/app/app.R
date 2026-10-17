@@ -1411,19 +1411,11 @@ parse_explain_response <- function(raw) {
 }
 
 # Converts explanation plain text to simple HTML (newlines -> <br>, **bold**).
-explanation_to_html <- function(text) {
-  # Bold: **text** -> <strong>text</strong>
-  text <- gsub("\\*\\*([^*]+)\\*\\*", "<strong>\\1</strong>", text)
-  # Backtick code: `x` -> <code>x</code>
-  text <- gsub("`([^`]+)`", "<code>\\1</code>", text)
-  # Paragraphs: blank lines
-  paras <- strsplit(text, "\n{2,}")[[1]]
-  paras <- trimws(paras)
-  paras <- paras[nzchar(paras)]
-  # Within paragraphs, single newlines become <br>
-  paras <- gsub("\n", "<br>", paras)
-  paste0("<p>", paras, "</p>", collapse = "\n")
-}
+# Explanations and "Tell me more" text are formatted by answer_to_html(): it escapes the text
+# and handles paragraphs, lists, **bold**, `code` and ``` fenced code blocks. (The earlier,
+# simpler version paired up the backticks of a fenced block wrongly, so prose appeared as code
+# and code as prose.)
+explanation_to_html <- function(text) answer_to_html(text)
 
 # --- Usage tracking helpers --------------------------------------------------
 
@@ -1768,6 +1760,11 @@ ui <- fluidPage(
             Shiny.setInputValue('help_button_clicked', {id: id, label: (target.textContent || '').trim().replace(/\\s+/g, ' '), nonce: Math.random()}, {priority: 'event'});
             return;
           }
+          // Elements that name their own help entry (the Code / Answer switch)
+          if (target.getAttribute && target.getAttribute('data-help-id')) {
+            Shiny.setInputValue('help_button_clicked', {id: target.getAttribute('data-help-id'), label: '', nonce: Math.random()}, {priority: 'event'});
+            return;
+          }
           // Shiny checkbox: the wrapper div.checkbox contains the input that carries the id
           if (target.classList && target.classList.contains('checkbox')) {
             var cb = target.querySelector('input[type=checkbox]');
@@ -2063,7 +2060,7 @@ ui <- fluidPage(
         )
       ),
       tabPanel("R output",
-        tags$div(style = "margin-top: 8px; min-height: 220px;",
+        tags$div(style = "margin-top: 8px; height: 220px; overflow-y: auto;",   # same height as the code editor
           uiOutput("console_output_ui")
         )
       ),
@@ -2084,27 +2081,47 @@ ui <- fluidPage(
       ),
     ),
 
-    # "Back to Code": placed at the end of the tab bar (moved there by the script below)
+    # Code / Answer switch: placed at the end of the tab bar (moved there by the script below).
+    # Shown once both code and an answer exist; it follows the current mode and can be clicked.
     tags$div(style = "display: none;",
-      tags$li(id = "back_to_code_li", class = "cm-back-li", style = "display: none;",
-        actionButton("back_to_code", "Back to Code", class = "btn-sm",
-          style = "background-color: white; border-color: #bbb; color: #333;")),
-      tags$li(id = "back_to_answer_li", class = "cm-back-li", style = "display: none;",
-        actionButton("back_to_answer", "Back to Answer", class = "btn-sm",
-          style = "background-color: white; border-color: #bbb; color: #333;"))
+      tags$li(id = "mode_switch_li", class = "cm-switch-li", `data-help-id` = "mode_switch",
+              style = "display: none;",
+        tags$span(id = "mode_switch_code_lbl", class = "cm-switch-lbl", "Code"),
+        tags$label(class = "cm-switch",
+          tags$input(type = "checkbox", id = "mode_switch"),
+          tags$span(class = "cm-slider")),
+        tags$span(id = "mode_switch_answer_lbl", class = "cm-switch-lbl", "Answer"))
     ),
     tags$script(HTML("
       (function() {
         var ul = document.getElementById('main_tabs');
-        ['back_to_code_li', 'back_to_answer_li'].forEach(function(id) {
-          var li = document.getElementById(id);
-          if (li && ul) ul.appendChild(li);
+        var li = document.getElementById('mode_switch_li');
+        if (li && ul) ul.appendChild(li);
+        var cb = document.getElementById('mode_switch');
+        function paint() {
+          document.getElementById('mode_switch_code_lbl').style.fontWeight   = cb.checked ? 'normal' : 'bold';
+          document.getElementById('mode_switch_answer_lbl').style.fontWeight = cb.checked ? 'bold' : 'normal';
+        }
+        window.cmSetModeSwitch = function(answer) { cb.checked = !!answer; paint(); };
+        cb.addEventListener('change', function() {
+          paint();
+          if (window.Shiny) Shiny.setInputValue('mode_switch_clicked', cb.checked ? 'answer' : 'code', {priority: 'event'});
         });
+        paint();
       })();
     ")),
     tags$style(HTML("
-      #main_tabs .cm-back-li { float: left; margin: 3px 0 0 14px; }
-      #main_tabs .cm-back-li .btn { height: 28px; padding: 2px 10px; }
+      #main_tabs .cm-switch-li { float: left; margin: 0 0 0 16px; padding-top: 7px; font-size: 0.85em; color: #333; }
+      #main_tabs .cm-switch-li > * { vertical-align: middle; }
+      .cm-switch-lbl { display: inline-block; margin: 0 6px; }
+      .cm-switch { position: relative; display: inline-block; width: 36px; height: 18px; margin: 0; }
+      .cm-switch input { opacity: 0; width: 0; height: 0; }
+      .cm-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+                   background-color: #bbb; border-radius: 18px; transition: background-color 0.2s; }
+      .cm-slider:before { content: ''; position: absolute; height: 14px; width: 14px; left: 2px; bottom: 2px;
+                          background-color: white; border-radius: 50%; transition: transform 0.2s; }
+      .cm-switch input:checked + .cm-slider { background-color: #2c5f8a; }
+      .cm-switch input:checked + .cm-slider:before { transform: translateX(18px); }
     ")),
 
     div(style = "margin-top: 6px;",
@@ -2124,8 +2141,10 @@ ui <- fluidPage(
 
     fluidRow(style = "margin-top: 10px;",
       column(6, div(style = "display: flex; align-items: center; gap: 8px;",
-        disabled(actionButton("save_block", "Save Code Block", class = "btn-primary")),
-        div(style = "min-width: 175px;", uiOutput("code_saved_ui"))
+        disabled(actionButton("save_block", "Save Code Block",
+          style = "background-color: white; border-color: #bbb; color: #333;")),
+        actionButton("view_log", "View Code Log",
+          style = "background-color: white; border-color: #bbb; color: #333;")
       )),
       column(6,
         div(style = "display: flex; justify-content: flex-end; align-items: flex-start; white-space: nowrap;",
@@ -2266,7 +2285,9 @@ answer_mode_rule <- paste(
   "begin your reply with the line COMPUTE: then one short sentence saying what you will",
   "calculate, then exactly one ```r code block. The code is run for you and its summary",
   "output is returned to you so that you can write the answer.",
-  "Never put ANSWER: and COMPUTE: in the same reply.",
+  "Never put ANSWER: and COMPUTE: in the same reply. Your reply must always begin with",
+  "ANSWER: or COMPUTE:, even if earlier replies in this conversation used another format",
+  "(such as a DESCRIPTION: line followed by code): do not copy that format.",
   "Text in double square brackets, such as [[NAME_1]], is a placeholder for a text value from",
   "the student's data that has been withheld from you for privacy. Refer to it exactly as",
   "written; it is filled in on the student's screen. Never use such placeholders inside code."
@@ -2369,6 +2390,14 @@ parse_answer_plan <- function(raw) {
     if (nzchar(trimws(parts$code)))
       return(list(type = "compute", text = parts$explanation, code = parts$code))
     return(list(type = "answer", text = trimws(parts$explanation), code = ""))
+  }
+  # A reply that forgot the ANSWER:/COMPUTE: line but is in the Ask-for-Code format (a
+  # DESCRIPTION: line and a code block, copied from earlier turns of the conversation) is a
+  # request to calculate; showing it raw would give the student code instead of an answer.
+  if (!grepl("^(ANSWER|COMPUTE):", txt)) {
+    parts <- split_response_into_text_and_code(txt)
+    if (nzchar(trimws(parts$code)))
+      return(list(type = "compute", text = parts$explanation, code = parts$code))
   }
   list(type = "answer", text = trimws(sub("^ANSWER:[ \t]*\n?", "", txt)), code = "")
 }
@@ -2675,9 +2704,18 @@ answer_to_html <- function(text) {
     gsub(">", "&gt;", x, fixed = TRUE)
   }
   inline <- function(x) {
-    x <- esc(x)
-    x <- gsub("\\*\\*([^*]+)\\*\\*", "<strong>\\1</strong>", x)
-    gsub("`([^`]+)`", "<code>\\1</code>", x)
+    vapply(x, function(one) {
+      one <- esc(one)
+      # Code spans first, so that * inside code (e.g. `i * 2`) is never treated as emphasis
+      spans <- regmatches(one, gregexpr("`[^`]+`", one))[[1]]
+      for (k in seq_along(spans)) one <- sub(spans[k], paste0("@@CODE", k, "@@"), one, fixed = TRUE)
+      one <- gsub("\\*\\*([^*]+)\\*\\*", "<strong>\\1</strong>", one)
+      one <- gsub("(?<![*\\w])\\*([^*\\s][^*]*?)\\*(?![*\\w])", "<em>\\1</em>", one, perl = TRUE)
+      for (k in seq_along(spans))
+        one <- sub(paste0("@@CODE", k, "@@"), paste0("<code>", substr(spans[k], 2, nchar(spans[k]) - 1), "</code>"),
+                   one, fixed = TRUE)
+      one
+    }, character(1), USE.NAMES = FALSE)
   }
   text_block <- function(seg) {
     paras <- trimws(strsplit(seg, "\n{2,}")[[1]])
@@ -2795,15 +2833,12 @@ HELP_TEXTS <- list(
     "Remove All — Clears all attached files and objects from the context.",
     "This button appears once you have added something."
   ),
-  back_to_code = paste(
-    "Back to Code — Appears beside the Answer tabs once you have code to go back to.",
-    "It returns to the Code, R output and Past code tabs exactly as you left them before",
-    "using the Answer button, on the same tab you were viewing."
-  ),
-  back_to_answer = paste(
-    "Back to Answer — Appears beside the code tabs once you have asked a question with",
-    "the Answer button. It returns to your answer (or your earlier answers) exactly as you",
-    "left it, on the same tab you were viewing."
+  mode_switch = paste(
+    "Code / Answer switch — Appears at the end of the tab bar once you have both code and an",
+    "answer. The slider shows which you are looking at (Code on the left, Answer on the right):",
+    "click it to switch between the code tabs and the Answer tabs; the prompt behind what you are",
+    "now viewing returns to the prompt box (blank for a loaded script). It also moves by itself",
+    "when you use Ask for Code (to Code) or the Answer button (to Answer)."
   ),
   run_code = paste(
     "Run — Executes the code currently in the editor. Results and any plots",
@@ -2834,16 +2869,12 @@ HELP_TEXTS <- list(
     "file in your project folder (using the code description as the filename) and",
     "opens it in RStudio. (Not available while the Answer view is showing.)"
   ),
-  code_saved_notebook = paste(
-    "Code saved to Notebook — This message confirms that the code you just ran",
-    "has been added to the Code Log for this conversation.",
-    "The log is saved as an R Notebook (.Rmd file) in your project folder",
-    "and opened in RStudio automatically whenever you start a New Conversation,",
-    "use Pause, or use Quit with Code Log.",
-    "One notebook is created per conversation: starting a New Conversation",
-    "saves and closes the current notebook and begins a fresh one for the next",
-    "conversation. This means you always have a clean, timestamped record of",
-    "every piece of code that was successfully run in each conversation."
+  view_log = paste(
+    "View Code Log — Opens a read-only window listing the code that has been run successfully in",
+    "this conversation, each piece with the prompt that produced it. Press Save in that window to",
+    "save the log as an R Notebook (.Rmd) in your project folder and open it in RStudio, as",
+    "happens with Pause, Quit with Code Log and New conversation, but part-way through. You can",
+    "carry on in Classmate afterwards; a later save contains everything so far."
   ),
   quick_console = paste(
     "Quick Console — Opens a small R console inside the app where you can run",
@@ -2937,8 +2968,8 @@ HELP_TAB_TEXTS <- list(
   ),
   "Past answers" = paste(
     "Past Answers tab — Appears once you have asked more than one question with the",
-    "Answer button, and lists the earlier questions and answers from this conversation,",
-    "newest first."
+    "Answer button, and lists the earlier questions from this conversation, newest first.",
+    "Press Recall beside a question to bring its answer back into the Answer tab."
   ),
   "Changes" = paste(
     "Changes tab — Appears when the AI makes targeted edits to existing code.",
@@ -2977,6 +3008,10 @@ HELP_ID_PATTERNS <- list(
     "Recall (Past prompts) — Brings back this earlier prompt and everything it produced: the",
     "prompt returns to the prompt box, and you are taken back to its answer, or to its code",
     "with the R output, plots and warnings if it was run."
+  ),
+  "^recall_answer_" = paste(
+    "Recall (Past answers) — Brings this earlier answer back into the Answer tab. The answer it",
+    "replaces moves into the list, so nothing is lost."
   ),
   "^recall_conv_" = paste(
     "Recall (Past conversations) — Restores this earlier conversation (its prompts, code,",
@@ -3100,7 +3135,8 @@ server <- function(input, output, session) {
   .PROTECTION_NOTICE <- paste0(
     "Enter your prompt here. Always prioritise data protection. Never include ",
     "personal data or information in your prompts, and do not make any reference ",
-    "to real individuals.\n\nPress Clear to continue."
+    "to real individuals.\n\n𝗣𝗿𝗲𝘀𝘀 𝗖𝗹𝗲𝗮𝗿 𝘁𝗼 𝗰𝗼𝗻𝘁𝗶𝗻𝘂𝗲."  # bold: a text box cannot hold bold text, so Unicode bold letters
+
   )
   if (!.resuming_pause) {
     session$onFlushed(function() {
@@ -3603,7 +3639,7 @@ server <- function(input, output, session) {
   observe({
     if (ui_busy()) {
       for (btn in c("ask_plain", "ask_code", "explain_code", "fix_code", "run_code",
-                    "load_script", "save_block", "help_toggle",
+                    "load_script", "save_block", "view_log", "help_toggle",
                     "quick_console", "pause_app", "new_conversation", "quit"))
         shinyjs::disable(btn)
       return()
@@ -3644,7 +3680,7 @@ server <- function(input, output, session) {
     }
     if (protection_notice_active()) {
       for (btn in c("ask_plain", "ask_code", "explain_code", "fix_code", "run_code",
-                    "load_script", "save_block", "help_toggle",
+                    "load_script", "save_block", "view_log", "help_toggle",
                     "quick_console", "pause_app", "new_conversation",
                     "add_objects", "load_package_data", "remove_context", "remove_all_context",
                     "preferences",
@@ -3662,7 +3698,7 @@ server <- function(input, output, session) {
       document.getElementById('clear_prompt').style.borderColor = '';
       document.getElementById('clear_prompt').style.color = '';
     ")
-    for (btn in c("help_toggle", "quick_console", "pause_app", "quit",
+    for (btn in c("help_toggle", "quick_console", "pause_app", "quit", "view_log",
                   "add_objects", "load_package_data", "preferences",
                   "file_select", "load_workspace"))
       shinyjs::enable(btn)
@@ -4099,6 +4135,7 @@ server <- function(input, output, session) {
       return()
     }
     loaded_script_name(fname)
+    last_prompt_for_code("")    # a loaded script has no prompt behind it
     updateAceEditor(session, "code_editor", value = script_text)
     goto_tab("Code")
   })
@@ -5796,39 +5833,37 @@ server <- function(input, output, session) {
     do_ask_answer(input$prompt)
   })
 
-  # --- Back to Code ------------------------------------------------------------------
-  # Shown beside the Answer tabs once there is code-side work to go back to.
+  # --- Code / Answer switch -----------------------------------------------------------
+  # Appears (at the end of the tab bar) once there is both code-side work and an answer. The
+  # slider follows the current mode, so it moves by itself when Ask for Code or Answer is used,
+  # and clicking it switches between the code tabs and the Answer tabs.
   has_code_state <- reactive({
     nzchar(trimws(input$code_editor %||% "")) || length(run_history()) > 0 ||
       length(console_output_rv()) > 0 || length(plot_files_rv()) > 0 ||
       isTRUE(changes_tab_shown())
   })
-  observe({
-    shinyjs::toggle("back_to_code_li",
-      condition = (identical(ask_mode(), "answer") && isTRUE(has_code_state())) ||
-                  (isTRUE(help_mode()) && identical(ask_mode(), "answer")))
-  })
-  observeEvent(input$back_to_code, {
-    tab <- prior_code_tab()
-    if (identical(tab, "Changes") && !isTRUE(changes_tab_shown())) tab <- "Code"
-    set_ask_mode("code")
-    updateTabsetPanel(session, "main_tabs", selected = tab)
-  })
-
-  # --- Back to Answer: the reverse, from the code tabs ---------------------------------
   has_answer_state <- reactive({
     !is.null(answer_latest()) || length(answer_hist()) > 0
   })
   observe({
-    shinyjs::toggle("back_to_answer_li",
-      condition = identical(ask_mode(), "code") &&
-                  (isTRUE(has_answer_state()) || isTRUE(help_mode())))
+    shinyjs::toggle("mode_switch_li",
+      condition = (isTRUE(has_code_state()) && isTRUE(has_answer_state())) || isTRUE(help_mode()))
   })
-  observeEvent(input$back_to_answer, {
-    tab <- prior_answer_tab()
-    if (identical(tab, "Past answers") && length(answer_hist()) == 0) tab <- "Answer"
-    set_ask_mode("answer")
-    updateTabsetPanel(session, "main_tabs", selected = tab)
+  observe({
+    shinyjs::runjs(sprintf("if (window.cmSetModeSwitch) cmSetModeSwitch(%s);",
+                           if (identical(ask_mode(), "answer")) "true" else "false"))
+  })
+  observeEvent(input$mode_switch_clicked, {
+    # The prompt box shows the prompt behind what is now on view (blank for a loaded script)
+    if (identical(input$mode_switch_clicked, "answer")) {
+      set_ask_mode("answer")
+      updateTabsetPanel(session, "main_tabs", selected = "Answer")
+      updateTextAreaInput(session, "prompt", value = answer_latest()$question %||% "")
+    } else {
+      set_ask_mode("code")
+      updateTabsetPanel(session, "main_tabs", selected = "Code")
+      updateTextAreaInput(session, "prompt", value = last_prompt_for_code() %||% "")
+    }
   })
 
   # --- Answer tab ------------------------------------------------------------------
@@ -5859,9 +5894,34 @@ server <- function(input, output, session) {
     h <- answer_hist()
     if (length(h) == 0)
       return(tags$p(em("No earlier answers yet."), style = "color: #999; margin: 4px 0;"))
-    tagList(lapply(seq_along(h), function(i)
-      div(style = "border-bottom: 1px solid #eee; padding-bottom: 6px; margin-bottom: 6px;",
-          answer_card(h[[i]]))))
+    tagList(lapply(h, function(e)
+      div(style = "display: flex; align-items: flex-start; border-bottom: 1px solid #eee; padding: 2px 0;",
+        tags$p(e$question %||% "", style = paste0(
+          "margin: 0; flex: 1; font-size: 0.85em; color: #444;",
+          "white-space: pre-wrap; word-break: break-word;")),
+        tags$button("Recall", id = paste0("recall_answer_", e$seq %||% 0L),
+          style = paste0(
+            "flex-shrink: 0; margin-left: 6px; padding: 1px 6px;",
+            "font-size: 0.75em; background: white;",
+            "border: 1px solid #bbb; border-radius: 3px;",
+            "cursor: pointer; color: #555;"),
+          onclick = paste0("Shiny.setInputValue('recall_answer_seq', ", as.integer(e$seq),
+                           ", {priority: 'event'});")))))
+  })
+
+  # Recall on the Past answers tab: that answer becomes the current one (the one it replaces
+  # moves into the list) and the Answer tab is shown.
+  observeEvent(input$recall_answer_seq, {
+    h  <- answer_hist()
+    i  <- which(vapply(h, function(e) identical(as.integer(e$seq %||% 0L), as.integer(input$recall_answer_seq)), logical(1)))
+    if (length(i) == 0) return()
+    ent    <- h[[i[1]]]
+    hist   <- h[-i[1]]
+    latest <- answer_latest()
+    if (!is.null(latest)) hist <- c(list(latest), hist)
+    answer_hist(hist)
+    answer_latest(ent)
+    updateTabsetPanel(session, "main_tabs", selected = "Answer")
   })
 
   observeEvent(input$oos_ok_plain, {
@@ -6502,51 +6562,43 @@ server <- function(input, output, session) {
     }
   }
 
-  # --- Code saved indicator --------------------------------------------------
-  output$code_saved_ui <- renderUI({
-    req(!is.null(last_run_code()))
-    req(!last_run_failed())
-    req(identical(trimws(input$code_editor %||% ""), trimws(last_run_code())))
-    if (isTRUE(help_mode())) {
-      actionButton("code_saved_notebook", "Code saved to Notebook",
-        style = "background-color: #111; color: #fff; border-color: #111;")
-    } else {
-      tags$span("Code saved to Notebook",
-        style = "font-size: 0.9em; color: #555; line-height: 31px;")
-    }
-  })
-
-  observeEvent(input$code_saved_notebook, {
+  # --- View Code Log -----------------------------------------------------------
+  observeEvent(input$view_log, {
+    entries <- all_log_entries()
+    body <- if (length(entries) == 0)
+      tags$p(em("No code has been run successfully in this conversation yet."),
+             style = "color: #888; margin: 4px 0;")
+    else
+      div(style = "height: 380px; overflow-y: auto; padding-right: 6px;",
+        lapply(seq_along(entries), function(i) {
+          e <- entries[[i]]
+          div(style = "margin-bottom: 14px;",
+            tags$p(style = "margin: 0 0 4px 0; font-size: 0.85em; color: #666;",
+              tags$strong(paste0("Chunk ", i, ": ")),
+              if (is.null(e$prompt) || !nzchar(trimws(e$prompt)))
+                em("no prompt recorded (code entered or loaded manually)")
+              else em(trimws(e$prompt))),
+            tags$pre(style = "margin: 0; font-size: 0.82em; white-space: pre-wrap; background: #f8f8f8;",
+                     trimws(e$code)))
+        }))
     showModal(modalDialog(
-      title = "Code saved to Notebook",
-      tags$p(
-        "Each time code runs successfully, it is added to the Code Log for the",
-        "current conversation."
-      ),
-      tags$p(
-        "The log is saved automatically as a timestamped R Notebook (.Rmd file)",
-        "in your project folder, and opened in RStudio, whenever you:"
-      ),
-      tags$ul(
-        tags$li("start a ", tags$strong("New Conversation")),
-        tags$li("use ", tags$strong("Pause")),
-        tags$li("use ", tags$strong("Quit with Code Log"))
-      ),
-      tags$p(
-        tags$strong("One notebook is created per conversation."),
-        " Starting a New Conversation saves and closes the current notebook,",
-        " and a fresh one begins for the next conversation.",
-        " This gives you a clean, timestamped record of every piece of code",
-        " that was successfully run in each conversation."
-      ),
-      tags$p(
-        "In the notebook you can review and re-run each code chunk individually.",
-        tags$strong(" Remember to close Classmate (using Pause or Quit with Code Log)",
-                    " before running code in the notebook to avoid conflicts.")
-      ),
-      footer = modalButton("Close"),
+      title = "Code Log",
+      size  = "l",
+      tags$p(style = "font-size: 0.85em; color: #888;",
+        "The code run successfully in this conversation. Press Save to save it as an R Notebook",
+        "and open it in RStudio."),
+      body,
+      footer = tagList(
+        if (length(entries) > 0) actionButton("view_log_save", "Save", class = "btn-primary"),
+        modalButton("Close")),
       easyClose = TRUE
     ))
+  })
+  observeEvent(input$view_log_save, {
+    removeModal()
+    do_save_log()
+    showNotification("Code log saved and opened. You can carry on; saving again later includes everything so far.",
+                     type = "message", duration = 8)
   })
 
   # --- Save Code Log ---------------------------------------------------------

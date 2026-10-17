@@ -31,7 +31,7 @@ There is a single mode (the old Student / Non-student distinction was removed in
 
 An instructor/developer who wants unlimited use generates their own key with `classmate_make_key()`. `cost_limit`, `max_conversations` and `max_lines` set to `NULL` each require a Y/N confirmation and are never the default. `whisper()` still accepts a raw API key (console only, no quota).
 
-Help mode is toggled by the `?` button and overlays black help labels on every UI element. In help mode: the conversations-remaining counter turns dark grey, the "Code saved to Notebook" indicator becomes a black button, and the Quick Console button becomes black.
+Help mode is toggled by the `?` button and overlays black help labels on every UI element. In help mode: the conversations-remaining counter turns dark grey, and the Quick Console button becomes black.
 
 ---
 
@@ -58,7 +58,7 @@ Everything interesting is in `inst/app/app.R`. It is a single-file Shiny app.
 ### State management
 - `ui_busy` — reactiveVal; TRUE during any Ask/Run operation. A single `observe()` at the top of the server block gates all buttons via `shinyjs::enable/disable` when this changes.
 - `last_run_code` — reactiveVal; stores the last code successfully executed. Run button is disabled when editor content matches this (prevents double-run). Reset to NULL on repeat/recall.
-- `last_run_failed` — reactiveVal; TRUE if last run errored. Suppresses "Code saved to Notebook" indicator.
+- `last_run_failed` — reactiveVal; TRUE if last run errored. (the "Code saved to Notebook" indicator was removed after 0.5.97).
 - `help_mode` — reactiveVal; toggles help overlay via `body.help-mode` CSS class.
 - `all_log_entries` — reactiveVal; list of `list(prompt=, code=)` entries for the R Notebook code log. Stored in saved conversations and restored on recall.
 - `pending_log_entries` — reactiveVal; set to entries when new code is run, cleared after `do_save_log()`. Used by `session$onSessionEnded` to detect unsaved entries.
@@ -97,7 +97,7 @@ Everything interesting is in `inst/app/app.R`. It is a single-file Shiny app.
 - Format: `.Rmd` R Notebook with YAML header, a note to pause/quit before running, then alternating prose (the user's prompt in italics) and `{r chunk_N}` code blocks.
 - Saved to `outputs/classmate_code_log_<timestamp>.Rmd` in the project root.
 - Auto-saved on browser close via `session$onSessionEnded` (only if `pending_log_entries` is non-empty, to avoid double-saves).
-- The "Code saved to Notebook" indicator (text in normal mode, black button in help mode) appears when: the current editor content matches `last_run_code`, and the last run did not fail. It hides on manual edit, repeat, or recall.
+- The "Code saved to Notebook" indicator beside Save Code Block (and its help pop-up) was removed after 0.5.97; successful runs are still added to the Code Log as before.
 - Save Code Block button saves only the current editor content (not the full log) as a plain `.R` file.
 
 ---
@@ -236,10 +236,21 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.97 (2026-10-16)  
-**Current version:** 0.5.97
+**Last released:** 0.5.98 (2026-10-17)  
+**Current version:** 0.5.98
 
-Released in 0.5.97 (no unreleased changes):
+Released in 0.5.98 (no unreleased changes):
+- **Explain / Tell me more formatting bug** (user-reported: text rendered as code and vice versa): `explanation_to_html()` only knew inline backticks, so the three backticks of a fenced code block in a Tell me more reply were paired wrongly, and nothing was HTML-escaped. It now just calls `answer_to_html()` (escaping, paragraphs, lists, headings, fenced blocks as `<pre>`, `**bold**`). `answer_to_html()` also gained `*italic*` and now protects code spans first so `*` inside code is never treated as emphasis. Tested live (Explain `print(mean(1:10))`, then Tell me more on `print()`) and with unit cases.
+- **Save Code Block** lost its blue fill (white like Explain); new **View Code Log** button (`view_log`) to its right opens a read-only, scrolling pop-up (380px) listing `all_log_entries()` (prompt + code per chunk), with **Save** (`view_log_save`: closes the pop-up, runs `do_save_log()` = write a timestamped .Rmd and open it in RStudio, then a notification) and **Close**; with no entries it just says nothing has run yet and offers only Close. It can be used part-way: `all_log_entries` is kept, so a later save/Pause/Quit writes a new, fuller file. `view_log` is in the busy/protection freeze lists and re-enable list; help entry added. Tested live (use `options(editor = "true")` in the scratch runner, `/tmp/kt/run_live.R`, because outside RStudio `open_log_file()` calls `file.edit()`).
+- **Code / Answer switch replaces the Back to Code / Back to Answer buttons.** A slider (`#mode_switch`, in `li#mode_switch_li` appended to `ul#main_tabs`; Code on the left, Answer on the right) shows once there is both code-side state (`has_code_state`) and an answer (`has_answer_state`), and always in help mode. It follows `ask_mode()` (an observer calls `cmSetModeSwitch()` via `runjs`), so it moves by itself on Ask for Code / Answer; clicking it sends `input$mode_switch_clicked` ("answer"/"code") which calls `set_ask_mode()` and selects the Answer / Code tab. Help entry `mode_switch` (help overlay JS recognises `data-help-id`; `tools/check_help.R` reads `data-help-id` too). The older "Back to Code/Answer" notes below are superseded. Tested live (appears only when both exist; click both ways; moves to Code after Ask for Code). Clicking the switch also puts the matching prompt back in the prompt box: `last_prompt_for_code()` for Code (blank for a loaded script, because Load Script now sets `last_prompt_for_code("")`) and `answer_latest()$question` for Answer. The automatic moves after Ask for Code / Answer do not touch the prompt box.
+- Removed the "Code saved to Notebook" message next to Save Code Block (`code_saved_ui`, `code_saved_notebook` button/modal and help entry).
+- **Back to Code / Back to Answer** now always select the Code tab / the Answer tab (they used to return to the code-side or answer-side tab that had been showing, `prior_code_tab` / `prior_answer_tab`; those values are still tracked, and `prior_code_tab` is still used to record the tab of a code interaction). Help text updated.
+- **Past answers tab** is now a list like Past prompts: each earlier question with a **Recall** button (`tags$button` id `recall_answer_<seq>`, onclick sets `input$recall_answer_seq`; help pattern `^recall_answer_`). Recall makes that answer the current one in the Answer tab (the answer it replaces moves into the list) and selects the Answer tab. Tested live with three Answer questions.
+- **Answer bug** (user-reported: "List the variables in the data" showed `DESCRIPTION: ...` plus raw code instead of plain English): in a conversation that already had Ask for Code turns, stage 1 of Answer sometimes copied the Ask-for-Code format instead of starting with ANSWER:/COMPUTE:, and `parse_answer_plan()` treated any reply without COMPUTE: as the final answer. Now a reply with neither prefix but a code block is treated as COMPUTE (code run, plain-English answer written in stage 2), and `answer_mode_rule` tells the model to always start with ANSWER:/COMPUTE: and not to copy earlier formats. Unit-tested (`/tmp/kt/plan_unit.R`-style cases); a live Answer after Ask for Code on the Chicago data gave a plain-English list of variables. Not re-reproduced with the faulty format.
+- **R output tab** has a fixed 220px height (same as the code editor) and scrolls (`overflow-y: auto`) instead of growing with long output.
+- The start-up data-protection notice in the prompt box shows "Press Clear to continue." in bold: a text box cannot hold bold text, so `.PROTECTION_NOTICE` uses Unicode mathematical sans-serif bold letters (U+1D5D4 / U+1D5EE ranges).
+
+Released in 0.5.97:
 - **AutoRun Code** tick box (`autorun_code`, right of Clear, default off, not saved on Pause): when ticked, `do_ask_code()` runs the freshly generated code straight away through `do_run_code(code_text)` (the Run button's observer body, now a function; the generated text is passed directly because `input$code_editor` has not synced yet). Ask for Code only, not Fix. Skipped on every early-return path (too long, disclosure risk, etc.). Help overlay JS now recognises Shiny checkboxes; `tools/check_help.R` treats `checkboxInput` like a button.
 
 Released in 0.5.96:
@@ -355,6 +366,7 @@ Released in 0.5.83–0.5.85:
 | 0.5.87 | **Answer button** (was Ask (no code)) is now a two-stage answer pipeline: Claude answers directly from object/file summaries or requests a small read-only calculation, which runs in a sandbox and whose scrubbed summary output Claude turns into a plain-English answer. New Answer / Past answers tabs replace Code / R output / Past code while in the Answer view (tabs follow the most recent ask); Run/Explain/Fix/Load Script/Save Code Block are frozen there; "Show my working" reveals code and output; not written to the code-log notebook. |
 | 0.5.88 | Answer button privacy hardening (coded copies of identifying columns, refusal of string/sort/location tricks, geometry scrubbing, decline record requests); fixed under-counted API cost (`calc_cost`); startup disclaimer personal-data warnings split into two bold dark-red bullets |
 | 0.5.89 | Recall (Past prompts / Past code) restores answers or code with R output, plots, warnings and Changes; Back to Code / Back to Answer buttons; fixed-height Answer panes; fixed `compute_diff` crash on a changed first line; fixed session crash when the project folder or the app's own folder disappears (`cm_enter_root`, `cm_ensure_root`); help for Past code / prompts / conversations Recall buttons |
+| 0.5.98 | R output tab fixed height with scrolling; bold "Press Clear to continue."; Answer reply-format fix; Past answers list with Recall; Code / Answer switch replaces Back to Code/Answer (restores the matching prompt); "Code saved to Notebook" message removed; Save Code Block unfilled + View Code Log pop-up with Save; Explain / Tell me more formatting fix |
 | 0.5.97 | AutoRun Code tick box: generated code is run automatically (Ask for Code only; off by default) |
 | 0.5.96 | Quick Console Pause button pauses immediately; Quit with Code Log no longer stays disabled after a package install |
 | 0.5.95 | Auto-update is silent: new version loaded in-session without restarting R; README install line fixed |
