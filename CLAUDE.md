@@ -236,10 +236,15 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.108 (2026-10-19)  
-**Current version:** 0.5.108
+**Last released:** 0.5.109 (2026-10-19)  
+**Current version:** 0.5.109
 
-Released in 0.5.108 (no unreleased changes):
+Released in 0.5.109 (no unreleased changes):
+- Load Package Data layout: **Package:** label, then the "Filter the package list (e.g. sp)" box, then the package drop-down ("Choose a package..."), then the dataset search box, now worded "Search by Data name (optional)". Verified by element positions.
+
+- **No "jump" when Load Package Data is reopened**: the dialog's outputs now follow `pkgdata_pkg_val` (a reactiveVal set from `input$pkgdata_pkg` and reset to blank on a fresh open) instead of the raw input, because a closed dialog leaves its old input value behind and reading it on reopening drew the previous package's filters and list first, then shrank. Verified: after choosing a package and closing, the reopened dialog goes straight to its compact height (375 px) with no list drawn.
+
+Released in 0.5.108:
 - **Smaller download**: `inst/app/www/logo.png` resized from 1024x1024 (1.6 MB) to 480x480 (195 KB; it is shown at 220 px at most, so still sharp on high-resolution screens) and the unused `favicon.png` from 878x893 (256 KB) to 128x128 (13 KB), using macOS `sips`. The package tarball went from about 2.0 MB to about 370 KB, which makes the silent auto-update faster. Originals kept outside the repo in `/tmp/kt/orig_img` only (git history has them too).
 
 - **Load Package Data also lists the spatial files packages ship** (`.shp`, `.gpkg`, `.geojson`): `scan_pkg_data()` now also looks in each package's folders (skipping `R`, `help`, `html`, `Meta`, `libs`, `doc`, `demo`, `tests`, `www`, `data`; about 0.4-0.7 s for 330 packages, cached like the dataset index) and returns `kind` ("data"/"file"), `path`, `objname`; files appear in the package's list as "name — spatial file (folder/file.gpkg)" with class "spatial file" (also a choice in the type filter), keys `pkg::file:name#n`, and packages with only files (e.g. `mapsf`, `ggspatial`) now appear in the package drop-down. They are read with `sf::st_read()` only when added (object name = file name without extension; two files of the same name in one package become `nc_gpkg` / `nc_shp`); a missing `sf` or unreadable file is reported as "Could not load". Examples found here: `spData` columbus / boston_tracts / auckland / NY8 / sids / eire / world files, `sf` nc.shp / nc.gpkg, `mapsf` mtq.gpkg. The ticked summary shows friendly names. Tested live. **Testing note**: when the Browser pane is *hidden* Shiny treats the dialog's outputs as hidden and does not render them (they stay "recalculating"); add `outputOptions(output, <id>, suspendWhenHidden = FALSE)` in a scratch copy of app.R for testing, never in the real app.
@@ -423,6 +428,7 @@ Released in 0.5.83–0.5.85:
 | 0.5.87 | **Answer button** (was Ask (no code)) is now a two-stage answer pipeline: Claude answers directly from object/file summaries or requests a small read-only calculation, which runs in a sandbox and whose scrubbed summary output Claude turns into a plain-English answer. New Answer / Past answers tabs replace Code / R output / Past code while in the Answer view (tabs follow the most recent ask); Run/Explain/Fix/Load Script/Save Code Block are frozen there; "Show my working" reveals code and output; not written to the code-log notebook. |
 | 0.5.88 | Answer button privacy hardening (coded copies of identifying columns, refusal of string/sort/location tricks, geometry scrubbing, decline record requests); fixed under-counted API cost (`calc_cost`); startup disclaimer personal-data warnings split into two bold dark-red bullets |
 | 0.5.89 | Recall (Past prompts / Past code) restores answers or code with R output, plots, warnings and Changes; Back to Code / Back to Answer buttons; fixed-height Answer panes; fixed `compute_diff` crash on a changed first line; fixed session crash when the project folder or the app's own folder disappears (`cm_enter_root`, `cm_ensure_root`); help for Past code / prompts / conversations Recall buttons |
+| 0.5.109 | Load Package Data: search options reordered and reworded (package filter above the drop-down, "(optional)" wording); reopening the dialog no longer draws the previous package first (no jump) |
 | 0.5.108 | Load Package Data also lists spatial files shipped by packages (shapefiles, GeoPackages, GeoJSON; read with sf when added); smaller logo (package download about 370 KB instead of 2 MB) |
 | 0.5.107 | Classmate no longer bundles data (Chicago removed); Load Package Data lists the datasets of every installed package (package filter, type and name filters, ticks across packages, stays open after Add); context list shows green ticks / red crosses with Remove deselected / Remove all links, class labels instead of [obj], and crossed items are not passed to prompts |
 | 0.5.106 | Fixes a bug since 0.5.96 where the main Pause button paused immediately without confirmation; consistent button order in pop-ups (action button left, Close/Cancel right, right-justified) |

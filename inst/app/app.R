@@ -4630,8 +4630,15 @@ server <- function(input, output, session) {
   pkgdata_clear_store <- function() { rm(list = ls(pkgdata_store, all.names = TRUE), envir = pkgdata_store) }
 
   pkgdata_last <- reactiveVal("")      # the package last chosen, to restore the dialog after a replace check
-  observeEvent(input$pkgdata_pkg, pkgdata_last(input$pkgdata_pkg %||% ""))
+  # The dialog's outputs follow pkgdata_pkg_val, not the raw input: a closed dialog leaves its old input value
+  # behind, and reading that when the dialog is reopened drew the old package's lists first and then shrank
+  pkgdata_pkg_val <- reactiveVal("")
+  observeEvent(input$pkgdata_pkg, {
+    pkgdata_last(input$pkgdata_pkg %||% "")
+    pkgdata_pkg_val(input$pkgdata_pkg %||% "")
+  })
   show_pkgdata_modal <- function() {
+    pkgdata_pkg_val(isolate(pkgdata_last()))     # blank on a fresh open
     idx <- scan_pkg_data()
     if (nrow(idx) == 0) {
       showNotification("No installed package comes with datasets.", type = "warning", duration = 5)
@@ -4644,10 +4651,11 @@ server <- function(input, output, session) {
       tags$p("Pick a package to see its datasets and any spatial files (shapefiles, GeoPackages, GeoJSON) it comes",
              "with, tick the ones you want (in one or several packages) and press Add: they are put in your R",
              "workspace and added to the context for your prompt."),
-      selectInput("pkgdata_pkg", "Package:",
+      tags$label("Package:", `for` = "pkgdata_pkgfilter"),
+      textInput("pkgdata_pkgfilter", NULL, placeholder = "Filter the package list (e.g. sp) (optional)", width = "100%"),
+      selectInput("pkgdata_pkg", NULL,
                   choices = c("Choose a package..." = "", setNames(pkgs, paste0(pkgs, " (", counts, ")"))),
                   selected = isolate(pkgdata_last()), width = "100%"),
-      textInput("pkgdata_pkgfilter", NULL, placeholder = "Filter the package list (e.g. sp)", width = "100%"),
       uiOutput("pkgdata_filters"),
       uiOutput("pkgdata_items"),
       uiOutput("pkgdata_ticked"),
@@ -4678,7 +4686,7 @@ server <- function(input, output, session) {
 
   # Info for the chosen package (loading it on first use)
   pkgdata_info <- reactive({
-    p <- input$pkgdata_pkg %||% ""
+    p <- pkgdata_pkg_val()
     if (!nzchar(p)) return(NULL)
     withProgress(message = paste0("Reading the ", p, " datasets..."), value = 0.5, pkgdata_load_pkg(p))
   })
@@ -4686,7 +4694,7 @@ server <- function(input, output, session) {
     info <- pkgdata_info(); req(info)
     big <- isTRUE(attr(info, "big"))
     fluidRow(
-      column(if (big) 12 else 6, textInput("pkgdata_filter", NULL, placeholder = "Filter by Data name (optional)", width = "100%")),
+      column(if (big) 12 else 6, textInput("pkgdata_filter", NULL, placeholder = "Search by Data name (optional)", width = "100%")),
       if (!big) column(6, selectInput("pkgdata_type", NULL, c("All types" = "", sort(unique(info$class))), width = "100%")))
   })
   # What is shown: the package's datasets, filtered by name and type
