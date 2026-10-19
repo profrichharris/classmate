@@ -51,8 +51,9 @@
 }
 
 .watch_append_usage <- function(cost_usd) {
-  log <- .watch_read_usage()
-  log <- c(log, list(list(timestamp = Sys.time(), cost_usd = cost_usd)))
+  old_log <- .watch_read_usage()
+  log <- c(old_log, list(list(timestamp = Sys.time(), cost_usd = cost_usd)))
+  attr(log, "key_id") <- (.watch_load_cfg()$key_id) %||% attr(old_log, "key_id")
   tryCatch(classmate_save_state(log, .watch_usage_path()), error = function(e) NULL)
   invisible(log)
 }
@@ -448,6 +449,9 @@ whisper <- function(key = NULL) {
     message("classmate whisper is already running. Use ssshh() to stop.")
     return(invisible(NULL))
   }
+
+  # --- The package may have been reinstalled while this R session was running ---
+  if (classmate_session_is_stale("whisper", list(key = key))) return(invisible(NULL))
 
   # --- Preflight update check ------------------------------------------------
   updated <- classmate_preflight(relaunch = "whisper", args = list(key = key))

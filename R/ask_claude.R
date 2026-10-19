@@ -35,6 +35,9 @@ talk <- function() {
     }
   }
 
+  # --- The package may have been reinstalled while this R session was running ---
+  if (classmate_session_is_stale("talk")) return(invisible(NULL))
+
   # --- Preflight: check for updates (once per R session, not after a Pause) -
   updated <- classmate_preflight()
   if (isTRUE(updated)) return(invisible(NULL))   # new talk() launched inside preflight
@@ -181,6 +184,20 @@ classmate_force_lazy_objects <- function() {
 # After a successful in-session update: unload the old copy, load the new one (re-attaching it if
 # it was attached) and start talk()/whisper() again from it. TRUE if that worked; FALSE means the
 # caller should ask for a restart of R instead.
+# TRUE if the files of the installed package are newer than the copy loaded in this R session (the
+# package was reinstalled or updated while R was running, so the loaded R code may not match the
+# installed app). Then the new copy is loaded and `relaunch` is started again from it, or, if that is
+# not possible, the user is asked to restart R. Returns TRUE when the caller should stop.
+classmate_session_is_stale <- function(relaunch = "talk", args = list()) {
+  loaded    <- tryCatch(as.character(getNamespaceVersion("classmate")), error = function(e) NA_character_)
+  installed <- tryCatch(as.character(utils::packageVersion("classmate")), error = function(e) loaded)
+  if (is.na(loaded) || identical(loaded, installed)) return(FALSE)
+  if (classmate_reload_and_relaunch(relaunch, args)) return(TRUE)
+  message("Classmate was updated while R was running. Please restart R (Session > Restart R in RStudio) ",
+          "and then run ", relaunch, "() again.")
+  TRUE
+}
+
 classmate_reload_and_relaunch <- function(relaunch = "talk", args = list()) {
   attached <- "package:classmate" %in% search()
   ok <- tryCatch({

@@ -1570,8 +1570,11 @@ read_usage_log <- function() {
 }
 
 append_usage_entry <- function(cost_usd) {
-  log <- read_usage_log()
-  log <- c(log, list(list(timestamp = Sys.time(), cost_usd = cost_usd)))
+  old_log <- read_usage_log()
+  log <- c(old_log, list(list(timestamp = Sys.time(), cost_usd = cost_usd)))
+  # Remember which key the usage belongs to, so that deleting and re-loading the same key keeps it
+  attr(log, "key_id") <- tryCatch(readRDS(active_cfg_path())$key_id, error = function(e) NULL) %||%
+    attr(old_log, "key_id")
   tryCatch(classmate:::classmate_save_state(log, usage_log_path()), error = function(e) invisible(NULL))
   log
 }
@@ -2210,6 +2213,7 @@ ui <- fluidPage(
       #main_tabs .cm-switch-li > * { vertical-align: middle; }
       .cm-switch-lbl { display: inline-block; margin: 0 6px; }
       .cm-prompt-row.cm-hl { background-color: #fff3b0; border-radius: 3px; }
+      .pref-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
       .cm-switch { position: relative; display: inline-block; width: 36px; height: 18px; margin: 0; }
       .cm-switch input { opacity: 0; width: 0; height: 0; }
       .cm-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
@@ -2889,7 +2893,8 @@ HELP_TEXTS <- list(
   ),
   preferences = paste(
     "Preferences — Opens the preferences panel, where you can load a new key file from your",
-    "instructor (from your computer or a web address) and set your preferred",
+    "instructor (from your computer or a web address), delete the saved key file (after a",
+    "confirmation; Classmate then asks for a key again), and set your preferred",
     "response language, coding style (base R, tidyverse, data.table), plotting",
     "library, mapping package, image export format, quality and size, and comment",
     "density. The Claude model in use (Sonnet 5.5) and the maximum code length are",
@@ -3380,6 +3385,35 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$pref_load_key, show_load_key_file_modal())
+
+  # Delete the saved key: Classmate goes back to the "load a key file" screen, as if no key had been
+  # set (usage so far is kept, so deleting and re-loading the same key does not reset the allowance)
+  observeEvent(input$pref_delete_key, {
+    if (!file.exists(active_cfg_path())) {
+      showNotification("There is no saved key file to delete.", type = "message", duration = 5)
+      return(invisible(NULL))
+    }
+    showModal(modalDialog(
+      title = "Delete the key file?",
+      tags$p("Are you sure? The key saved on this computer will be deleted and Classmate will ask for a key file",
+             "again (and for its PIN), as if no key had been set."),
+      tags$p(em("Your usage so far is kept.")),
+      footer = tagList(actionButton("delete_key_cancel", "Cancel"),
+                       actionButton("delete_key_confirm", "Delete", class = "btn-danger")),
+      easyClose = FALSE
+    ))
+  })
+  observeEvent(input$delete_key_cancel, show_preferences_modal())
+  observeEvent(input$delete_key_confirm, {
+    tryCatch(unlink(active_cfg_path()), error = function(e) NULL)
+    classmate:::cm_clear_key()
+    cost_limit_val(NULL); reset_period_val("weekly"); final_expiry_val(NULL)
+    max_conversations_val(NULL); max_lines_cap_val(50)
+    key_status_msg("The key file has been deleted. Load a key file to continue.")
+    shinyjs::reset("key_file")           # so that the same file can be chosen again
+    key_is_set(FALSE)
+    removeModal()
+  })
   observeEvent(input$load_key_cancel, show_preferences_modal())
 
   observeEvent(input$mid_session_key_file, {
@@ -3468,9 +3502,11 @@ server <- function(input, output, session) {
 
     # If the key_id differs from the active config, this is a newly issued key
     # from the instructor — reset the usage log so the student gets a fresh quota.
-    cfg <- tryCatch(readRDS(active_cfg_path()), error = function(e) NULL)
-    if (!is.null(payload$key_id) &&
-        (is.null(cfg) || !identical(cfg$key_id, payload$key_id))) {
+    # (The key the usage belongs to is the saved key, or, if that was deleted, the one recorded in the
+    # usage log, so deleting and re-loading the same key does not give a fresh allowance.)
+    cfg     <- tryCatch(readRDS(active_cfg_path()), error = function(e) NULL)
+    prev_id <- cfg$key_id %||% attr(read_usage_log(), "key_id")
+    if (!is.null(payload$key_id) && !identical(prev_id, payload$key_id)) {
       tryCatch(unlink(usage_log_path()), error = function(e) invisible(NULL))
       usage_log_rv(list())
     }
@@ -5043,48 +5079,46 @@ server <- function(input, output, session) {
     lang_choices <- if (tolower(lang) == "english") "English" else c(lang, "English")
     showModal(modalDialog(
       title = "Preferences",
-      actionButton("pref_load_key", "Load new key file", class = "btn-default btn-sm"),
-      tags$div(style = "margin-bottom: 10px;"),
       tags$p(style = "margin: 0;", tags$label("Claude Model:"), " ", MODEL_SONNET_LABEL),
       hr(),
-      fluidRow(
-        column(8, selectInput("pref_language", "Response language:",
-          choices = lang_choices, selected = lang)),
-        column(4, div(style = "margin-top: 25px;",
-          actionButton("pref_lang_change", "Change", class = "btn-default btn-sm")))
-      ),
+      # Same width as the drop-downs below (first grid column), with the Change button beside it
+      tags$div(class = "pref-grid",
+        selectInput("pref_language", "Response language:", choices = lang_choices,
+                    selected = lang, width = "100%"),
+        tags$div(style = "align-self: end; margin-bottom: 15px;",
+          actionButton("pref_lang_change", "Change", class = "btn-default btn-sm"))),
       tags$p(em(
         "The language classmate uses for explanations. R code is always written in English."
       )),
       hr(),
       tags$h5("Preferred approach for..."),
-      selectInput("pref_coding", "Coding:",
-                  choices = c("tidyverse", "Base R"), selected = prefs$coding),
-      selectInput("pref_plotting", "Plotting:",
-                  choices = c("ggplot2", "Base R"), selected = prefs$plotting),
-      selectInput("pref_mapping", "Mapping:",
-                  choices = c("tmap", "ggplot2", "leaflet", "mapsf", "Base R"),
-                  selected = prefs$mapping),
+      tags$div(class = "pref-grid",
+        selectInput("pref_coding", "Coding:",
+                    choices = c("tidyverse", "Base R"), selected = prefs$coding, width = "100%"),
+        selectInput("pref_plotting", "Plotting:",
+                    choices = c("ggplot2", "Base R"), selected = prefs$plotting, width = "100%"),
+        selectInput("pref_mapping", "Mapping:",
+                    choices = c("tmap", "ggplot2", "leaflet", "mapsf", "Base R"),
+                    selected = prefs$mapping, width = "100%")),
       tags$p(em(
         "These are defaults Claude will lean towards, not hard rules — ",
         "you can always ask for something different in your prompt."
       )),
       hr(),
       tags$h5("Image export defaults"),
-      fluidRow(
-        column(4, selectInput("pref_img_format", "Format:",
-          choices = c("png", "jpg", "pdf", "tif", "bmp"), selected = prefs$img_format)),
-        column(4, selectInput("pref_img_quality", "Quality / resolution:",
-          choices = c("Low", "Medium", "High"), selected = prefs$img_quality)),
-        column(4, selectInput("pref_img_size", "Target size:",
+      tags$div(class = "pref-grid",
+        selectInput("pref_img_format", "Format:",
+          choices = c("png", "jpg", "pdf", "tif", "bmp"), selected = prefs$img_format, width = "100%"),
+        selectInput("pref_img_quality", "Quality / resolution:",
+          choices = c("Low", "Medium", "High"), selected = prefs$img_quality, width = "100%"),
+        selectInput("pref_img_size", "Target size:",
           choices = c(
             "Journal single col. (90x90 mm)",
             "Journal double col. (180x120 mm)",
             "A4 (210x297 mm)", "A3 (297x420 mm)", "Letter (8.5x11 in)",
             "4x6 in / 10x15 cm", "5x7 in / 13x18 cm", "8x10 in / 20x25 cm",
             "Square 6x6 in"
-          ), selected = prefs$img_size))
-      ),
+          ), selected = prefs$img_size, width = "100%")),
       tags$p(em(
         "These guide Claude when writing image-saving code (ggsave, png, pdf, tiff, etc.).",
         "Low ≈ web/screen, Medium ≈ standard print, High ≈ high-quality print.",
@@ -5093,8 +5127,8 @@ server <- function(input, output, session) {
       )),
       hr(),
       tags$h5("Code style"),
-      fluidRow(
-        column(6,
+      tags$div(class = "pref-grid",
+        tags$div(
           tags$label("Maximum code length:"),
           tags$p(
             style = "margin: 6px 0 0 0;",
@@ -5103,11 +5137,9 @@ server <- function(input, output, session) {
             tags$span(style = "color: #888;", " (set by your key)")
           )
         ),
-        column(6,
-          selectInput("pref_comment_density", "Comments in generated code:",
-            choices  = c("None", "Minimal", "Most"),
-            selected = prefs$comment_density)
-        )
+        selectInput("pref_comment_density", "Comments in generated code:",
+          choices  = c("None", "Minimal", "Most"),
+          selected = prefs$comment_density, width = "100%")
       ),
       tags$p(em(
         "Maximum length is set by your key. It is a soft target: Claude will aim to stay",
@@ -5117,7 +5149,13 @@ server <- function(input, output, session) {
         "(e.g. '# Load data'); Most: section markers plus short notes on non-obvious lines.",
         "Even at Most, line-by-line commenting is avoided."
       )),
-      footer = modalButton("Close")
+      # Key file buttons at the left of the footer, Close at the right
+      footer = tags$div(style = "display: flex; justify-content: space-between; align-items: center;",
+        tags$div(
+          actionButton("pref_load_key", "Load new key file", class = "btn-default btn-sm"),
+          actionButton("pref_delete_key", "Delete key file", class = "btn-default btn-sm",
+                       style = "margin-left: 6px;")),
+        modalButton("Close"))
     ))
   }
 
