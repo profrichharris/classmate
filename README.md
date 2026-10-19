@@ -30,18 +30,11 @@ ask()
 The app will ask for your Anthropic API key the first time. Treat the key like a
 password — never paste it into a script you save or share.
 
-## Bundled data
+## Data
 
-Example spatial (`sf`) datasets for the practical exercises are included and
-load just like any other R dataset:
-
-```r
-data(chicago_boundary)
-data(chicago_tracts_income)
-data(chicago_rogerspark_residential_buildings)
-```
-
-Each is an `sf` object ready to use with `tmap`, `ggplot2`, etc.
+Classmate no longer bundles any data. **Load Package Data** lists every installed R
+package that comes with datasets, so you can load (and add to your prompt's context)
+data from any of them, such as `datasets` or `spData`.
 
 ## What the app does
 

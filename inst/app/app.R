@@ -2094,7 +2094,7 @@ ui <- fluidPage(
       "Are there any files or objects you want the prompt to work with?"
     ),
     fluidRow(
-      column(8,
+      column(12,
         shinyFilesButton("file_select", "Import files",
           title = "Select one or more files", multiple = TRUE),
         tags$span(style = "display: inline-block; width: 4px;"),
@@ -2104,13 +2104,12 @@ ui <- fluidPage(
         tags$span(style = "display: inline-block; width: 4px;"),
         shinyFilesButton("load_workspace", "Load Workspace",
           title = "Select a workspace file (.RData / .rda)", multiple = FALSE),
-      ),
-      column(4,
-        hidden(disabled(actionButton("remove_context", "Remove checked"))),
-        tags$span(style = "display: inline-block; width: 4px;"),
-        hidden(disabled(actionButton("remove_all_context", "Remove all")))
       )
     ),
+    # Remove links directly above the list of files and objects added for context (shown only when there
+    # is something to remove)
+    tags$div(id = "context_links", style = "display: none; margin: 6px 0 6px 0; font-size: 0.85em;",
+      actionLink("remove_context", "Remove deselected"), " \u00b7 ", actionLink("remove_all_context", "Remove all")),
     uiOutput("context_list_ui"),
 
     hr(),
@@ -2214,6 +2213,16 @@ ui <- fluidPage(
       .cm-switch-lbl { display: inline-block; margin: 0 6px; }
       .cm-prompt-row.cm-hl { background-color: #fff3b0; border-radius: 3px; }
       .pref-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
+      a.action-button.disabled, a.action-button[disabled] { pointer-events: none; opacity: 0.5; }
+      /* Boxes in the context list show a cross, not a tick, when selected (selected = to be removed) */
+      #context_list_box input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 14px; height: 14px;
+        border: 1px solid #999; border-radius: 3px; background: #fff; cursor: pointer; outline: none; }
+      #context_list_box input[type=checkbox]:not(:checked)::after { content: '\\2713'; display: block; text-align: center;
+        font-size: 12px; line-height: 12px; color: #1e7e34; font-weight: bold; }
+      #context_list_box input[type=checkbox]:checked { border-color: #c0392b; }
+      #context_list_box input[type=checkbox]:checked + span { text-decoration: line-through; color: #aaa; }
+      #context_list_box input[type=checkbox]:checked::after { content: '\\2715'; display: block; text-align: center;
+        font-size: 11px; line-height: 12px; color: #c0392b; font-weight: bold; }
       /* File dialogs (Import files, Load Script, Save...): the Select / Save button to the left of Cancel,
          both right-justified, as in the other pop-ups */
       .sF-responseButtons.modal-footer { display: flex; flex-direction: row-reverse; justify-content: flex-start; gap: 5px; }
@@ -2919,23 +2928,27 @@ HELP_TEXTS <- list(
     "dimensions and column names — never the data values."
   ),
   load_package_data = paste(
-    "Load Package Data — Opens a list of the data that comes with Classmate (for",
-    "example the chicago census-tract data). Tick what you want and press Load: it",
-    "is loaded into your R workspace and added to the context for your prompt, so you",
-    "can ask questions about it straight away. If you already have an object with the",
-    "same name you are asked before it is replaced."
+    "Load Package Data — Opens a list of every installed R package that comes with datasets.",
+    "Pick a package to see its datasets (with their type and size), filter them by name or type,",
+    "tick the ones you want, and go on to tick datasets in other packages too. Add puts the",
+    "ticked datasets in your R workspace and adds them to the context for your prompt; the window",
+    "stays open so you can add more, and Close ends it. If you already have an object with the same",
+    "name you are asked before it is replaced."
   ),
   load_workspace = paste(
     "Load Workspace — Loads a saved R workspace file (.RData, .rda or .rds) into",
     "your current R session, making its objects available as context."
   ),
   remove_context = paste(
-    "Remove Checked — Removes the ticked files and objects from the context.",
-    "This button appears once you have added something."
+    "Remove deselected — Everything added for context starts with a green tick, meaning it is used.",
+    "Click a tick to deselect that item: it becomes a red cross, is struck through and greyed, and is",
+    "not passed to your prompts. Press this to remove the deselected ones from the context for good",
+    "(click the cross again to bring one back).",
+    "This link appears above the list once you have added something."
   ),
   remove_all_context = paste(
-    "Remove All — Clears all attached files and objects from the context.",
-    "This button appears once you have added something."
+    "Remove all — Clears all attached files and objects from the context.",
+    "This link appears above the list once you have added something."
   ),
   mode_switch = paste(
     "Code / Answer switch — Appears at the end of the tab bar once you have both code and an",
@@ -3103,7 +3116,9 @@ HELP_TAB_TEXTS <- list(
 # (they open their own explanatory window), so need no entry in HELP_TEXTS.
 # "tell_more_ok" is the OK button of the "More detail" popup, which sits above
 # the help overlay and so behaves normally in Help mode.
-HELP_EXEMPT <- c("usage_help", "about_classmate", "tell_more_ok")
+# (pkgdata_*: buttons that live only inside the Load Package Data pop-up, where Help mode is off)
+HELP_EXEMPT <- c("usage_help", "about_classmate", "tell_more_ok",
+                 "pkgdata_tick_all", "pkgdata_untick_all", "pkgdata_add")
 
 # Generated ids that follow a pattern (e.g. one Recall button per past code block).
 HELP_ID_PATTERNS <- list(
@@ -3112,6 +3127,11 @@ HELP_ID_PATTERNS <- list(
     "run it again or use it as a starting point. If the run of that code was captured, its",
     "R output, plots and warnings come back with it. You are always taken to the Code tab, and",
     "the prompt box is left as it is; recall a prompt from Past prompts to bring its text back."
+  ),
+  "^recall_unconf_" = paste(
+    "Recall (Past code, unconfirmed) — Reloads this earlier code, which was generated or loaded but",
+    "has not been run successfully, into the Code editor, with the changes from the previous version if it",
+    "had any. There is no R output to bring back until it has been run."
   ),
   "^recall_prompt_" = paste(
     "Recall (Past prompts) — Brings back this earlier prompt and everything it produced: the",
@@ -4060,8 +4080,7 @@ server <- function(input, output, session) {
   observe({
     show_remove <- length(selected_files()) > 0 || length(selected_objects()) > 0 ||
                    isTRUE(help_mode())
-    shinyjs::toggle("remove_context",     condition = show_remove)
-    shinyjs::toggle("remove_all_context", condition = show_remove)
+    shinyjs::toggle("context_links", condition = show_remove)
   })
 
   observeEvent(input$help_toggle, {
@@ -4500,100 +4519,247 @@ server <- function(input, output, session) {
   })
 
   # --- Load Package Data -------------------------------------------------------
-  # Data that ships inside Classmate (listed from the package's own data index,
-  # so any dataset added later appears automatically).
-  pkg_datasets <- function() {
-    res <- tryCatch(utils::data(package = "classmate")$results, error = function(e) NULL)
-    if (is.null(res) || nrow(res) == 0) return(NULL)
-    data.frame(name  = sub(" \\(.*$", "", res[, "Item"]),
-               title = res[, "Title"], stringsAsFactors = FALSE)
-  }
-  pkg_dataset_value <- function(nm) {
-    e <- new.env()
-    utils::data(list = nm, package = "classmate", envir = e)
-    get(nm, envir = e)
-  }
-  describe_pkg_dataset <- function(nm) {
-    o <- tryCatch(pkg_dataset_value(nm), error = function(e) NULL)
-    if (is.null(o)) return("")
-    paste0(class(o)[1],
-           if (!is.null(dim(o)) && length(dim(o)) == 2)
-             paste0(", ", nrow(o), " rows x ", ncol(o), " columns") else "")
-  }
-  pkgdata_pending <- reactiveVal(character(0))
-
-  do_load_pkg_data <- function(nms) {
-    ok <- vapply(nms, function(nm)
-      tryCatch({ utils::data(list = nm, package = "classmate", envir = .GlobalEnv); TRUE },
-               error = function(e) FALSE), logical(1))
-    removeModal()
-    if (any(ok)) {
-      loaded <- nms[ok]
-      selected_objects(union(selected_objects(), loaded))
-      showNotification(paste0("Loaded ", paste(loaded, collapse = ", "),
-                              " into your workspace and added it to the context."),
-                       type = "message", duration = 6)
+  # Lists the datasets of every installed package (read from each package's own data index, which
+  # needs no data to be loaded), in two stages: (1) tick datasets, in one or several packages, and Load
+  # them into the workspace; (2) choose, by type, which of the loaded objects to add to the context.
+  # The list is built when the dialog opens (about 0.1-0.3 s for a few hundred packages) and cached
+  # until the library folders change, so packages installed, updated or removed while Classmate was
+  # paused, or from the Quick Console, are always picked up.
+  pkgdata_cache <- new.env()
+  scan_pkg_data <- function() {
+    libs <- .libPaths()
+    sig  <- paste(libs, as.numeric(file.mtime(libs)), collapse = "|")
+    if (identical(pkgdata_cache$sig, sig) && !is.null(pkgdata_cache$index)) return(pkgdata_cache$index)
+    rows <- list(); seen <- character(0)
+    for (lib in libs) for (pk in list.files(lib)) {
+      if (pk %in% seen) next
+      f <- file.path(lib, pk, "Meta", "data.rds")
+      if (!file.exists(f)) next
+      d <- tryCatch(readRDS(f), error = function(e) NULL)
+      if (is.null(d) || NROW(d) == 0) next
+      seen <- c(seen, pk)
+      item <- as.character(d[, 1])
+      rows[[length(rows) + 1L]] <- data.frame(
+        package  = pk, item = item,
+        loadname = ifelse(grepl("^.* \\(.*\\)$", item), sub("^.* \\((.*)\\)$", "\\1", item), item),
+        title    = as.character(d[, 2]), stringsAsFactors = FALSE)
     }
-    if (any(!ok))
-      showNotification(paste("Could not load:", paste(nms[!ok], collapse = ", ")),
-                       type = "error", duration = 8)
+    idx <- if (length(rows)) do.call(rbind, rows)
+           else data.frame(package = character(0), item = character(0), loadname = character(0),
+                           title = character(0), stringsAsFactors = FALSE)
+    idx$key <- paste0(idx$package, "::", idx$loadname)
+    pkgdata_cache$sig <- sig; pkgdata_cache$index <- idx
+    idx
   }
 
-  observeEvent(input$load_package_data, {
-    ds <- pkg_datasets()
-    if (is.null(ds)) {
-      showNotification("No data is packaged with Classmate.", type = "warning", duration = 5)
+  # The datasets of a chosen package are all loaded into a scratch store (not the workspace) so that their
+  # classes and sizes can be shown; only the ones ticked are copied into the workspace and added to the
+  # context when Add is pressed. Packages with a very large data folder are not pre-loaded: their datasets
+  # are listed by name and loaded only if ticked.
+  PKGDATA_BIG_MB <- 30
+  pkgdata_store <- new.env()          # package -> data frame (object, class, dims, key) with the values attached
+  pkgdata_sel   <- reactiveVal(character(0))   # keys "package::object" ticked so far
+  pkgdata_plan  <- reactiveVal(NULL)           # chosen objects waiting for the replace check
+
+  pkg_data_mb <- function(pkg) {
+    d <- system.file("data", package = pkg)
+    if (!nzchar(d)) return(0)
+    sum(file.size(list.files(d, full.names = TRUE, recursive = TRUE)), na.rm = TRUE) / 1e6
+  }
+  # Load a whole package's datasets into the scratch store (once); returns its info data frame
+  pkgdata_load_pkg <- function(pkg) {
+    if (!is.null(pkgdata_store[[pkg]])) return(pkgdata_store[[pkg]])
+    idx <- scan_pkg_data(); idx <- idx[idx$package == pkg, ]
+    if (pkg_data_mb(pkg) > PKGDATA_BIG_MB) {
+      info <- data.frame(object = sub(" \\(.*$", "", idx$item), class = NA_character_, dims = "",
+                         title = idx$title, stringsAsFactors = FALSE)
+      info$key <- paste0(pkg, "::", info$object); info$loadname <- idx$loadname
+      attr(info, "values") <- NULL; attr(info, "big") <- TRUE
+      assign(pkg, info, envir = pkgdata_store); return(info)
+    }
+    vals <- list(); rows <- list()
+    for (ln in unique(idx$loadname)) {
+      e <- new.env()
+      ok <- tryCatch({ suppressWarnings(utils::data(list = ln, package = pkg, envir = e)); TRUE },
+                     error = function(err) FALSE)
+      if (!ok) next
+      for (nm in ls(e)) {
+        o <- get(nm, envir = e)
+        vals[[nm]] <- o
+        ttl <- idx$title[match(nm, sub(" \\(.*$", "", idx$item))]
+        rows[[length(rows) + 1L]] <- data.frame(
+          object = nm, class = class(o)[1],
+          dims = if (!is.null(dim(o)) && length(dim(o)) == 2) paste0(nrow(o), " x ", ncol(o)) else paste0("length ", length(o)),
+          title = if (length(ttl) && !is.na(ttl)) ttl else "", loadname = ln, stringsAsFactors = FALSE)
+      }
+    }
+    info <- if (length(rows)) do.call(rbind, rows) else data.frame(object = character(0), class = character(0),
+             dims = character(0), title = character(0), loadname = character(0), stringsAsFactors = FALSE)
+    info$key <- paste0(pkg, "::", info$object)
+    attr(info, "values") <- vals; attr(info, "big") <- FALSE
+    assign(pkg, info, envir = pkgdata_store)
+    info
+  }
+  pkgdata_clear_store <- function() { rm(list = ls(pkgdata_store, all.names = TRUE), envir = pkgdata_store) }
+
+  pkgdata_last <- reactiveVal("")      # the package last chosen, to restore the dialog after a replace check
+  observeEvent(input$pkgdata_pkg, pkgdata_last(input$pkgdata_pkg %||% ""))
+  show_pkgdata_modal <- function() {
+    idx <- scan_pkg_data()
+    if (nrow(idx) == 0) {
+      showNotification("No installed package comes with datasets.", type = "warning", duration = 5)
       return(invisible(NULL))
     }
+    pkgs <- sort(unique(idx$package))
+    counts <- vapply(pkgs, function(p) sum(idx$package == p), integer(1))
     showModal(modalDialog(
       title = "Load package data",
-      tags$p("Choose data that comes with Classmate. It is loaded into your R",
-             "workspace and added to the context for your prompt."),
-      checkboxGroupInput("pkgdata_choice", NULL,
-        choiceNames = lapply(seq_len(nrow(ds)), function(i)
-          tagList(tags$strong(ds$name[i]), " \u2014 ", ds$title[i],
-                  tags$br(),
-                  tags$span(style = "color: #888; font-size: 0.85em;",
-                            describe_pkg_dataset(ds$name[i])))),
-        choiceValues = ds$name,
-        selected = if (nrow(ds) == 1) ds$name else character(0)),
+      tags$p("Pick a package to see its datasets, tick the ones you want (in one or several packages) and press",
+             "Add: they are put in your R workspace and added to the context for your prompt."),
+      selectInput("pkgdata_pkg", "Package:",
+                  choices = c("Choose a package..." = "", setNames(pkgs, paste0(pkgs, " (", counts, ")"))),
+                  selected = isolate(pkgdata_last()), width = "100%"),
+      textInput("pkgdata_pkgfilter", NULL, placeholder = "Filter the package list (e.g. sp)", width = "100%"),
+      uiOutput("pkgdata_filters"),
+      uiOutput("pkgdata_items"),
+      uiOutput("pkgdata_ticked"),
       footer = tagList(
-        actionButton("pkgdata_load", "Load", class = "btn-primary"),
-        modalButton("Cancel")
+        uiOutput("pkgdata_add_btn", inline = TRUE),
+        actionButton("pkgdata_cancel", "Close")
       ),
       easyClose = FALSE
     ))
+  }
+  # The text box under Package narrows the packages offered in the drop-down
+  observeEvent(input$pkgdata_pkgfilter, ignoreInit = TRUE, {
+    idx  <- scan_pkg_data(); pkgs <- sort(unique(idx$package))
+    q    <- trimws(input$pkgdata_pkgfilter %||% "")
+    if (nzchar(q)) pkgs <- pkgs[grepl(tolower(q), tolower(pkgs), fixed = TRUE)]
+    counts <- vapply(pkgs, function(p) sum(idx$package == p), integer(1))
+    cur <- isolate(input$pkgdata_pkg %||% "")
+    updateSelectInput(session, "pkgdata_pkg",
+      choices  = c(if (length(pkgs) == 0) c("No package matches" = "") else c("Choose a package..." = ""),
+                   if (length(pkgs) > 0) setNames(pkgs, paste0(pkgs, " (", counts, ")"))),
+      selected = if (cur %in% pkgs) cur else "")
+  })
+  observeEvent(input$load_package_data, {
+    pkgdata_sel(character(0)); pkgdata_clear_store(); pkgdata_last("")
+    show_pkgdata_modal()
+  })
+  observeEvent(input$pkgdata_cancel, { pkgdata_clear_store(); pkgdata_sel(character(0)); pkgdata_last(""); removeModal() })
+
+  # Info for the chosen package (loading it on first use)
+  pkgdata_info <- reactive({
+    p <- input$pkgdata_pkg %||% ""
+    if (!nzchar(p)) return(NULL)
+    withProgress(message = paste0("Reading the ", p, " datasets..."), value = 0.5, pkgdata_load_pkg(p))
+  })
+  output$pkgdata_filters <- renderUI({
+    info <- pkgdata_info(); req(info)
+    big <- isTRUE(attr(info, "big"))
+    fluidRow(
+      column(if (big) 12 else 6, textInput("pkgdata_filter", NULL, placeholder = "Filter by Data name (optional)", width = "100%")),
+      if (!big) column(6, selectInput("pkgdata_type", NULL, c("All types" = "", sort(unique(info$class))), width = "100%")))
+  })
+  # What is shown: the package's datasets, filtered by name and type
+  pkgdata_shown <- reactive({
+    info <- pkgdata_info(); req(info)
+    q <- trimws(input$pkgdata_filter %||% ""); t <- input$pkgdata_type %||% ""
+    if (nzchar(q)) info <- info[grepl(tolower(q), tolower(paste(info$object, info$title)), fixed = TRUE), ]
+    if (nzchar(t) && !isTRUE(attr(info, "big"))) info <- info[info$class == t, ]
+    info
+  })
+  output$pkgdata_items <- renderUI({
+    d <- pkgdata_shown()
+    tagList(
+      div(style = "margin: 2px 0 6px 0; font-size: 0.85em;",
+          actionLink("pkgdata_tick_all", "Tick all shown"), " · ", actionLink("pkgdata_untick_all", "Untick all shown")),
+      div(style = "max-height: 250px; overflow-y: auto; border: 1px solid #e3e3e3; border-radius: 4px; padding: 6px 10px;",
+        if (nrow(d) == 0) em("No datasets match.") else
+          checkboxGroupInput("pkgdata_choice", NULL,
+            choiceNames  = lapply(seq_len(nrow(d)), function(i)
+              tagList(tags$strong(d$object[i]),
+                      tags$span(style = "color: #666;",
+                                if (!is.na(d$class[i])) paste0(" — ", d$class[i], ", ", d$dims[i]),
+                                if (nzchar(d$title[i] %||% "")) paste0(if (!is.na(d$class[i])) "; " else " — ", d$title[i])))),
+            choiceValues = d$key,
+            selected     = intersect(d$key, isolate(pkgdata_sel())))))
+  })
+  observeEvent(input$pkgdata_tick_all,   updateCheckboxGroupInput(session, "pkgdata_choice", selected = pkgdata_shown()$key))
+  observeEvent(input$pkgdata_untick_all, updateCheckboxGroupInput(session, "pkgdata_choice", selected = character(0)))
+  # Keep the ticks from every package: only the keys currently shown are replaced
+  observeEvent(input$pkgdata_choice, ignoreNULL = FALSE, {
+    shown <- tryCatch(isolate(pkgdata_shown())$key, error = function(e) character(0))
+    pkgdata_sel(union(setdiff(pkgdata_sel(), shown), input$pkgdata_choice %||% character(0)))
+  })
+  output$pkgdata_ticked <- renderUI({
+    k <- pkgdata_sel()
+    tags$p(style = "margin-top: 8px; font-size: 0.9em;",
+           if (length(k) == 0) em("Nothing ticked yet.") else
+             tagList(tags$strong(paste0(length(k), " ticked: ")), paste(sub("::", " :: ", k, fixed = TRUE), collapse = ", ")))
+  })
+  output$pkgdata_add_btn <- renderUI({
+    n <- length(pkgdata_sel())
+    lab <- if (n == 0) "Add" else paste0("Add (", n, ")")
+    if (n == 0) disabled(actionButton("pkgdata_add", lab, class = "btn-primary"))
+    else actionButton("pkgdata_add", lab, class = "btn-primary")
   })
 
-  observeEvent(input$pkgdata_load, {
-    chosen <- input$pkgdata_choice
-    if (length(chosen) == 0) {
-      showNotification("Tick at least one dataset to load.", type = "warning", duration = 4)
-      return(invisible(NULL))
+  # Add: copy the ticked datasets into the workspace (replace check first) and add them to the context
+  observeEvent(input$pkgdata_add, {
+    keys <- pkgdata_sel(); req(length(keys) > 0)
+    plan <- list(); failed <- character(0); used <- character(0)
+    for (k in keys) {
+      pk <- sub("::.*$", "", k); nm <- sub("^.*::", "", k)
+      info <- pkgdata_load_pkg(pk)
+      vals <- attr(info, "values")
+      if (is.null(vals) || is.null(vals[[nm]])) {          # big package: load the dataset now
+        e <- new.env(); ln <- info$loadname[match(nm, info$object)]
+        ok <- tryCatch({ suppressWarnings(utils::data(list = ln, package = pk, envir = e)); TRUE }, error = function(err) FALSE)
+        if (!ok || !exists(nm, envir = e, inherits = FALSE)) { failed <- c(failed, k); next }
+        val <- get(nm, envir = e)
+      } else val <- vals[[nm]]
+      final <- if (nm %in% used) make.names(paste0(nm, "_", pk)) else nm
+      used  <- c(used, final)
+      plan[[length(plan) + 1L]] <- list(name = final, package = pk, value = val)
     }
-    # Never silently overwrite the student's own object of the same name
-    conflicts <- Filter(function(nm)
-      exists(nm, envir = .GlobalEnv, inherits = FALSE) &&
-        !identical(get(nm, envir = .GlobalEnv), tryCatch(pkg_dataset_value(nm), error = function(e) NULL)),
-      chosen)
+    if (length(failed) > 0)
+      showNotification(paste("Could not load:", paste(failed, collapse = ", ")), type = "error", duration = 8)
+    if (length(plan) == 0) return(invisible(NULL))
+    conflicts <- Filter(function(it) exists(it$name, envir = .GlobalEnv, inherits = FALSE) &&
+                          !identical(get(it$name, envir = .GlobalEnv), it$value), plan)
     if (length(conflicts) > 0) {
-      pkgdata_pending(chosen)
+      pkgdata_plan(plan)
       showModal(modalDialog(
         title = "Replace existing objects?",
-        tags$p("Your workspace already has ", tags$strong(paste(conflicts, collapse = ", ")),
-               " with different contents. Loading the package data will replace ",
+        tags$p("Your workspace already has ", tags$strong(paste(vapply(conflicts, `[[`, "", "name"), collapse = ", ")),
+               " with different contents. Loading will replace ",
                if (length(conflicts) == 1) "it." else "them."),
         footer = tagList(
           actionButton("pkgdata_replace", "Replace and load", class = "btn-warning"),
-          modalButton("Cancel")
+          actionButton("pkgdata_replace_cancel", "Cancel")
         ),
         easyClose = FALSE
       ))
       return(invisible(NULL))
     }
-    do_load_pkg_data(chosen)
+    commit_pkg_plan(plan, reopen = FALSE)
   })
-  observeEvent(input$pkgdata_replace, do_load_pkg_data(pkgdata_pending()))
+  observeEvent(input$pkgdata_replace, commit_pkg_plan(pkgdata_plan(), reopen = TRUE))
+  observeEvent(input$pkgdata_replace_cancel, show_pkgdata_modal())
+  # Copy the chosen datasets into the workspace and add them to the context. The dialog stays open (the
+  # student may want to add more); the ticks are cleared. `reopen` redraws it after a replace check.
+  commit_pkg_plan <- function(plan, reopen = FALSE) {
+    for (it in plan) assign(it$name, it$value, envir = .GlobalEnv)
+    nms <- vapply(plan, `[[`, "", "name")
+    selected_objects(union(selected_objects(), nms))
+    pkgdata_sel(character(0))
+    if (reopen) show_pkgdata_modal()
+    else updateCheckboxGroupInput(session, "pkgdata_choice", selected = character(0))
+    showNotification(paste0("Added ", paste(nms, collapse = ", "), " to your workspace and the context."),
+                     type = "message", duration = 6)
+  }
+
 
   obj_pick_sel <- reactiveVal(character(0))
 
@@ -4667,29 +4833,47 @@ server <- function(input, output, session) {
     removeModal()
   })
 
-  output$context_list_ui <- renderUI({
+  # The list of files and objects added for context. A box marked with a cross (shown struck through and
+  # greyed) means "do not use this": it is left out of what is passed to the prompt, and "Remove selected"
+  # removes the crossed ones for good; "Remove all" clears the list.
+  ctx_crossed <- reactiveVal(character(0))     # list values ("file::..." / "obj::...") marked with a cross
+  # What is passed to the prompt: everything added for context except what is crossed out
+  context_files   <- function() { x <- selected_files();   x[!(paste0("file::", x) %in% ctx_crossed())] }
+  context_objects <- function() { x <- selected_objects(); x[!(paste0("obj::",  x) %in% ctx_crossed())] }
+  context_choices <- function() {
     files <- selected_files();  files <- files[nzchar(files)]
     objs  <- selected_objects(); objs  <- objs[nzchar(objs)]
-    if (length(files) == 0 && length(objs) == 0)
+    ch <- character(0)
+    if (length(files) > 0) ch <- c(ch, stats::setNames(paste0("file::", files), basename(files)))
+    # Objects are labelled with their class, e.g. "cars [data.frame]"
+    obj_label <- function(nm) {
+      cl <- tryCatch(class(get(nm, envir = .GlobalEnv, inherits = FALSE))[1], error = function(e) NA_character_)
+      paste0(nm, " [", if (is.na(cl)) "not found" else cl, "]")
+    }
+    if (length(objs)  > 0) ch <- c(ch, stats::setNames(paste0("obj::", objs), vapply(objs, obj_label, "")))
+    ch
+  }
+  output$context_list_ui <- renderUI({
+    choices <- context_choices()
+    if (length(choices) == 0)
       return(tags$p(em("None added yet.")))
-    choices <- character(0)
-    if (length(files) > 0)
-      choices <- c(choices, stats::setNames(paste0("file::", files), basename(files)))
-    if (length(objs) > 0)
-      choices <- c(choices, stats::setNames(paste0("obj::", objs), paste0(objs, " [obj]")))
     div(
+      id = "context_list_box",
       style = paste0(
         "max-height: 100px; overflow-y: auto;",
         "border: 1px solid #e3e3e3; border-radius: 4px;",
         "padding: 2px 8px; background: #fafafa;"
       ),
-      checkboxGroupInput("context_list_checked", label = NULL,
-                          choices = choices, selected = character(0))
+      checkboxGroupInput("context_list_checked", label = NULL, choices = choices,
+                         selected = intersect(unname(choices), isolate(ctx_crossed())))
     )
   })
-
+  observeEvent(input$context_list_checked, ignoreNULL = FALSE, {
+    all_vals <- unname(isolate(context_choices()))
+    ctx_crossed(if (length(all_vals) > 0) intersect(all_vals, input$context_list_checked %||% character(0)) else character(0))
+  })
   observeEvent(input$remove_context, {
-    to_remove <- input$context_list_checked
+    to_remove <- ctx_crossed()
     if (!is.null(to_remove) && length(to_remove) > 0) {
       file_hits <- to_remove[startsWith(to_remove, "file::")]
       obj_hits  <- to_remove[startsWith(to_remove, "obj::")]
@@ -4697,6 +4881,7 @@ server <- function(input, output, session) {
         selected_files(setdiff(selected_files(), sub("^file::", "", file_hits)))
       if (length(obj_hits)  > 0)
         selected_objects(setdiff(selected_objects(), sub("^obj::", "", obj_hits)))
+      ctx_crossed(setdiff(ctx_crossed(), to_remove))
     }
   })
 
@@ -5815,8 +6000,8 @@ server <- function(input, output, session) {
     disable("ask_code"); disable("ask_plain")
     tryCatch({
       user_message <- build_user_message(
-        file_paths          = selected_files(),
-        object_names        = selected_objects(),
+        file_paths          = context_files(),
+        object_names        = context_objects(),
         current_code        = input$code_editor,
         last_known_code     = last_extracted_code(),
         run_history         = run_history(),
@@ -5989,8 +6174,8 @@ server <- function(input, output, session) {
       )
 
     user_message <- build_user_message(
-      file_paths          = selected_files(),
-      object_names        = selected_objects(),
+      file_paths          = context_files(),
+      object_names        = context_objects(),
       current_code        = input$code_editor,
       last_known_code     = last_extracted_code(),
       run_history         = run_history(),
