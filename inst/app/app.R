@@ -2928,8 +2928,9 @@ HELP_TEXTS <- list(
     "dimensions and column names — never the data values."
   ),
   load_package_data = paste(
-    "Load Package Data — Opens a list of every installed R package that comes with datasets.",
-    "Pick a package to see its datasets (with their type and size), filter them by name or type,",
+    "Load Package Data — Opens a list of every installed R package that comes with datasets or spatial files.",
+    "Pick a package to see its datasets (with their type and size) and any shapefiles, GeoPackages or",
+    "GeoJSON files it ships (read in with sf when added), filter them by name or type,",
     "tick the ones you want, and go on to tick datasets in other packages too. Add puts the",
     "ticked datasets in your R workspace and adds them to the context for your prompt; the window",
     "stays open so you can add more, and Close ends it. If you already have an object with the same",
@@ -4526,6 +4527,7 @@ server <- function(input, output, session) {
   # until the library folders change, so packages installed, updated or removed while Classmate was
   # paused, or from the Quick Console, are always picked up.
   pkgdata_cache <- new.env()
+  PKG_SKIP_DIRS <- c("R", "help", "html", "Meta", "libs", "doc", "demo", "tests", "www", "data")
   scan_pkg_data <- function() {
     libs <- .libPaths()
     sig  <- paste(libs, as.numeric(file.mtime(libs)), collapse = "|")
@@ -4533,21 +4535,41 @@ server <- function(input, output, session) {
     rows <- list(); seen <- character(0)
     for (lib in libs) for (pk in list.files(lib)) {
       if (pk %in% seen) next
-      f <- file.path(lib, pk, "Meta", "data.rds")
-      if (!file.exists(f)) next
-      d <- tryCatch(readRDS(f), error = function(e) NULL)
-      if (is.null(d) || NROW(d) == 0) next
+      pdir <- file.path(lib, pk)
+      if (!file.exists(file.path(pdir, "DESCRIPTION"))) next
       seen <- c(seen, pk)
-      item <- as.character(d[, 1])
-      rows[[length(rows) + 1L]] <- data.frame(
-        package  = pk, item = item,
-        loadname = ifelse(grepl("^.* \\(.*\\)$", item), sub("^.* \\((.*)\\)$", "\\1", item), item),
-        title    = as.character(d[, 2]), stringsAsFactors = FALSE)
+      # datasets (from the package's data index)
+      f <- file.path(pdir, "Meta", "data.rds")
+      d <- if (file.exists(f)) tryCatch(readRDS(f), error = function(e) NULL) else NULL
+      if (!is.null(d) && NROW(d) > 0) {
+        item <- as.character(d[, 1])
+        rows[[length(rows) + 1L]] <- data.frame(
+          package = pk, item = item,
+          loadname = ifelse(grepl("^.* \\(.*\\)$", item), sub("^.* \\((.*)\\)$", "\\1", item), item),
+          title = as.character(d[, 2]), kind = "data", path = NA_character_,
+          objname = sub(" \\(.*$", "", item), stringsAsFactors = FALSE)
+      }
+      # spatial files the package ships (shapefiles, GeoPackages, GeoJSON), which are read with sf
+      subs <- setdiff(list.dirs(pdir, recursive = FALSE, full.names = FALSE), PKG_SKIP_DIRS)
+      fl <- unlist(lapply(subs, function(sd)
+        file.path(sd, list.files(file.path(pdir, sd), pattern = "\\.(shp|gpkg|geojson)$",
+                                 recursive = TRUE, ignore.case = TRUE))))
+      if (length(fl) > 0) {
+        nm  <- make.names(tools::file_path_sans_ext(basename(fl)))
+        dup <- duplicated(nm) | duplicated(nm, fromLast = TRUE)
+        nm[dup] <- paste0(nm[dup], "_", tolower(tools::file_ext(fl[dup])))
+        rows[[length(rows) + 1L]] <- data.frame(
+          package = pk, item = basename(fl), loadname = NA_character_,
+          title = paste0("spatial file: ", fl), kind = "file", path = file.path(pdir, fl),
+          objname = nm, stringsAsFactors = FALSE)
+      }
     }
     idx <- if (length(rows)) do.call(rbind, rows)
            else data.frame(package = character(0), item = character(0), loadname = character(0),
-                           title = character(0), stringsAsFactors = FALSE)
-    idx$key <- paste0(idx$package, "::", idx$loadname)
+                           title = character(0), kind = character(0), path = character(0),
+                           objname = character(0), stringsAsFactors = FALSE)
+    idx$key <- ifelse(idx$kind == "file", paste0(idx$package, "::file:", idx$item, "#", ave(seq_along(idx$item), idx$package, idx$item, FUN = seq_along)),
+                      paste0(idx$package, "::", idx$loadname))
     pkgdata_cache$sig <- sig; pkgdata_cache$index <- idx
     idx
   }
@@ -4570,15 +4592,21 @@ server <- function(input, output, session) {
   pkgdata_load_pkg <- function(pkg) {
     if (!is.null(pkgdata_store[[pkg]])) return(pkgdata_store[[pkg]])
     idx <- scan_pkg_data(); idx <- idx[idx$package == pkg, ]
-    if (pkg_data_mb(pkg) > PKGDATA_BIG_MB) {
-      info <- data.frame(object = sub(" \\(.*$", "", idx$item), class = NA_character_, dims = "",
-                         title = idx$title, stringsAsFactors = FALSE)
-      info$key <- paste0(pkg, "::", info$object); info$loadname <- idx$loadname
-      attr(info, "values") <- NULL; attr(info, "big") <- TRUE
-      assign(pkg, info, envir = pkgdata_store); return(info)
-    }
+    ds  <- idx[idx$kind == "data", ]; fl <- idx[idx$kind == "file", ]
+    # rows for the spatial files (read with sf only when added)
+    file_rows <- if (nrow(fl) > 0) data.frame(
+      object = fl$objname, class = "spatial file", dims = "", title = sub("^spatial file: ", "", fl$title),
+      loadname = NA_character_, key = fl$key, kind = "file", path = fl$path, stringsAsFactors = FALSE) else NULL
+    empty <- data.frame(object = character(0), class = character(0), dims = character(0), title = character(0),
+                        loadname = character(0), key = character(0), kind = character(0), path = character(0),
+                        stringsAsFactors = FALSE)
+    big <- pkg_data_mb(pkg) > PKGDATA_BIG_MB
     vals <- list(); rows <- list()
-    for (ln in unique(idx$loadname)) {
+    if (big && nrow(ds) > 0) {
+      rows[[1L]] <- data.frame(object = ds$objname, class = NA_character_, dims = "", title = ds$title,
+                               loadname = ds$loadname, key = paste0(pkg, "::", ds$objname), kind = "data",
+                               path = NA_character_, stringsAsFactors = FALSE)
+    } else for (ln in unique(ds$loadname)) {
       e <- new.env()
       ok <- tryCatch({ suppressWarnings(utils::data(list = ln, package = pkg, envir = e)); TRUE },
                      error = function(err) FALSE)
@@ -4586,17 +4614,16 @@ server <- function(input, output, session) {
       for (nm in ls(e)) {
         o <- get(nm, envir = e)
         vals[[nm]] <- o
-        ttl <- idx$title[match(nm, sub(" \\(.*$", "", idx$item))]
+        ttl <- ds$title[match(nm, ds$objname)]
         rows[[length(rows) + 1L]] <- data.frame(
           object = nm, class = class(o)[1],
           dims = if (!is.null(dim(o)) && length(dim(o)) == 2) paste0(nrow(o), " x ", ncol(o)) else paste0("length ", length(o)),
-          title = if (length(ttl) && !is.na(ttl)) ttl else "", loadname = ln, stringsAsFactors = FALSE)
+          title = if (length(ttl) && !is.na(ttl)) ttl else "", loadname = ln, key = paste0(pkg, "::", nm),
+          kind = "data", path = NA_character_, stringsAsFactors = FALSE)
       }
     }
-    info <- if (length(rows)) do.call(rbind, rows) else data.frame(object = character(0), class = character(0),
-             dims = character(0), title = character(0), loadname = character(0), stringsAsFactors = FALSE)
-    info$key <- paste0(pkg, "::", info$object)
-    attr(info, "values") <- vals; attr(info, "big") <- FALSE
+    info <- do.call(rbind, c(list(empty), rows, list(file_rows)))
+    attr(info, "values") <- vals; attr(info, "big") <- big
     assign(pkg, info, envir = pkgdata_store)
     info
   }
@@ -4614,8 +4641,9 @@ server <- function(input, output, session) {
     counts <- vapply(pkgs, function(p) sum(idx$package == p), integer(1))
     showModal(modalDialog(
       title = "Load package data",
-      tags$p("Pick a package to see its datasets, tick the ones you want (in one or several packages) and press",
-             "Add: they are put in your R workspace and added to the context for your prompt."),
+      tags$p("Pick a package to see its datasets and any spatial files (shapefiles, GeoPackages, GeoJSON) it comes",
+             "with, tick the ones you want (in one or several packages) and press Add: they are put in your R",
+             "workspace and added to the context for your prompt."),
       selectInput("pkgdata_pkg", "Package:",
                   choices = c("Choose a package..." = "", setNames(pkgs, paste0(pkgs, " (", counts, ")"))),
                   selected = isolate(pkgdata_last()), width = "100%"),
@@ -4680,8 +4708,10 @@ server <- function(input, output, session) {
             choiceNames  = lapply(seq_len(nrow(d)), function(i)
               tagList(tags$strong(d$object[i]),
                       tags$span(style = "color: #666;",
-                                if (!is.na(d$class[i])) paste0(" — ", d$class[i], ", ", d$dims[i]),
-                                if (nzchar(d$title[i] %||% "")) paste0(if (!is.na(d$class[i])) "; " else " — ", d$title[i])))),
+                                if (!is.na(d$class[i])) paste0(" — ", d$class[i], if (nzchar(d$dims[i])) paste0(", ", d$dims[i])),
+                                if (nzchar(d$title[i] %||% ""))
+                                  if (identical(d$class[i], "spatial file")) paste0(" (", d$title[i], ")")
+                                  else paste0(if (!is.na(d$class[i])) "; " else " — ", d$title[i])))),
             choiceValues = d$key,
             selected     = intersect(d$key, isolate(pkgdata_sel())))))
   })
@@ -4696,7 +4726,8 @@ server <- function(input, output, session) {
     k <- pkgdata_sel()
     tags$p(style = "margin-top: 8px; font-size: 0.9em;",
            if (length(k) == 0) em("Nothing ticked yet.") else
-             tagList(tags$strong(paste0(length(k), " ticked: ")), paste(sub("::", " :: ", k, fixed = TRUE), collapse = ", ")))
+             tagList(tags$strong(paste0(length(k), " ticked: ")),
+                     paste(sub("#[0-9]+$", "", sub("::", " :: ", sub("::file:", "::", k, fixed = TRUE), fixed = TRUE)), collapse = ", ")))
   })
   output$pkgdata_add_btn <- renderUI({
     n <- length(pkgdata_sel())
@@ -4710,15 +4741,25 @@ server <- function(input, output, session) {
     keys <- pkgdata_sel(); req(length(keys) > 0)
     plan <- list(); failed <- character(0); used <- character(0)
     for (k in keys) {
-      pk <- sub("::.*$", "", k); nm <- sub("^.*::", "", k)
+      pk   <- sub("::.*$", "", k)
       info <- pkgdata_load_pkg(pk)
-      vals <- attr(info, "values")
-      if (is.null(vals) || is.null(vals[[nm]])) {          # big package: load the dataset now
-        e <- new.env(); ln <- info$loadname[match(nm, info$object)]
-        ok <- tryCatch({ suppressWarnings(utils::data(list = ln, package = pk, envir = e)); TRUE }, error = function(err) FALSE)
-        if (!ok || !exists(nm, envir = e, inherits = FALSE)) { failed <- c(failed, k); next }
-        val <- get(nm, envir = e)
-      } else val <- vals[[nm]]
+      row  <- info[match(k, info$key), ]
+      nm   <- row$object
+      if (identical(row$kind, "file")) {                  # a spatial file: read it with sf
+        val <- tryCatch({
+          if (!requireNamespace("sf", quietly = TRUE)) stop("sf is not installed")
+          suppressWarnings(sf::st_read(row$path, quiet = TRUE))
+        }, error = function(err) NULL)
+        if (is.null(val)) { failed <- c(failed, k); next }
+      } else {
+        vals <- attr(info, "values")
+        if (is.null(vals) || is.null(vals[[nm]])) {        # big package: load the dataset now
+          e <- new.env()
+          ok <- tryCatch({ suppressWarnings(utils::data(list = row$loadname, package = pk, envir = e)); TRUE }, error = function(err) FALSE)
+          if (!ok || !exists(nm, envir = e, inherits = FALSE)) { failed <- c(failed, k); next }
+          val <- get(nm, envir = e)
+        } else val <- vals[[nm]]
+      }
       final <- if (nm %in% used) make.names(paste0(nm, "_", pk)) else nm
       used  <- c(used, final)
       plan[[length(plan) + 1L]] <- list(name = final, package = pk, value = val)
