@@ -2214,6 +2214,9 @@ ui <- fluidPage(
       .cm-switch-lbl { display: inline-block; margin: 0 6px; }
       .cm-prompt-row.cm-hl { background-color: #fff3b0; border-radius: 3px; }
       .pref-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
+      /* File dialogs (Import files, Load Script, Save...): the Select / Save button to the left of Cancel,
+         both right-justified, as in the other pop-ups */
+      .sF-responseButtons.modal-footer { display: flex; flex-direction: row-reverse; justify-content: flex-start; gap: 5px; }
       .cm-switch { position: relative; display: inline-block; width: 36px; height: 18px; margin: 0; }
       .cm-switch input { opacity: 0; width: 0; height: 0; }
       .cm-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
@@ -3192,7 +3195,7 @@ server <- function(input, output, session) {
         )
       ),
       tags$p(tags$em("By continuing, you acknowledge that you have read and understood the above.")),
-      footer = div(style = "display: flex; justify-content: space-between; width: 100%;",
+      footer = tagList(
         actionButton("disclaimer_ok",   "I understand", class = "btn-primary"),
         actionButton("disclaimer_quit", "Quit",         class = "btn-danger")
       ),
@@ -3278,8 +3281,8 @@ server <- function(input, output, session) {
                "you can load it under Preferences."),
         easyClose = FALSE,
         footer    = tagList(
-          modalButton("Close"),
-          actionButton("quota_open_prefs", "Open Preferences", class = "btn-primary")
+          actionButton("quota_open_prefs", "Open Preferences", class = "btn-primary"),
+          modalButton("Close")
         )
       ))
       return(invisible(NULL))
@@ -3299,8 +3302,8 @@ server <- function(input, output, session) {
       tags$p("If you have been given a new key file, you can load it under Preferences."),
       easyClose = FALSE,
       footer    = tagList(
-        modalButton("Close"),
-        actionButton("quota_open_prefs", "Open Preferences", class = "btn-primary")
+        actionButton("quota_open_prefs", "Open Preferences", class = "btn-primary"),
+        modalButton("Close")
       )
     ))
   }
@@ -3398,8 +3401,8 @@ server <- function(input, output, session) {
       tags$p("Are you sure? The key saved on this computer will be deleted and Classmate will ask for a key file",
              "again (and for its PIN), as if no key had been set."),
       tags$p(em("Your usage so far is kept.")),
-      footer = tagList(actionButton("delete_key_cancel", "Cancel"),
-                       actionButton("delete_key_confirm", "Delete", class = "btn-danger")),
+      footer = tagList(actionButton("delete_key_confirm", "Delete", class = "btn-danger"),
+                       actionButton("delete_key_cancel", "Cancel")),
       easyClose = FALSE
     ))
   })
@@ -3438,8 +3441,8 @@ server <- function(input, output, session) {
              "You only need to enter it once."),
       passwordInput("key_pin", NULL, placeholder = "6-digit PIN", width = "100%"),
       uiOutput("key_pin_msg"),
-      footer = tagList(actionButton("key_pin_cancel", "Cancel"),
-                       actionButton("key_pin_ok", "Unlock", class = "btn-primary")),
+      footer = tagList(actionButton("key_pin_ok", "Unlock", class = "btn-primary"),
+                       actionButton("key_pin_cancel", "Cancel")),
       easyClose = FALSE
     ))
   }
@@ -3798,8 +3801,8 @@ server <- function(input, output, session) {
       ) else tags$p(em("Classmate could not work out which lines of code drew this plot, so it cannot write the saving code for it."),
                     style = "font-size: 0.85em; color: #888;"),
       footer = tagList(
-        modalButton("Close"),
-        if (has_code) actionButton("plot_exp_add", "Add to code", class = "btn-primary")),
+        if (has_code) actionButton("plot_exp_add", "Add to code", class = "btn-primary"),
+        modalButton("Close")),
       easyClose = TRUE
     ))
   })
@@ -4353,8 +4356,8 @@ server <- function(input, output, session) {
           tags$p("Your current conversation will be saved to Past conversations, then the selected conversation will be restored."),
           tags$p("The Code editor, Past code, and Past prompts will be replaced with those from the recalled conversation."),
           footer = tagList(
-            modalButton("Cancel"),
-            actionButton("confirm_recall_conv", "Yes, recall this conversation", class = "btn-primary")
+            actionButton("confirm_recall_conv", "Yes, recall this conversation", class = "btn-primary"),
+            modalButton("Cancel")
           )
         ))
       }, ignoreInit = TRUE)
@@ -4555,8 +4558,8 @@ server <- function(input, output, session) {
         choiceValues = ds$name,
         selected = if (nrow(ds) == 1) ds$name else character(0)),
       footer = tagList(
-        modalButton("Cancel"),
-        actionButton("pkgdata_load", "Load", class = "btn-primary")
+        actionButton("pkgdata_load", "Load", class = "btn-primary"),
+        modalButton("Cancel")
       ),
       easyClose = FALSE
     ))
@@ -4581,8 +4584,8 @@ server <- function(input, output, session) {
                " with different contents. Loading the package data will replace ",
                if (length(conflicts) == 1) "it." else "them."),
         footer = tagList(
-          modalButton("Cancel"),
-          actionButton("pkgdata_replace", "Replace and load", class = "btn-warning")
+          actionButton("pkgdata_replace", "Replace and load", class = "btn-warning"),
+          modalButton("Cancel")
         ),
         easyClose = FALSE
       ))
@@ -4651,8 +4654,8 @@ server <- function(input, output, session) {
         "(mappable, data table, text, number, function). Separate several with commas."),
       uiOutput("obj_picker_list"),
       footer = tagList(
-        modalButton("Cancel"),
-        actionButton("confirm_add_objects", "Add selected", class = "btn-primary")
+        actionButton("confirm_add_objects", "Add selected", class = "btn-primary"),
+        modalButton("Cancel")
       )
     ))
   })
@@ -4704,8 +4707,8 @@ server <- function(input, output, session) {
       title = "Remove all context?",
       "Are you sure? This will remove all files and objects from the context list.",
       footer = tagList(
-        modalButton("Cancel"),
-        actionButton("confirm_remove_all_context", "Yes, remove all", class = "btn-warning")
+        actionButton("confirm_remove_all_context", "Yes, remove all", class = "btn-warning"),
+        modalButton("Cancel")
       )
     ))
   })
@@ -5395,8 +5398,8 @@ server <- function(input, output, session) {
       title = "Start a new conversation?",
       tags$p("This will clear the Code editor, R output, Past code, and Past prompts. The current conversation will be saved to Past conversations from which previous code and prompts can be recalled. The code notebook for this conversation will be saved automatically."),
       footer = tagList(
-        modalButton("Cancel"),
-        actionButton("confirm_new_conversation", "Yes, start new conversation", class = "btn-danger")
+        actionButton("confirm_new_conversation", "Yes, start new conversation", class = "btn-danger"),
+        modalButton("Cancel")
       )
     ))
   })
@@ -5622,9 +5625,9 @@ server <- function(input, output, session) {
         tags$p("We recommend that you Pause Classmate (your session is saved), install the package in the main RStudio console, and then restart Classmate to carry on where you left off."),
         tags$p(em("You can still install it here if you prefer: Classmate will wait for it to finish.")),
         footer = tagList(
-          actionButton("qc_install_close", "Close"),
+          actionButton("qc_install_pause", "Pause Classmate", class = "btn-primary"),
           actionButton("qc_install_anyway", "Install here anyway"),
-          actionButton("qc_install_pause", "Pause Classmate", class = "btn-primary")
+          actionButton("qc_install_close", "Close")
         ),
         easyClose = FALSE
       ))
@@ -5645,8 +5648,8 @@ server <- function(input, output, session) {
         tags$p("The Quick Console is designed for quick operations, so it stops any command that runs for more than 30 seconds. Your command was interrupted."),
         tags$p("For a longer process, we recommend that you Pause Classmate (your session is saved), run the command in the main RStudio console, and then restart Classmate to carry on where you left off."),
         footer = tagList(
-          actionButton("qc_timeout_close", "Close"),
-          actionButton("qc_timeout_pause", "Pause Classmate", class = "btn-primary")
+          actionButton("qc_timeout_pause", "Pause Classmate", class = "btn-primary"),
+          actionButton("qc_timeout_close", "Close")
         ),
         easyClose = FALSE
       ))
@@ -5699,9 +5702,9 @@ server <- function(input, output, session) {
       title = "Clear workspace?",
       "Are you sure? This will remove all objects from the R workspace (rm(list = ls())).",
       footer = tagList(
-        actionButton("qc_cw_cancel", "Cancel"),
         actionButton("qc_cw_confirm", "Yes, clear workspace",
-          style = "background-color: #e67e22; border-color: #ca6f1e; color: white;")
+          style = "background-color: #e67e22; border-color: #ca6f1e; color: white;"),
+        actionButton("qc_cw_cancel", "Cancel")
       ),
       easyClose = FALSE
     ))
@@ -5736,8 +5739,8 @@ server <- function(input, output, session) {
         "Click a folder to open it, then press Use this folder.",
         "Your R session (e.g. RStudio) will be switched to the same folder."),
       footer = tagList(
-        actionButton("chdir_cancel", "Cancel"),
-        actionButton("chdir_use", "Use this folder", class = "btn-primary")
+        actionButton("chdir_use", "Use this folder", class = "btn-primary"),
+        actionButton("chdir_cancel", "Cancel")
       ),
       easyClose = FALSE
     ))
@@ -6204,8 +6207,8 @@ server <- function(input, output, session) {
                "with data that must not be summarised outside your computer."),
         tags$p(em("You will only see this message once in this R session.")),
         footer = tagList(
-          modalButton("Cancel"),
-          actionButton("answer_notice_ok", "Continue", class = "btn-primary")
+          actionButton("answer_notice_ok", "Continue", class = "btn-primary"),
+          modalButton("Cancel")
         ),
         easyClose = FALSE
       ))
@@ -6876,8 +6879,8 @@ server <- function(input, output, session) {
         title  = "Fix failed",
         "Claude could not produce corrected code. Try running Fix again, or return to editing.",
         footer = tagList(
-          actionButton("fix_cancel", "Cancel", class = "btn-danger"),
-          actionButton("fix_retry",  "Continue fixing", class = "btn-primary")
+          actionButton("fix_retry",  "Continue fixing", class = "btn-primary"),
+          actionButton("fix_cancel", "Cancel", class = "btn-danger")
         )
       ))
       return(invisible(NULL))
@@ -6925,9 +6928,9 @@ server <- function(input, output, session) {
           title  = "Fix unsuccessful",
           tags$p("Sorry, the fix was unsuccessful. You can try another round of diagnosis,",
                  "or cancel to restore the original code."),
-          footer = div(style = "display: flex; justify-content: space-between; width: 100%;",
-            actionButton("fix_cancel", "Cancel",          class = "btn-danger"),
-            actionButton("fix_retry",  "Continue fixing", class = "btn-primary")
+          footer = tagList(
+            actionButton("fix_retry",  "Continue fixing", class = "btn-primary"),
+            actionButton("fix_cancel", "Cancel",          class = "btn-danger")
           ),
           easyClose = FALSE
         ))
@@ -7083,14 +7086,14 @@ server <- function(input, output, session) {
         "The API key is not saved; it will be picked up from the R environment automatically."
       )),
       footer = tagList(
-        modalButton("Cancel"),
-        actionButton("confirm_pause_app", "Pause", class = "btn-primary")
+        actionButton("confirm_pause_app", "Pause", class = "btn-primary"),
+        modalButton("Cancel")
       )
     ))
   observeEvent(input$pause_app, show_pause_modal())
 
   # Pause is also offered directly by the Quick Console's install warning and timeout pop-ups
-  observeEvent(c(input$confirm_pause_app, input$qc_timeout_pause, input$qc_install_pause), {
+  do_pause_app <- function() {
     removeModal()
     capture_active_code()
     pause_state <- list(
@@ -7135,7 +7138,12 @@ server <- function(input, output, session) {
                          type = "error", duration = 8)
     )
     stopApp()
-  })
+  }
+  # One observer per button: combining the inputs in one observeEvent(c(...)) loses the action-button
+  # class, so the 0 an action button reports when it is first drawn would count as a click
+  observeEvent(input$confirm_pause_app, do_pause_app())
+  observeEvent(input$qc_timeout_pause,  do_pause_app())
+  observeEvent(input$qc_install_pause,  do_pause_app())
 
   # --- Quit ------------------------------------------------------------------
   do_quit_with_autosave <- function() {
@@ -7153,8 +7161,8 @@ server <- function(input, output, session) {
       tags$p("Are you sure you want to quit? Your R workspace will not be cleared."),
       tags$p(save_note),
       footer = tagList(
-        modalButton("Cancel"),
-        actionButton("confirm_quit", "Yes, quit", class = "btn-danger")
+        actionButton("confirm_quit", "Yes, quit", class = "btn-danger"),
+        modalButton("Cancel")
       )
     ))
   }
