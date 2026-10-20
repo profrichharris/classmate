@@ -435,40 +435,60 @@ build_language_clause <- function(language) {
   }
 }
 
+# The system prompt is returned as two blocks: the part that is the same for every student (cached once and
+# shared across a class, since all use the same key) followed by the part that varies (preferences, language,
+# output folder, packages already loaded). Keep anything student-specific out of the first block, or the
+# shared cache stops matching. call_claude() marks both blocks for caching.
 build_system_prompt <- function(coding, plotting, mapping, img_format, img_quality, img_size,
                                 max_lines = 50, comment_density = "Minimal",
                                 loaded_pkgs = character(0),
                                 language = "English", approaches = list()) {
-  library_clause <- paste0(
+  library_rule <- paste0(
     "PACKAGE LOADING RULE: Always include an explicit library() call for every ",
     "package your code uses. ",
-    if (length(loaded_pkgs) > 0)
-      paste0("The following packages have already been loaded with library() earlier ",
-             "in this session — do NOT include library() for them again: ",
-             paste(loaded_pkgs, collapse = ", "), ". ")
-    else "",
     "For any package that is not available on CRAN, add a comment on the line ",
     "immediately before its library() call in exactly this form: ",
     "# github: username/repo (for example: # github: r-tmap/tmap). ",
     "Use this comment only for genuinely non-CRAN packages."
   )
-  blocks <- c(
+  shared <- paste(c(
     r_system_prompt,
-    library_clause,
-    if (tolower(mapping) == "tmap") tmap_v4_instruction,
+    library_rule,
     tmap_breaks_instruction,
-    filename_timestamp_instruction(),
-    format_preferences_clause(coding, plotting, mapping, max_lines, comment_density, approaches),
-    format_image_preferences_clause(img_format, img_quality, img_size),
-    build_language_clause(language),
     code_description_rule,
     code_only_rule,
     scope_rule,
     clarity_rule,
     research_integrity_rule,
     disclosure_risk_rule
-  )
-  paste(blocks, collapse = "\n\n")
+  ), collapse = "\n\n")
+  varying <- paste(c(
+    if (length(loaded_pkgs) > 0)
+      paste0("PACKAGES ALREADY LOADED: the following packages have already been loaded with library() earlier ",
+             "in this session — do NOT include library() for them again: ",
+             paste(loaded_pkgs, collapse = ", "), "."),
+    if (tolower(mapping) == "tmap") tmap_v4_instruction,
+    filename_timestamp_instruction(),
+    format_preferences_clause(coding, plotting, mapping, max_lines, comment_density, approaches),
+    format_image_preferences_clause(img_format, img_quality, img_size),
+    build_language_clause(language)
+  ), collapse = "\n\n")
+  c(shared, varying)
+}
+
+# Mark the last earlier message of a conversation for caching, so the next request reads the history from the
+# cache instead of paying for it again. Only while the whole history still fits the window (once the window
+# starts to slide, the start of the history changes every turn and a cache entry would never be read).
+cache_history <- function(messages) {
+  n <- length(messages) - 1L                     # earlier messages; the last one is the new turn
+  if (n < 1L || n >= MAX_HISTORY_TURNS - 1L) return(messages)
+  m <- messages[[n]]
+  blocks <- if (is.character(m$content)) list(list(type = "text", text = m$content)) else m$content
+  if (length(blocks) == 0L) return(messages)
+  blocks[[length(blocks)]]$cache_control <- list(type = "ephemeral")
+  m$content <- blocks
+  messages[[n]] <- m
+  messages
 }
 
 # --- Pure helper functions ---------------------------------------------------
@@ -1673,7 +1693,9 @@ read_usage_log <- function() {
 
 append_usage_entry <- function(cost_usd) {
   old_log <- read_usage_log()
-  log <- c(old_log, list(list(timestamp = Sys.time(), cost_usd = cost_usd)))
+  entry <- list(timestamp = Sys.time(), cost_usd = cost_usd)
+  if (!is.null(.cm$last_usage)) { entry$tokens <- .cm$last_usage; .cm$last_usage <- NULL }
+  log <- c(old_log, list(entry))
   # Remember which key the usage belongs to, so that deleting and re-loading the same key keeps it
   attr(log, "key_id") <- tryCatch(readRDS(active_cfg_path())$key_id, error = function(e) NULL) %||%
     attr(old_log, "key_id")
@@ -1743,10 +1765,13 @@ next_reset_time <- function(log, reset_period) {
 call_claude <- function(messages, model, max_tokens, system_prompt = NULL,
                          api_key = classmate:::cm_get_key(),
                          cache_system = TRUE) {
-  system_block <- if (!is.null(system_prompt) && nzchar(system_prompt)) {
+  # system_prompt may be one string or several blocks (a shared part first, then a varying part); each block
+  # is marked for caching, so a prefix that is identical across requests is read from the cache
+  system_prompt <- system_prompt[!is.na(system_prompt) & nzchar(system_prompt)]
+  system_block <- if (length(system_prompt) > 0) {
     cc <- if (cache_system) list(type = "ephemeral") else NULL
-    list(Filter(Negate(is.null),
-                list(type = "text", text = system_prompt, cache_control = cc)))
+    lapply(system_prompt, function(txt)
+      Filter(Negate(is.null), list(type = "text", text = txt, cache_control = cc)))
   } else NULL
 
   body <- c(list(model = model, max_tokens = max_tokens, messages = messages), model_extra_params(model))
@@ -1762,10 +1787,15 @@ call_claude <- function(messages, model, max_tokens, system_prompt = NULL,
     req_perform()
 
   result <- resp_body_json(resp)
+  u <- result$usage %||% list()
+  # Token counts of this call (kept with the usage entry, so the effect of caching can be checked)
+  .cm$last_usage <- c(input = u$input_tokens %||% 0L, cache_write = u$cache_creation_input_tokens %||% 0L,
+                      cache_read = u$cache_read_input_tokens %||% 0L, output = u$output_tokens %||% 0L)
   list(
     text        = first_text_block(result$content),
     stop_reason = result$stop_reason,
-    cost_usd    = calc_cost(result$usage %||% list(), model)
+    cost_usd    = calc_cost(u, model),
+    usage       = .cm$last_usage
   )
 }
 
@@ -3236,6 +3266,11 @@ HELP_TEXTS <- list(
     "before pressing Undo. Redo is only offered until you do something else, such as ask a new prompt",
     "or recall another entry."
   ),
+  usage_help = paste(
+    "Usage — How much of your Classmate allowance is left: the bar counts down as you use Classmate, with",
+    "when it resets and when your key expires. A key with no spending limit shows today's spend instead,",
+    "starting again from zero each day."
+  ),
   clear_prompt = paste(
     "Clear — Erases all text in the prompt box. When Classmate first opens it is",
     "highlighted yellow: press it to clear the data-protection reminder, which",
@@ -3631,7 +3666,9 @@ server <- function(input, output, session) {
   }
 
   current_spend <- reactive({
-    period_spend(usage_log_rv(), reset_period_val())
+    # With a spending limit, spend is counted over the key's reset period. A key with no limit has no period
+    # to count over, so it shows today's spend (since local midnight) instead.
+    period_spend(usage_log_rv(), if (is.null(cost_limit_val())) "daily" else reset_period_val())
   })
 
   key_expired <- reactive({
@@ -3963,7 +4000,8 @@ server <- function(input, output, session) {
     limit <- cost_limit_val()
     spend <- current_spend()
     if (is.null(limit)) {
-      spend_str <- paste0("Session spend: $", sprintf("%.3f", spend))
+      invalidateLater(5 * 60 * 1000)     # so the figure drops back to zero after midnight
+      spend_str <- paste0("Daily spend: $", sprintf("%.3f", spend))
       tagList(
         div(class = "usage-text-normal",
           style = "font-size: 0.85em; color: #444;",
@@ -4478,45 +4516,12 @@ server <- function(input, output, session) {
     }
   })
 
+  # In Help mode the usage figure is a button; it explains itself like any other button (no separate pop-up)
   observeEvent(input$usage_help, {
-    limit  <- cost_limit_val()
-    spend  <- current_spend()
-    expiry <- final_expiry_val()
-    period <- reset_period_val()
-    reset_label <- tryCatch({
-      rt <- next_reset_time(isolate(usage_log_rv()), period)
-      if (grepl("^rolling", period)) "on a rolling window basis"
-      else paste0("on ", format(rt, "%d %B %Y"))
-    }, error = function(e) "")
-    spend_line <- if (!is.null(limit)) {
-      pct <- round(min(spend / limit, 1) * 100)
-      pct_rem <- 100 - pct
-      paste0("You have used ", pct, "% of your allowance ($",
-             sprintf("%.3f", spend), " of $", sprintf("%.2f", limit), "). ",
-             pct_rem, "% remains.")
-    } else {
-      paste0("Your session spend so far is $", sprintf("%.3f", spend), ".")
-    }
-    reset_line <- if (nzchar(reset_label) && !is.null(limit))
-      paste0("Your allowance resets ", reset_label, ".")
-    else NULL
-    expiry_line <- if (!is.null(expiry))
-      paste0(if (!is.null(valid_from_val()))
-               paste0("Your Classmate key is valid from ",
-                      fmt_date(valid_from_val(), with_time = TRUE), " and ")
-             else "Your Classmate key ",
-             "expires on ", fmt_date(expiry), ".")
-    else NULL
+    req(help_mode())
     showModal(modalDialog(
-      title = "Your usage",
-      tags$p("This bar shows how much of your Classmate allowance you have used. Your instructor sets a spending limit to manage costs; the bar turns from green to orange to red as you approach it."),
-      tags$p(spend_line),
-      if (!is.null(reset_line)) tags$p(reset_line),
-      if (!is.null(expiry_line)) tags$p(expiry_line),
-      tags$p("If you reach your limit, buttons will be disabled until the allowance resets or your instructor provides a new key (load it under Preferences)."),
-      footer = modalButton("Close"),
-      easyClose = TRUE
-    ))
+      title = "Help", tags$p(HELP_TEXTS[["usage_help"]], style = "line-height: 1.6;"),
+      footer = modalButton("OK"), easyClose = TRUE))
   })
 
   observeEvent(input$about_classmate, {
@@ -6767,7 +6772,7 @@ server <- function(input, output, session) {
       )
       new_user_turn   <- list(role = "user", content = user_message)
       history_so_far  <- c(conversation_history(), list(new_user_turn))
-      windowed_prompt <- c(take_last_n(conversation_history(), MAX_HISTORY_TURNS - 1), list(new_user_turn))
+      windowed_prompt <- cache_history(c(take_last_n(conversation_history(), MAX_HISTORY_TURNS - 1), list(new_user_turn)))
 
       api_result <- tryCatch(
         call_claude(
@@ -6963,7 +6968,7 @@ server <- function(input, output, session) {
     )
     new_user_turn  <- list(role = "user", content = user_message)
     history_so_far <- c(conversation_history(), list(new_user_turn))
-    windowed       <- c(take_last_n(conversation_history(), MAX_HISTORY_TURNS - 1), list(new_user_turn))
+    windowed       <- cache_history(c(take_last_n(conversation_history(), MAX_HISTORY_TURNS - 1), list(new_user_turn)))
     plan_prompt    <- build_answer_system_prompt(prefs$language)
 
     r1  <- withProgress(message = "Thinking...", value = 0.3,
