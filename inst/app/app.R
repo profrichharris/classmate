@@ -5609,6 +5609,54 @@ server <- function(input, output, session) {
 
     if (length(missing_info) == 0) { on_success(); return(invisible(NULL)) }
 
+    # Ask before installing anything
+    install_confirm(list(info = missing_info, on_success = on_success))
+    showModal(install_confirm_modal(missing_info))
+    invisible(NULL)
+  }
+
+  install_confirm <- reactiveVal(NULL)
+
+  install_confirm_modal <- function(missing_info) {
+    nms   <- vapply(missing_info, `[[`, character(1), "pkg")
+    gh    <- vapply(missing_info, function(x) !is.na(x[["github"]]), logical(1))
+    heavy <- intersect(nms, c("brms", "rstanarm", "tidymodels", "mlr3", "terra", "sf"))
+    modalDialog(
+      title = "Install extra packages?",
+      tags$p("This code needs packages that are not installed on this computer yet:"),
+      tags$ul(lapply(seq_along(nms), function(i)
+        tags$li(tags$strong(nms[i]), if (gh[i]) paste0(" (from GitHub: ", missing_info[[i]][["github"]], ")")))),
+      tags$p("They will be downloaded and installed now. This needs an internet connection and may take a few minutes;",
+             "the app is paused until it finishes."),
+      if (any(c("brms", "rstanarm") %in% nms))
+        tags$p(em("Bayesian packages (brms, rstanarm) also need a C++ compiler (Rtools on Windows, Xcode command line",
+                  "tools on a Mac), and the first model you fit can take several more minutes to build.")),
+      if (length(heavy) > 0 && !any(c("brms", "rstanarm") %in% nms))
+        tags$p(em("Some of these are large packages, so the installation may be slow.")),
+      easyClose = FALSE,
+      footer = tagList(
+        actionButton("install_confirm_go", "Install", class = "btn-primary"),
+        actionButton("install_confirm_cancel", "Cancel", class = "btn-default"))
+    )
+  }
+
+  observeEvent(input$install_confirm_cancel, {
+    removeModal()
+    install_confirm(NULL)
+    unfreeze_after_install()
+    ui_busy(FALSE)
+    output$run_status <- renderUI(tags$span(
+      "Installation cancelled, so the code was not run.", style = "color:#b22222;"))
+  })
+
+  observeEvent(input$install_confirm_go, {
+    ctx <- install_confirm(); install_confirm(NULL)
+    req(!is.null(ctx))
+    removeModal()
+    start_package_install(ctx$info, ctx$on_success)
+  })
+
+  start_package_install <- function(missing_info, on_success) {
     missing_names <- vapply(missing_info, `[[`, character(1), "pkg")
     has_github    <- !is.na(vapply(missing_info, `[[`, character(1), "github"))
     github_refs   <- vapply(missing_info[has_github], `[[`, character(1), "github")
@@ -5721,6 +5769,34 @@ server <- function(input, output, session) {
   )
 
 
+  # Packages that the current preferred approaches are likely to use (for the note in Preferences)
+  pref_packages <- function() {
+    pk <- character(0)
+    add <- function(...) pk <<- c(pk, ...)
+    if (identical(prefs$coding, "tidyverse")) add("dplyr", "tidyr")
+    if (identical(prefs$coding, "data.table")) add("data.table")
+    if (identical(prefs$plotting, "ggplot2")) add("ggplot2")
+    if (identical(prefs$plotting, "plotly")) add("plotly")
+    add(switch(prefs$mapping, tmap = "tmap", ggplot2 = "ggplot2", leaflet = "leaflet", mapsf = "mapsf", character(0)))
+    add(if (identical(prefs$spatial, "terra")) "terra" else "sf")
+    add(switch(prefs$stats, Bayesian = c("brms", "rstanarm"), Resampling = "boot", character(0)))
+    add(switch(prefs$modelling, tidymodels = "tidymodels", mlr3 = "mlr3", character(0)))
+    add(switch(prefs$tables, gt = "gt", flextable = "flextable", kableExtra = "kableExtra", character(0)))
+    if (identical(prefs$strings, "tidyverse") || (identical(prefs$strings, "Same as Coding") && identical(prefs$coding, "tidyverse")))
+      add("stringr", "lubridate")
+    unique(pk)
+  }
+  output$pref_pkg_note <- renderUI({
+    miss <- Filter(function(x) !requireNamespace(x, quietly = TRUE), pref_packages())
+    tags$p(style = "font-size: 0.85em; color: #666;",
+      "Some choices need extra R packages. Classmate asks before installing anything, the first time code needs it. ",
+      if (length(miss) > 0)
+        tagList("Not installed on this computer yet for your current choices: ",
+                tags$strong(paste0(paste(miss, collapse = ", "), ".")), " "),
+      if (isTRUE(prefs$stats == "Bayesian"))
+        "Bayesian packages also need a C++ compiler and can take several minutes to build the first time.")
+  })
+
   pref_snapshot <- reactiveVal(NULL)    # relevant preferences when the dialog was opened
   pref_pending  <- reactiveVal(NULL)    # change awaiting the Regenerate / Keep decision
   relevant_prefs <- function()
@@ -5767,6 +5843,7 @@ server <- function(input, output, session) {
         "These are defaults Claude will lean towards, not hard rules — ",
         "you can always ask for something different in your prompt."
       )),
+      uiOutput("pref_pkg_note"),
       hr(),
       tags$h5("Image export defaults"),
       tags$div(class = "pref-grid",

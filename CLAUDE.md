@@ -236,10 +236,13 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.112 (2026-10-20)  
-**Current version:** 0.5.112
+**Last released:** 0.5.113 (2026-10-20)  
+**Current version:** 0.5.113
 
-Released in 0.5.112 (no unreleased changes):
+Released in 0.5.113 (no unreleased changes):
+- **Package install confirmation + Preferences note**: `check_and_install_if_needed()` now shows an "Install extra packages?" pop-up (`install_confirm_go` / `install_confirm_cancel`, with a compiler warning for brms/rstanarm and a size note for big packages) before `start_package_install()`; Cancel unfreezes and says the code was not run. Preferences shows `pref_pkg_note`: lists packages missing for the current choices (`pref_packages()`), with a Bayesian build-time warning.
+
+Released in 0.5.112:
 - **Undo / Redo buttons** (curved back/forward SVG arrows, `UNDO_ICONS`, swapped by the `is-redo` class) beside the Past prompts and Past code tabs (`undo_prompt`, `undo_code`; li elements moved into the tab strips by script, state shared). Undo recalls the interaction after the current one in `interactions()` via `recall_prompt_entry()` (shared with Past prompts Recall, minus the move-to-top), after `capture_active_code()`; `undo_state` stores from/target seq, prompt text, tab and relevant prefs. Button reads Redo while `undo_state$target == current_seq()` (so any new prompt/recall reverts it to Undo); Redo recalls the captured interaction (edited code included) and restores tab, prompt box and prefs.
 - **Preference-change rewrite**: Preferences' Close is `pref_close`; if a code-affecting preference (`PREF_RELEVANT`: coding, plotting, mapping, spatial, stats, modelling, tables, strings — not comment density, which has its own rewrite) differs from the snapshot taken on opening and the editor has code, a pop-up offers "Rewrite the code" (`pref_regen_go`) → `do_ask_code(instruction, pref_change=)`: Claude rewrites the *current* code to follow the new preferences; never auto-runs; if the code comes back unchanged only a notification is shown. The interaction carries `pref_old/pref_new`; Past prompts shows type "Preference" with a short label (`Preferences changed: Mapping: tmap → ggplot2`) and Recall restores `pref_new` and the code (prompt box left blank). The log records the label as the prompt when the rewritten code is run.
 - **More "Preferred approach" dropdowns**: Coding gains data.table, Plotting gains plotly; new Spatial data (sf/terra), Statistical approach (Classical/Bayesian/Resampling/ML), Modelling interface (Base R/tidymodels/mlr3), Tables (Base R/gt/flextable/kableExtra), Strings and dates (Same as Coding/tidyverse/Base R). Defined in `APPROACH_EXTRAS` in app.R; prompt text from `approach_clause()`; stored in prefs/pause state; old saved prefs fall back to defaults (simple choices for student PCs: Base R tables and modelling).
