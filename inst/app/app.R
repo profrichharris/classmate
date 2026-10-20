@@ -2016,7 +2016,7 @@ ui <- fluidPage(
       function setTitles() {
         var t = { ask_code: 'Ask for Code (' + mod + ret + ' in the prompt box; press it again to Run the code)',
                   ask_plain: 'Answer (' + mod + shift + ret + ' in the prompt box)',
-                  run_code: 'Run (' + mod + ret + ' in the code editor)' };
+                  run_code: 'Run (' + mod + ret + ' anywhere on the page except the prompt box, where it first asks for code)' };
         Object.keys(t).forEach(function(id) { var b = document.getElementById(id); if (b) b.title = t[id]; });
       }
       // The prompt that the code now in the editor was asked for (to tell a repeat press from a new prompt)
@@ -2076,6 +2076,12 @@ ui <- fluidPage(
           if (id === 'ask_code' && run && !run.disabled && run.offsetParent !== null &&
               (text === '' || text === lastCodePrompt)) id = 'run_code';
         } else if (t.closest('#code_editor') && !e.shiftKey) id = 'run_code';
+        else if (!e.shiftKey && !document.body.classList.contains('modal-open') &&
+                 !(t.matches && t.matches('input, textarea, select, [contenteditable=true]'))) {
+          // Anywhere else on the page (focus on a button or tab, in the output, or nowhere in particular,
+          // as after clicking Ask for Code): Run the code
+          id = 'run_code';
+        }
         if (!id) return;
         e.preventDefault(); e.stopPropagation();
         var b = document.getElementById(id);
@@ -3255,7 +3261,8 @@ HELP_TEXTS <- list(
     "Run — Executes the code currently in the editor. Results and any plots",
     "appear in the R output tab. If the code runs successfully it is added to",
     "Past Code and your code log. (Not available while the Answer view is showing.)",
-    "Shortcut: Command+Enter (Ctrl+Enter on Windows) in the code editor."
+    "Shortcut: Command+Enter (Ctrl+Enter on Windows) runs the code from the code editor or from anywhere else on",
+    "the page (for example after clicking another button), except in the prompt box, where it first asks for code."
   ),
   explain_code = paste(
     "Explain — Asks the AI to explain the current code or R output. On the",
@@ -5653,6 +5660,8 @@ server <- function(input, output, session) {
         tags$li(tags$strong(nms[i]), if (gh[i]) paste0(" (from GitHub: ", missing_info[[i]][["github"]], ")")))),
       tags$p("They will be downloaded and installed now. This needs an internet connection and may take a few minutes;",
              "the app is paused until it finishes."),
+      tags$p(em("Installing can also update packages that Classmate is already using. If that happens you will be",
+                "asked to restart R, and your work is saved first.")),
       if (any(c("brms", "rstanarm") %in% nms))
         tags$p(em("Bayesian packages (brms, rstanarm) also need a C++ compiler (Rtools on Windows, Xcode command line",
                   "tools on a Mac), and the first model you fit can take several more minutes to build.")),
@@ -5745,11 +5754,28 @@ server <- function(input, output, session) {
     } else {
       out_lines <- tryCatch(proc$read_all_output_lines(), error = function(e) character(0))
       err_lines <- tryCatch(proc$read_all_error_lines(),  error = function(e) character(0))
-      combined  <- Filter(nzchar, c(out_lines, err_lines))
+      # Why can this R session not load them? A package can install perfectly well and still fail to
+      # load here, e.g. when installing it also updated a package (rlang, cli, vctrs ...) that this
+      # session already has loaded in an older version: R must then be restarted.
+      load_err <- vapply(still_missing, function(p)
+        tryCatch({ loadNamespace(p); "" }, error = function(e) conditionMessage(e)), "")
+      fresh_ok <- vapply(still_missing, function(p)
+        isTRUE(tryCatch(callr::r(function(p) requireNamespace(p, quietly = TRUE), args = list(p)),
+                        error = function(e) FALSE)), logical(1))
+      needs_restart <- length(still_missing) > 0 && all(fresh_ok)
+      diag <- c(if (any(nzchar(load_err)))
+                  c("", paste0("Why R could not load '", still_missing[nzchar(load_err)], "': ",
+                               load_err[nzchar(load_err)])))
+      combined  <- Filter(function(x) !is.na(x), c(Filter(nzchar, c(out_lines, err_lines)), diag))
       output$run_status <- renderUI(
         tags$span(
-          paste0("Installation failed for: ", paste(still_missing, collapse = ", "), ". ",
-                 "See R output tab for details."),
+          if (needs_restart)
+            paste0(paste(still_missing, collapse = ", "), " installed, but this R session cannot use it until R is ",
+                   "restarted (installing it updated packages that are already in use). Use Pause to keep your work, ",
+                   "restart R and run talk() again to carry on where you left off. See R output tab for details.")
+          else
+            paste0("Installation failed for: ", paste(still_missing, collapse = ", "), ". ",
+                   "See R output tab for details."),
           style = "color:#b22222; font-weight:bold;"
         )
       )
@@ -5761,8 +5787,21 @@ server <- function(input, output, session) {
       last_error_msg(paste(combined, collapse = "\n"))
       goto_tab("R output")
       ui_busy(FALSE)
+      if (needs_restart)
+        showModal(modalDialog(
+          title = "Restart needed",
+          tags$p(tags$strong(paste(still_missing, collapse = ", ")), " installed successfully, but installing it updated",
+                 "packages that this R session is already using, so R has to be restarted before it can be used."),
+          tags$p("Press ", tags$strong("Pause and close"), " to save your session (your conversation, code and context are kept).",
+                 "Then restart R (Session > Restart R in RStudio) and run talk() again to carry on where you left off."),
+          easyClose = FALSE,
+          footer = tagList(
+            actionButton("install_restart_pause", "Pause and close", class = "btn-primary"),
+            modalButton("Not now"))
+        ))
     }
   })
+  observeEvent(input$install_restart_pause, do_pause_app())
 
   # --- Preferences -----------------------------------------------------------
   # Priority: pause state > persisted user prefs > built-in defaults

@@ -236,10 +236,14 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.114 (2026-10-20)  
-**Current version:** 0.5.114
+**Last released:** 0.5.115 (2026-10-20)  
+**Current version:** 0.5.115
 
-Released in 0.5.114 (no unreleased changes):
+Released in 0.5.115 (no unreleased changes):
+- **Cmd/Ctrl+Enter now runs from anywhere**: it used to work only with focus in the code editor (or prompt box); after clicking Ask for Code with the mouse, focus is on a disabled button/body so nothing happened. The keydown handler now falls back to Run whenever focus is not in a pop-up or another text field (prompt box behaviour unchanged: asks for code, or runs if the same prompt is pressed again). Help text and Run tooltip updated.
+- **Install-failure diagnosis**: when a package installs but `requireNamespace()` still fails in the app process (typically because installing it updated packages — rlang, cli, vctrs… — that the session already has loaded in older versions), the failure branch of the install poller now captures the real `loadNamespace()` error into the R output, checks in a fresh `callr` process, and if the package loads there says "installed, but R must be restarted — use Pause, restart R, run talk()" instead of "Installation failed". A "Restart needed" pop-up then offers **Pause and close** (`install_restart_pause` → `do_pause_app()`) so the student only has to restart R and run `talk()`. The install confirmation also warns that installing can update packages in use and need a restart. (Reported with `gt`; root cause was inferred, not reproduced — check the R output reason if it recurs.)
+
+Released in 0.5.114:
 - **Graceful stale-session failure**: `app.R` has a `CM_NEEDS` list of every `classmate:::` function it uses; if the loaded (old) namespace lacks any (package updated in-session by a version that predates `classmate_session_is_stale()`), the app shows a "Classmate was updated — restart R, then run talk()" page, prints the same to the console and closes after ~8 s instead of a traceback. `tools/check_help.R` fails if `CM_NEEDS` misses a `classmate:::` name — add new ones to it.
 
 Released in 0.5.113:
