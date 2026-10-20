@@ -1783,7 +1783,6 @@ ui <- fluidPage(
       font-weight: bold;
       min-width: 32px;
       position: relative;
-      z-index: 9991;
     }
     body.help-mode #help_toggle {
       background-color: #fff !important;
@@ -1794,7 +1793,6 @@ ui <- fluidPage(
     #about_classmate {
       display: none;
       position: relative;
-      z-index: 9991;
       background-color: #fff;
       color: #111;
       border-color: #111;
@@ -1810,7 +1808,6 @@ ui <- fluidPage(
     .usage-text-help {
       display: none;
       position: relative;
-      z-index: 9991;
       background-color: #111 !important;
       color: #fff !important;
       border-color: #111 !important;
@@ -1824,6 +1821,11 @@ ui <- fluidPage(
       display: inline-block !important;
     }
     body.help-mode #help-mode-label { display: block !important; }
+    /* In help mode these sit above the click-catching overlay; never above a pop-up window (a z-index
+       larger than the pop-up's made the ? button float over every dialog, even outside help mode) */
+    body.help-mode:not(.modal-open) #help_toggle,
+    body.help-mode:not(.modal-open) #about_classmate,
+    body.help-mode:not(.modal-open) .usage-text-help { z-index: 9991; }
 
     /* Full-page overlay that intercepts all clicks in help mode */
     #classmate-help-overlay {
@@ -1836,6 +1838,50 @@ ui <- fluidPage(
     }
     body.help-mode #classmate-help-overlay { display: block; }
     body.help-mode.modal-open #classmate-help-overlay { display: none; }
+  ")),
+  # Keyboard shortcuts: Cmd/Ctrl+Enter in the prompt box = Ask for Code, Cmd/Ctrl+Shift+Enter = Answer,
+  # Cmd/Ctrl+Enter in the code editor = Run. They press the matching button, so they do nothing while it
+  # is disabled. (Cmd/Ctrl+C, +A and +R are Copy, Select all and Reload, so they are left alone.)
+  tags$script(HTML("
+    (function() {
+      var mac = /Mac|iPhone|iPad/.test(navigator.platform || '');
+      var mod = mac ? '\u2318' : 'Ctrl+', shift = mac ? '\u21E7' : 'Shift+', ret = mac ? '\u21A9' : 'Enter';
+      function setTitles() {
+        var t = { ask_code: 'Ask for Code (' + mod + ret + ' in the prompt box; press it again to Run the code)',
+                  ask_plain: 'Answer (' + mod + shift + ret + ' in the prompt box)',
+                  run_code: 'Run (' + mod + ret + ' in the code editor)' };
+        Object.keys(t).forEach(function(id) { var b = document.getElementById(id); if (b) b.title = t[id]; });
+      }
+      // The prompt that the code now in the editor was asked for (to tell a repeat press from a new prompt)
+      var lastCodePrompt = null;
+      document.addEventListener('click', function(e) {
+        var b = e.target && e.target.closest ? e.target.closest('#ask_code') : null;
+        if (b) lastCodePrompt = (document.getElementById('prompt').value || '').trim();
+      }, true);
+      document.addEventListener('DOMContentLoaded', setTitles);
+      setTimeout(setTitles, 1500);
+      document.addEventListener('keydown', function(e) {
+        if (!(e.metaKey || e.ctrlKey) || e.altKey || e.key !== 'Enter') return;
+        var t = e.target;
+        if (!t || !t.closest || t.closest('.modal')) return;
+        var id = null;
+        if (t.closest('#prompt')) {
+          id = e.shiftKey ? 'ask_plain' : 'ask_code';
+          // Pressed a second time, with the same prompt (or none) and code waiting to be run: run it
+          var run = document.getElementById('run_code');
+          var text = (t.value || '').trim();
+          if (id === 'ask_code' && run && !run.disabled && run.offsetParent !== null &&
+              (text === '' || text === lastCodePrompt)) id = 'run_code';
+        } else if (t.closest('#code_editor') && !e.shiftKey) id = 'run_code';
+        if (!id) return;
+        e.preventDefault(); e.stopPropagation();
+        var b = document.getElementById(id);
+        if (!b || b.disabled || b.offsetParent === null) return;
+        // make sure the text box value has reached the server before the button is pressed
+        if (id !== 'run_code') t.dispatchEvent(new Event('change', { bubbles: true }));
+        setTimeout(function() { if (!b.disabled) b.click(); }, 200);
+      }, true);
+    })();
   ")),
   tags$div(id = "classmate-help-overlay"),
   tags$script(HTML("
@@ -2884,13 +2930,17 @@ HELP_TEXTS <- list(
     "Load Script and Save Code Block are switched off. Use Ask for Code to get them back.",
     "To produce its answer, summary results (not individual records) are sent to Claude;",
     "names and identifiers in your data are replaced by placeholders and filled back in",
-    "only on your own screen. It will not list individual rows or records."
+    "only on your own screen. It will not list individual rows or records. Please do not use",
+    "the Answer button with data that must not be summarised outside your computer.",
+    "Shortcut: Command+Shift+Enter (Ctrl+Shift+Enter on Windows) in the prompt box."
   ),
   ask_code = paste(
     "Ask for Code — Send a prompt to the AI and have the generated code placed",
     "in the Code editor for you to inspect before running. Press Run when you are",
     "ready to execute it. Use Ask for Code when you want to review or edit the code",
-    "first. (If AutoRun Code is ticked the code is run for you straight away.)"
+    "first. (If AutoRun Code is ticked the code is run for you straight away.)",
+    "Shortcut: Command+Enter (Ctrl+Enter on Windows) in the prompt box. Press it a second time,",
+    "with the same prompt, and the code that was generated is run."
   ),
   autorun_code = paste(
     "AutoRun Code — When ticked, code generated by Ask for Code is run automatically as soon as it",
@@ -2961,7 +3011,8 @@ HELP_TEXTS <- list(
   run_code = paste(
     "Run — Executes the code currently in the editor. Results and any plots",
     "appear in the R output tab. If the code runs successfully it is added to",
-    "Past Code and your code log. (Not available while the Answer view is showing.)"
+    "Past Code and your code log. (Not available while the Answer view is showing.)",
+    "Shortcut: Command+Enter (Ctrl+Enter on Windows) in the code editor."
   ),
   explain_code = paste(
     "Explain — Asks the AI to explain the current code or R output. On the",
@@ -4458,12 +4509,19 @@ server <- function(input, output, session) {
     file_info <- parseFilePaths(dialog_roots(), input$load_workspace)
     if (nrow(file_info) > 0) {
       path <- file_info$datapath[[1]]
-      tryCatch(
-        load(path, envir = .GlobalEnv),
-        error = function(e)
+      loaded <- tryCatch({ load(path, envir = .GlobalEnv); TRUE },
+        error = function(e) {
           showNotification(paste("Could not load workspace:", conditionMessage(e)),
                            type = "error", duration = 8)
-      )
+          FALSE
+        })
+      if (isTRUE(loaded)) {      # keep the code log reproducible
+        entry <- list(prompt = "Loaded a workspace file",
+                      code = paste0("# Workspace loaded with Load Workspace\nload(", deparse(path), ")"),
+                      description = "", source = "data")
+        pending_log_entries(c(pending_log_entries(), list(entry)))
+        all_log_entries(c(all_log_entries(), list(entry)))
+      }
     }
   })
 
@@ -4770,7 +4828,15 @@ server <- function(input, output, session) {
       }
       final <- if (nm %in% used) make.names(paste0(nm, "_", pk)) else nm
       used  <- c(used, final)
-      plan[[length(plan) + 1L]] <- list(name = final, package = pk, value = val)
+      # The R code that would recreate this object, for the code log
+      code <- if (identical(row$kind, "file"))
+        sprintf('%s <- sf::st_read(system.file("%s", package = "%s"), quiet = TRUE)', final, row$title, pk)
+      else if (identical(final, nm))
+        sprintf('data("%s", package = "%s")', row$loadname, pk)
+      else
+        sprintf('%s <- local({ e <- new.env(); data("%s", package = "%s", envir = e); e[["%s"]] })',
+                final, row$loadname, pk, nm)
+      plan[[length(plan) + 1L]] <- list(name = final, package = pk, value = val, code = code)
     }
     if (length(failed) > 0)
       showNotification(paste("Could not load:", paste(failed, collapse = ", ")), type = "error", duration = 8)
@@ -4802,6 +4868,13 @@ server <- function(input, output, session) {
     for (it in plan) assign(it$name, it$value, envir = .GlobalEnv)
     nms <- vapply(plan, `[[`, "", "name")
     selected_objects(union(selected_objects(), nms))
+    # Record the loading in the code log, so the log is a complete, reproducible pipeline
+    log_code <- paste(c("# Data loaded from packages (Load Package Data)",
+                        unique(vapply(plan, `[[`, "", "code"))), collapse = "\n")
+    entry <- list(prompt = paste0("Loaded package data: ", paste(nms, collapse = ", ")), code = log_code,
+                  description = "", source = "data")
+    pending_log_entries(c(pending_log_entries(), list(entry)))
+    all_log_entries(c(all_log_entries(), list(entry)))
     pkgdata_sel(character(0))
     if (reopen) show_pkgdata_modal()
     else updateCheckboxGroupInput(session, "pkgdata_choice", selected = character(0))
@@ -6430,30 +6503,6 @@ server <- function(input, output, session) {
   }
 
   observeEvent(input$ask_plain, {
-    req(input$prompt)
-    if (!isTRUE(getOption(".classmate_answer_notice_shown"))) {
-      showModal(modalDialog(
-        title = "About the Answer button",
-        tags$p("The Answer button gives you a plain-English answer instead of code."),
-        tags$p("To answer some questions, Classmate runs a short calculation on your data",
-               "and sends the summary results (for example counts or averages, never",
-               "individual records) to Claude, which writes the answer. Please do not use it",
-               "with data that must not be summarised outside your computer."),
-        tags$p(em("You will only see this message once in this R session.")),
-        footer = tagList(
-          actionButton("answer_notice_ok", "Continue", class = "btn-primary"),
-          modalButton("Cancel")
-        ),
-        easyClose = FALSE
-      ))
-    } else {
-      do_ask_answer(input$prompt)
-    }
-  })
-
-  observeEvent(input$answer_notice_ok, {
-    removeModal()
-    options(.classmate_answer_notice_shown = TRUE)
     req(input$prompt)
     do_ask_answer(input$prompt)
   })
