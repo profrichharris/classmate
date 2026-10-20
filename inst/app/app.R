@@ -745,6 +745,11 @@ schema_from_r_object <- function(obj) {
       error = function(e) "spatial"
     )
     list(type = paste("sf", geom_type), cols = cols, nrow = nrow(obj))
+  } else if (methods::is(obj, "Spatial") && methods::.hasSlot(obj, "data")) {
+    # an sp object such as SpatialPointsDataFrame: the attribute columns live in the data slot
+    list(type = paste("sp", class(obj)[1]), cols = names(obj@data), nrow = nrow(obj@data))
+  } else if (inherits(obj, "SpatRaster")) {
+    list(type = "SpatRaster (raster layers)", cols = tryCatch(names(obj), error = function(e) NULL))
   } else if (is.data.frame(obj)) {
     list(type = "data frame", cols = names(obj), nrow = nrow(obj))
   } else if (is.matrix(obj)) {
@@ -870,7 +875,8 @@ summarise_workspace_object <- function(obj_name, envir = .GlobalEnv) {
     paste0("`", obj_name, "` [", type_str, ", ",
            format(schema$nrow, big.mark = ","), " rows, ",
            length(schema$cols %||% character(0)),
-           if (inherits(obj, "sf")) " columns plus a geometry column]" else " columns]")
+           if (inherits(obj, "sf")) " columns plus a geometry column]"
+           else if (methods::is(obj, "Spatial")) " columns plus the spatial geometry]" else " columns]")
   } else {
     paste0("`", obj_name, "` [", type_str, "]")
   }
@@ -1391,6 +1397,170 @@ run_code <- function(code_text) {
   }
 
   c(result, list(plot_files = plot_files, wd_changed = wd_changed))
+}
+
+# --- Look at an item added for context (the magnifier beside it in the context list) -----------------
+# Everything here runs on the student's own computer and sends nothing to Claude. Each part is wrapped so that
+# an object that cannot be inspected gives a short message instead of an error.
+
+INSPECT_ICON <- HTML(paste0(
+  '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.2" y2="16.2"/></svg>'))
+
+# Evaluate with a time limit, so that a huge object cannot freeze the app
+inspect_with_limit <- function(expr, secs = 15) {
+  setTimeLimit(elapsed = secs, transient = FALSE)
+  on.exit(setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE), add = TRUE)
+  force(expr)
+}
+
+inspect_text <- function(fun, max_lines = 300L) {
+  out <- tryCatch(utils::capture.output(fun()),
+                  error = function(e) paste("Not available for this object:", conditionMessage(e)))
+  if (length(out) > max_lines)
+    out <- c(out[seq_len(max_lines)], sprintf("[... %d further lines not shown]", length(out) - max_lines))
+  tags$pre(style = "max-height: 360px; overflow: auto; font-size: 0.85em; background: #fafafa;",
+           paste(out, collapse = "\n"))
+}
+
+inspect_unavailable <- function(e)
+  tags$p(em(paste("Not available for this object:", conditionMessage(e))), style = "color: #888;")
+
+# A plain HTML table of the first rows and columns of a data frame
+inspect_html_table <- function(df, max_rows = 200L, max_cols = 60L, partial = FALSE) {
+  n_r <- nrow(df); n_c <- ncol(df)
+  df  <- df[seq_len(min(n_r, max_rows)), seq_len(min(n_c, max_cols)), drop = FALSE]
+  cells <- lapply(df, function(col) tryCatch({
+    v <- if (is.list(col)) vapply(col, function(z) paste(utils::head(format(z), 3), collapse = ", "), "")
+         else if (is.numeric(col)) format(col, digits = 7, trim = TRUE)
+         else as.character(col)
+    v[is.na(col)] <- NA_character_
+    substr(v, 1, 60)
+  }, error = function(e) rep("?", nrow(df))))
+  head_row <- tags$tr(lapply(names(df), function(n) tags$th(n, style = "white-space: nowrap; padding: 2px 8px; position: sticky; top: 0; background: #eee;")))
+  body_rows <- lapply(seq_len(nrow(df)), function(i)
+    tags$tr(lapply(cells, function(cv) {
+      x <- cv[i]
+      if (is.na(x)) tags$td("NA", style = "color: #aaa; font-style: italic; padding: 1px 8px; white-space: nowrap;")
+      else tags$td(x, style = "padding: 1px 8px; white-space: nowrap;")
+    })))
+  tagList(
+    tags$p(style = "font-size: 0.8em; color: #777; margin: 0 0 4px 0;",
+           if (partial) sprintf("Showing the first %d rows (the file may have more) and %d of %d columns.", nrow(df), ncol(df), n_c)
+           else sprintf("Showing %d of %d rows and %d of %d columns.", nrow(df), n_r, ncol(df), n_c)),
+    tags$div(style = "max-height: 340px; overflow: auto; border: 1px solid #ddd;",
+      tags$table(style = "font-size: 0.82em; border-collapse: collapse;",
+                 tags$thead(head_row), tags$tbody(body_rows))))
+}
+
+inspect_variables <- function(df) {
+  one <- function(col) {
+    u <- tryCatch(utils::head(unique(col[!is.na(col)]), 4), error = function(e) NULL)
+    c(class(col)[1], as.character(sum(is.na(col))),
+      tryCatch(substr(paste(format(u, trim = TRUE), collapse = ", "), 1, 50), error = function(e) ""))
+  }
+  m <- vapply(df, function(col) tryCatch(one(col), error = function(e) c("?", "?", "")), character(3))
+  data.frame(Variable = names(df), Type = m[1, ], Missing = m[2, ], `Example values` = m[3, ],
+             check.names = FALSE, stringsAsFactors = FALSE)
+}
+
+inspect_read_file <- function(path) {
+  if (!file.exists(path)) stop("The file is no longer there.")
+  ext <- tolower(tools::file_ext(path))
+  need <- function(pkg) if (!requireNamespace(pkg, quietly = TRUE)) stop("The '", pkg, "' package is needed to read this file.")
+  part <- function(x) { attr(x, "cm_partial") <- TRUE; x }     # only the first rows were read
+  switch(ext,
+    csv = part(utils::read.csv(path, nrows = 200, check.names = FALSE)),
+    tsv = , txt = part(utils::read.delim(path, nrows = 200, check.names = FALSE)),
+    xlsx = , xls = { need("readxl"); part(readxl::read_excel(path, n_max = 200)) },
+    rds = readRDS(path),
+    rdata = , rda = {
+      e <- new.env(parent = emptyenv()); nms <- load(path, envir = e)
+      if (length(nms) == 0) stop("The file contains no objects.")
+      get(nms[1], envir = e)
+    },
+    shp = , gpkg = , fgb = , geojson = , json = , kml = , gml = { need("sf"); sf::st_read(path, quiet = TRUE) },
+    sav = { need("haven"); part(haven::read_sav(path, n_max = 200)) },
+    dta = { need("haven"); part(haven::read_dta(path, n_max = 200)) },
+    sas7bdat = { need("haven"); part(haven::read_sas(path, n_max = 200)) },
+    stop("No preview is available for .", ext, " files."))
+}
+
+# The R code that does what the Look-at window shows, for the code log (so that the log is a complete record of
+# what was done to the data). `ref` is how the item is written in code: an object name, or the file path.
+inspect_log_code <- function(kind, ref, obj) {
+  q <- function(x) deparse(x)
+  if (kind == "file") {
+    ext <- tolower(tools::file_ext(ref))
+    read <- switch(ext,
+      csv = sprintf("utils::read.csv(%s, nrows = 200)", q(ref)),
+      tsv = , txt = sprintf("utils::read.delim(%s, nrows = 200)", q(ref)),
+      xlsx = , xls = sprintf("readxl::read_excel(%s, n_max = 200)", q(ref)),
+      rds = sprintf("readRDS(%s)", q(ref)),
+      shp = , gpkg = , fgb = , geojson = , json = , kml = , gml = sprintf("sf::st_read(%s)", q(ref)),
+      sav = sprintf("haven::read_sav(%s, n_max = 200)", q(ref)),
+      dta = sprintf("haven::read_dta(%s, n_max = 200)", q(ref)),
+      sas7bdat = sprintf("haven::read_sas(%s, n_max = 200)", q(ref)),
+      NULL)
+    if (is.null(read)) return(NULL)
+    return(paste(c(paste0("# Looked at the file ", basename(ref), " (Look at window)"),
+                   paste0("look_at <- ", read),
+                   if (!inherits(obj, "sf") && is.data.frame(obj)) c("head(look_at, 200)", "str(look_at)", "summary(look_at)")
+                   else c("str(look_at, max.level = 2)")), collapse = "\n"))
+  }
+  lines <- if (inherits(obj, "sf"))
+    c(sprintf("head(sf::st_drop_geometry(%s), 200)", ref), sprintf("sf::st_geometry_type(%s)[1]", ref),
+      sprintf("sf::st_crs(%s)", ref), sprintf("sf::st_bbox(%s)", ref),
+      sprintf("str(%s, max.level = 2)", ref), sprintf("summary(sf::st_drop_geometry(%s))", ref))
+  else if (methods::is(obj, "Spatial") && methods::.hasSlot(obj, "data"))
+    c(sprintf("head(%s@data, 200)", ref), sprintf("summary(%s@data)", ref), sprintf("%s@bbox", ref),
+      sprintf("str(%s, max.level = 2)", ref))
+  else if (is.data.frame(obj) || is.matrix(obj))
+    c(sprintf("head(%s, 200)", ref), sprintf("str(%s)", ref), sprintf("summary(%s)", ref))
+  else c(sprintf("print(%s)", ref), sprintf("summary(%s)", ref), sprintf("str(%s, max.level = 2)", ref))
+  paste(c(paste0("# Looked at ", ref, " (Look at window)"), lines), collapse = "\n")
+}
+
+# The tabs for one object: Table / Variables / Summary for tabular data, plus Spatial for spatial data and
+# Structure for anything. Each tab is built on its own, so one that fails does not stop the others.
+inspect_panels <- function(obj) {
+  df <- NULL; spatial <- NULL
+  if (inherits(obj, "sf")) {
+    df <- sf::st_drop_geometry(obj)
+    spatial <- function() {
+      cat("Features:", nrow(obj), "\n")
+      cat("Geometry type:", paste(unique(as.character(sf::st_geometry_type(obj))), collapse = ", "), "\n")
+      crs <- sf::st_crs(obj)
+      cat("Coordinate system:", if (is.na(crs)) "not set" else (crs$input %||% crs$Name), "\n\n")
+      print(sf::st_bbox(obj))
+    }
+  } else if (methods::is(obj, "Spatial") && methods::.hasSlot(obj, "data")) {
+    df <- obj@data
+    spatial <- function() {
+      cat("Class:", class(obj)[1], "\n")
+      cat("Features:", nrow(obj@data), "\n")
+      cat("Coordinate system:", tryCatch(as.character(obj@proj4string@projargs), error = function(e) "unknown"), "\n\n")
+      print(obj@bbox)
+    }
+  } else if (is.data.frame(obj)) df <- obj
+  else if (is.matrix(obj)) {
+    df <- as.data.frame(utils::head(obj, 200))
+    if (is.null(colnames(obj))) names(df) <- paste0("V", seq_len(ncol(df)))
+  }
+  panels <- list()
+  add <- function(title, build)
+    panels[[length(panels) + 1L]] <<- tabPanel(title, tags$div(style = "padding-top: 8px;",
+      tryCatch(build(), error = function(e) inspect_unavailable(e))))
+  if (!is.null(df)) {
+    add("Table",     function() inspect_html_table(df, partial = isTRUE(attr(obj, "cm_partial"))))
+    add("Variables", function() inspect_html_table(inspect_variables(df)))
+    add("Summary",   function() inspect_text(function() print(summary(df))))
+  } else {
+    add("Overview",  function() inspect_text(function() print(obj)))
+    add("Summary",   function() inspect_text(function() print(summary(obj))))
+  }
+  if (!is.null(spatial)) add("Spatial", function() inspect_text(spatial))
+  add("Structure", function() inspect_text(function() utils::str(obj, max.level = 2, give.attr = FALSE)))
+  panels
 }
 
 build_fix_system_prompt <- function(language = "English") {
@@ -2071,6 +2241,14 @@ ui <- fluidPage(
       }, true);
     })();
   ")),
+  # Quick Console: after each Run the output box scrolls to the very bottom, so the newest output is in view
+  tags$script(HTML("
+    $(document).on('shiny:value', function(e) {
+      if (e.name !== 'qc_output_ui') return;
+      var down = function() { var b = document.getElementById('qc_output_box'); if (b) b.scrollTop = b.scrollHeight; };
+      setTimeout(down, 0); setTimeout(down, 150); setTimeout(down, 500);   // again once the new text has been laid out
+    });
+  ")),
   # Keyboard shortcuts: Cmd/Ctrl+Enter in the prompt box = Ask for Code, Cmd/Ctrl+Shift+Enter = Answer,
   # Cmd/Ctrl+Enter in the code editor = Run. They press the matching button, so they do nothing while it
   # is disabled. (Cmd/Ctrl+C, +A and +R are Copy, Select all and Reload, so they are left alone.)
@@ -2467,6 +2645,14 @@ ui <- fluidPage(
       })();
     ")),
     tags$style(HTML("
+      /* Magnifier beside each file / object in the context list, to the left of the tick or cross */
+      #context_list_box .checkbox { position: relative; padding-left: 26px; }
+      #context_list_box .cm-inspect { position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
+        width: 20px; height: 18px; padding: 0; line-height: 1; background: transparent; color: #888;
+        border: 1px solid transparent; border-radius: 3px; cursor: pointer; }
+      #context_list_box .cm-inspect:hover { color: #222; background: #eee; border-color: #ccc; }
+      #context_list_box .cm-inspect svg { width: 12px; height: 12px; vertical-align: -1px; fill: none; stroke: currentColor;
+        stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
       .cm-prompt-echo { height: 22px; margin: 6px 0 4px 0; font-size: 0.82em; color: #777; }
       .cm-prompt-echo .cm-echo { display: flex; align-items: baseline; gap: 6px; }
       .cm-prompt-echo .cm-echo-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
@@ -3267,6 +3453,12 @@ HELP_TEXTS <- list(
     "as its Recall button. It then turns into Redo (curved forward arrow), which takes you back to exactly where you were",
     "before pressing Undo. Redo is only offered until you do something else, such as ask a new prompt",
     "or recall another entry."
+  ),
+  inspect_item = paste(
+    "Look at this (magnifier beside a file or object in the context list) — Opens a window to look at it: its",
+    "table (the first 200 rows; for spatial data the attribute table), its variables, a summary and its",
+    "structure; for spatial data also the geometry type, coordinate system and extent. It is shown on your own",
+    "screen only and nothing is sent to Claude. If an item cannot be shown you are simply told so."
   ),
   spend_reset = paste(
     "Reset to zero — Starts the Daily spend figure again from zero. Your usage record is kept; only the",
@@ -5423,9 +5615,54 @@ server <- function(input, output, session) {
         "border: 1px solid #e3e3e3; border-radius: 4px;",
         "padding: 2px 8px; background: #fafafa;"
       ),
-      checkboxGroupInput("context_list_checked", label = NULL, choices = choices,
-                         selected = intersect(unname(choices), isolate(ctx_crossed())))
+      checkboxGroupInput("context_list_checked", label = NULL,
+        choiceNames  = lapply(seq_along(choices), function(i) tagList(
+          # the magnifier sits to the left of the tick (placed by CSS); it opens the Look-at window
+          tags$button(type = "button", class = "cm-inspect", `data-val` = unname(choices)[i],
+                      `data-help-id` = "inspect_item", title = "Look at this: table, variables, summary, structure",
+                      onclick = "event.preventDefault(); event.stopPropagation(); Shiny.setInputValue('inspect_item', this.getAttribute('data-val'), {priority: 'event'});",
+                      INSPECT_ICON),
+          names(choices)[i])),
+        choiceValues = unname(choices),
+        selected = intersect(unname(choices), isolate(ctx_crossed())))
     )
+  })
+
+  # Look at an item added for context (from its magnifier button)
+  observeEvent(input$inspect_item, {
+    val  <- input$inspect_item
+    kind <- if (startsWith(val, "file::")) "file" else "obj"
+    nm   <- sub("^(file|obj)::", "", val)
+    label <- if (kind == "file") basename(nm) else nm
+    cannot <- function(why) showModal(modalDialog(
+      title = paste0("Look at: ", label),
+      tags$p("Classmate cannot show this one."), tags$p(em(why), style = "color: #888;"),
+      footer = modalButton("Close"), easyClose = TRUE))
+    obj <- tryCatch(inspect_with_limit(
+      if (kind == "file") inspect_read_file(nm)
+      else if (exists(nm, envir = .GlobalEnv, inherits = FALSE)) get(nm, envir = .GlobalEnv, inherits = FALSE)
+      else stop("It is no longer in your workspace.")),
+      error = function(e) e)
+    if (inherits(obj, "error")) return(cannot(conditionMessage(obj)))
+    panels <- tryCatch(inspect_with_limit(inspect_panels(obj)), error = function(e) e)
+    if (inherits(panels, "error")) return(cannot(conditionMessage(panels)))
+    # Record it in the code log (not in Past prompts / Past code), unless it is the same as the last entry
+    tryCatch({
+      code <- inspect_log_code(kind, nm, obj)
+      ents <- all_log_entries()
+      if (!is.null(code) && !(length(ents) > 0 && identical(ents[[length(ents)]]$code, code))) {
+        entry <- list(prompt = paste0("Looked at ", label, " (Look at window)"), code = code,
+                      description = "", source = "inspect")
+        pending_log_entries(c(pending_log_entries(), list(entry)))
+        all_log_entries(c(all_log_entries(), list(entry)))
+      }
+    }, error = function(e) invisible(NULL))
+    tryCatch(
+      showModal(modalDialog(
+        title = paste0("Look at: ", label), size = "l",
+        do.call(tabsetPanel, c(list(id = "inspect_tabs"), panels)),
+        footer = modalButton("Close"), easyClose = TRUE)),
+      error = function(e) cannot(conditionMessage(e)))
   })
   observeEvent(input$context_list_checked, ignoreNULL = FALSE, {
     all_vals <- unname(isolate(context_choices()))
@@ -6383,6 +6620,7 @@ server <- function(input, output, session) {
       title = "Quick Console",
       size  = "l",
       tags$div(
+        id = "qc_output_box",
         style = paste0("height: 280px; overflow-y: auto; background: #fafafa;",
                        " border: 1px solid #ddd; border-radius: 4px;",
                        " padding: 8px; margin-bottom: 8px;"),
@@ -6600,6 +6838,14 @@ server <- function(input, output, session) {
     }
     result <- run_in_qc(code)
     if (!is.null(result$wd_changed)) wd_rv(result$wd_changed)
+    # A command that ran is part of the pipeline: record it in the code log (not in Past prompts / Past code).
+    # Failed, timed-out, package-installing and q() / quit() commands are left out.
+    if (!isTRUE(result$is_error) && !isTRUE(result$timed_out) && !code_installs_packages(code) &&
+        !grepl("(^|[;\n])[[:space:]]*(q|quit)[[:space:]]*\\(", code)) {
+      entry <- list(prompt = "Run in the Quick Console", code = trimws(code), description = "", source = "quick_console")
+      pending_log_entries(c(pending_log_entries(), list(entry)))
+      all_log_entries(c(all_log_entries(), list(entry)))
+    }
     qc_history(c(qc_history(), list(list(
       input     = code,
       output    = result$output,
