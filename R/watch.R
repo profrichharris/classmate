@@ -54,6 +54,7 @@
   old_log <- .watch_read_usage()
   log <- c(old_log, list(list(timestamp = Sys.time(), cost_usd = cost_usd)))
   attr(log, "key_id") <- (.watch_load_cfg()$key_id) %||% attr(old_log, "key_id")
+  attr(log, "spend_reset") <- attr(old_log, "spend_reset")
   tryCatch(classmate_save_state(log, .watch_usage_path()), error = function(e) NULL)
   invisible(log)
 }

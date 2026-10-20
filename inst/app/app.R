@@ -1699,6 +1699,7 @@ append_usage_entry <- function(cost_usd) {
   # Remember which key the usage belongs to, so that deleting and re-loading the same key keeps it
   attr(log, "key_id") <- tryCatch(readRDS(active_cfg_path())$key_id, error = function(e) NULL) %||%
     attr(old_log, "key_id")
+  attr(log, "spend_reset") <- attr(old_log, "spend_reset")
   tryCatch(classmate:::classmate_save_state(log, usage_log_path()), error = function(e) invisible(NULL))
   log
 }
@@ -1730,9 +1731,10 @@ period_cutoff <- function(reset_period) {
   now - 86400
 }
 
-period_spend <- function(log, reset_period) {
+period_spend <- function(log, reset_period, since = NULL) {
   if (length(log) == 0) return(0)
   cutoff <- period_cutoff(reset_period)
+  if (!is.null(since)) cutoff <- max(cutoff, since)    # "Reset to zero" on a key with no limit
   recent <- Filter(function(e) e$timestamp >= cutoff, log)
   sum(vapply(recent, function(e) e$cost_usd, numeric(1)))
 }
@@ -2560,7 +2562,7 @@ ui <- fluidPage(
       })();
     ")),
     tags$style(HTML("
-      #main_tabs .cm-switch-li { float: left; margin: 0 0 0 16px; padding-top: 7px; font-size: 0.85em; color: #333; }
+      #main_tabs .cm-switch-li { float: left; margin: 0 0 0 16px; padding-top: 11px; font-size: 0.85em; color: #333; }
       #main_tabs .cm-switch-li > * { vertical-align: middle; }
       .cm-switch-lbl { display: inline-block; margin: 0 6px; }
       .cm-prompt-row.cm-hl { background-color: #fff3b0; border-radius: 3px; }
@@ -3266,6 +3268,10 @@ HELP_TEXTS <- list(
     "before pressing Undo. Redo is only offered until you do something else, such as ask a new prompt",
     "or recall another entry."
   ),
+  spend_reset = paste(
+    "Reset to zero — Starts the Daily spend figure again from zero. Your usage record is kept; only the",
+    "figure shown is reset. The figure also starts again from zero each day at midnight."
+  ),
   usage_help = paste(
     "Usage — How much of your Classmate allowance is left: the bar counts down as you use Classmate, with",
     "when it resets and when your key expires. A key with no spending limit shows today's spend instead,",
@@ -3668,7 +3674,19 @@ server <- function(input, output, session) {
   current_spend <- reactive({
     # With a spending limit, spend is counted over the key's reset period. A key with no limit has no period
     # to count over, so it shows today's spend (since local midnight) instead.
-    period_spend(usage_log_rv(), if (is.null(cost_limit_val())) "daily" else reset_period_val())
+    if (is.null(cost_limit_val()))
+      period_spend(usage_log_rv(), "daily", since = attr(usage_log_rv(), "spend_reset"))
+    else
+      period_spend(usage_log_rv(), reset_period_val())
+  })
+
+  # Reset to zero (keys with no limit only): counting starts again from now. The usage log itself is kept;
+  # the time of the reset is stored with it.
+  observeEvent(input$spend_reset, {
+    log <- usage_log_rv()
+    attr(log, "spend_reset") <- Sys.time()
+    tryCatch(classmate:::classmate_save_state(log, usage_log_path()), error = function(e) invisible(NULL))
+    usage_log_rv(log)
   })
 
   key_expired <- reactive({
@@ -4003,11 +4021,15 @@ server <- function(input, output, session) {
       invalidateLater(5 * 60 * 1000)     # so the figure drops back to zero after midnight
       spend_str <- paste0("Daily spend: $", sprintf("%.3f", spend))
       tagList(
+        # nudged down (top: moves it without moving anything below) to sit close to "Reset to zero"
         div(class = "usage-text-normal",
-          style = "font-size: 0.85em; color: #444;",
+          style = "font-size: 0.85em; color: #444; position: relative; top: 5px;",
           spend_str),
         actionButton("usage_help", HTML(spend_str),
-          class = "usage-text-help")
+          class = "usage-text-help", style = "top: 5px;"),
+        div(style = "text-align: right; margin-top: 2px;",
+          actionButton("spend_reset", "Reset to zero", class = "btn-link btn-xs",
+                       style = "font-size: 0.75em; padding: 0 2px; color: #777;"))
       )
     } else {
       pct_used      <- min(spend / limit, 1)

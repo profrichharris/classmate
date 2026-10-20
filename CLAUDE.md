@@ -236,10 +236,13 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.118 (2026-10-20)  
-**Current version:** 0.5.118
+**Last released:** 0.5.119 (2026-10-20)  
+**Current version:** 0.5.119
 
-Released in 0.5.118 (no unreleased changes):
+Released in 0.5.119 (no unreleased changes):
+- **Reset to zero for Daily spend** (keys with no limit only): a small `spend_reset` link under the "Daily spend" text. It stores `attr(usage_log, "spend_reset") <- Sys.time()` on the usage log (saved with it; `append_usage_entry()` and `.watch_append_usage()` carry the attribute over) and `current_spend()` counts from `max(local midnight, spend_reset)` via `period_spend(..., since=)`. The usage log entries themselves are untouched.
+
+Released in 0.5.118:
 - **Answer button crashed on data with no identifying columns** (reported with `spData::house`, prompt "tell me about the data"): `do_ask_answer()` built its value→token lookup with `setNames(names(tok_all), unname(tok_all))`; when nothing has been masked `tok_all` is an empty, unnamed `character(0)` and `setNames(NULL, character(0))` errors ("attempt to set an attribute on NULL"), killing `talk()`. So Answer failed for any data without name/ID-like columns. Fixed with a length/names guard here and in `pseudonymise_objects()`. The Answer step's `on_success` is now also wrapped (`answer_safely()`): any unexpected error gives "Something went wrong while working out that answer…", restores the prompt and re-enables the buttons instead of ending the session.
 
 Released in 0.5.117:
