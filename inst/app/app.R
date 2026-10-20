@@ -1202,6 +1202,8 @@ start_pkg_install <- function(cran_pkgs, github_refs, repos) {
 # For each plot shown in the R output tab (keyed by the path of its PNG): the lines of code that
 # drew it, found while the code ran (see run_code()). Used to write the "save this plot" code.
 plot_code_cache <- new.env(parent = emptyenv())
+# For plots whose code could not be found: why ("several" = one statement drew several pages), to explain it
+plot_code_why   <- new.env(parent = emptyenv())
 
 # Width, height and units of a "Target size" choice from Preferences, e.g.
 # "Journal double col. (180x120 mm)" -> list(w = 180, h = 120, units = "mm")
@@ -1245,6 +1247,12 @@ build_plot_export_code <- function(snippet, file, format, quality, size) {
           trimws(snippet, which = "right"), "invisible(dev.off())"), collapse = "\n")
 }
 
+# Is this top-level statement a call to par() or layout() (possibly assigned, as in op <- par(mfrow = ...))?
+is_layout_call <- function(e) {
+  if (is.call(e) && identical(e[[1]], as.name("<-")) && length(e) == 3L) e <- e[[3]]
+  is.call(e) && is.name(e[[1]]) && as.character(e[[1]]) %in% c("par", "layout")
+}
+
 run_code <- function(code_text) {
   warnings_seen  <- character(0)
   console_output <- character(0)
@@ -1271,10 +1279,16 @@ run_code <- function(code_text) {
   grDevices::dev.control("enable")     # keep the display list, to see which statements draw
   exprs <- NULL; cur_expr <- 0L; starts <- integer(0); drew <- integer(0); n_prev <- 0L
   vis_cls <- list()    # statement number -> class of the value it printed, when it printed one
-  note_page <- function(...) starts <<- c(starts, cur_expr)
+  # Base graphics calls plot.new() once per panel, so with par(mfrow = ...) or plot(<lm>) only the call
+  # that begins a new page (par("page")) counts; grid / ggplot2 / tmap start a page with grid.newpage()
+  note_page_base <- function(...) {
+    if (isTRUE(tryCatch(graphics::par("page"), error = function(e) TRUE))) starts <<- c(starts, cur_expr)
+  }
+  note_page_grid <- function(...) starts <<- c(starts, cur_expr)
   hook_names <- c("before.plot.new", "before.grid.newpage")
   old_hooks  <- lapply(hook_names, getHook)
-  for (h in hook_names) setHook(h, note_page, "append")
+  setHook("before.plot.new",      note_page_base, "append")
+  setHook("before.grid.newpage",  note_page_grid, "append")
   on.exit({
     for (i in seq_along(hook_names)) setHook(hook_names[i], old_hooks[[i]], "replace")
   }, add = TRUE)
@@ -1323,6 +1337,8 @@ run_code <- function(code_text) {
       span_end <- if (i < length(starts)) starts[i + 1L] - 1L else length(exprs)
       in_span  <- drew[drew >= starts[i] & drew <= span_end]
       last_expr <- if (length(in_span) > 0) max(in_span) else starts[i]   # drop trailing non-drawing statements
+      # par() / layout() statements after the drawing (e.g. par(mfrow = c(1, 1)) to reset) are not part of it
+      while (last_expr > starts[i] && is_layout_call(exprs[[last_expr]])) last_expr <- last_expr - 1L
       from <- refs[[starts[i]]][1L]; to <- refs[[last_expr]][3L]
       # What kind of statement drew it? "value": one statement whose printed value is the plot (a ggplot
       # or tmap object typed without assigning it); "symbol": just an object's name; "plain": anything
@@ -1331,11 +1347,19 @@ run_code <- function(code_text) {
       cls    <- vis_cls[[as.character(starts[i])]]
       kind   <- if (single && !is.null(cls) && is.name(exprs[[starts[i]]])) "symbol"
                 else if (single && !is.null(cls)) "value" else "plain"
+      # A base-graphics page also needs the par() / layout() statements just before it (par(mfrow = c(2, 2))
+      # then plot(model) is one page of four panels, not four pages)
+      if (identical(kind, "plain")) {
+        j <- starts[i] - 1L
+        while (j >= 1L && is_layout_call(exprs[[j]])) { from <- refs[[j]][1L]; j <- j - 1L }
+      }
       assign(candidates[i], list(code = paste(lines[from:to], collapse = "\n"), kind = kind,
                                  cls = cls %||% character(0),
                                  sym = if (identical(kind, "symbol")) as.character(exprs[[starts[i]]]) else ""),
              envir = plot_code_cache)
     }
+  } else if (isTRUE(result$success) && length(starts) > 0 && anyDuplicated(starts)) {
+    for (f in plot_files) assign(f, "several", envir = plot_code_why)
   }
 
   # If the code changed the working directory (setwd()), make that the new root
@@ -1944,11 +1968,11 @@ ui <- fluidPage(
   # permission once per browser session ("share this tab").
   tags$script(HTML("
     (function() {
-      var capStream = null, capVideo = null, busy = false, busySince = 0;
+      var capStream = null, capVideo = null, busy = false, busySince = 0, noCursor = null;
       async function ensureStream() {
         if (capStream && capStream.active) return true;
         try {
-          var s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false,
+          var s = await navigator.mediaDevices.getDisplayMedia({ video: { cursor: 'never' }, audio: false,
             preferCurrentTab: true, selfBrowserSurface: 'include', surfaceSwitching: 'exclude' });
           var v = document.createElement('video'); v.muted = true; v.playsInline = true; v.srcObject = s;
           await Promise.race([v.play(), new Promise(function(r) { setTimeout(r, 2000); })]);
@@ -1969,6 +1993,10 @@ ui <- fluidPage(
                             : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
           var panel = document.getElementById('shiny-notification-panel');
           var prev = panel ? panel.style.visibility : ''; if (panel) panel.style.visibility = 'hidden';
+          // keep the mouse pointer out of the picture: ask the browser not to capture it (above) and, for
+          // browsers that ignore that, hide it for the moment the frame is taken
+          noCursor = document.createElement('style'); noCursor.textContent = '* { cursor: none !important; }';
+          document.head.appendChild(noCursor);
           await new Promise(function(r) {          // let the browser draw a fresh frame (never wait for ever)
             var done = false; function fin() { if (!done) { done = true; r(); } }
             requestAnimationFrame(function() { setTimeout(fin, 120); }); setTimeout(fin, 500);
@@ -1993,10 +2021,15 @@ ui <- fluidPage(
           var c = document.createElement('canvas'); c.width = Math.round(sw); c.height = Math.round(sh);
           c.getContext('2d').drawImage(capVideo, sx, sy, sw, sh, 0, 0, c.width, c.height);
           if (panel) panel.style.visibility = prev;
+          if (noCursor && noCursor.parentNode) noCursor.parentNode.removeChild(noCursor); noCursor = null;
           var data = c.toDataURL('image/png').split(',')[1];
           Shiny.setInputValue('cm_screenshot', { png: data, w: c.width, h: c.height, nonce: Math.random() }, { priority: 'event' });
         } catch (err) { fail('The screenshot failed: ' + err); }
-        finally { busy = false; }
+        finally {
+          busy = false;
+          if (noCursor && noCursor.parentNode) noCursor.parentNode.removeChild(noCursor);
+          noCursor = null;
+        }
       }
       window.cmTakeScreenshot = takeScreenshot;
       document.addEventListener('keydown', function(e) {
@@ -2402,6 +2435,11 @@ ui <- fluidPage(
       })();
     ")),
     tags$style(HTML("
+      .cm-prompt-echo { height: 22px; margin: 6px 0 4px 0; font-size: 0.82em; color: #777; }
+      .cm-prompt-echo .cm-echo { display: flex; align-items: baseline; gap: 6px; }
+      .cm-prompt-echo .cm-echo-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
+      .cm-prompt-echo .cm-echo-lbl, .cm-prompt-echo .cm-echo-edited { flex-shrink: 0; }
+      .cm-prompt-echo .cm-echo-edited { color: #b36b00; }
       .cm-undo-li { float: left; list-style: none; margin: 11px 0 0 8px; }
       .cm-undo-btn { line-height: 1; padding: 1px 5px; border-radius: 3px; }
       .cm-undo-btn svg { width: 11px; height: 11px; vertical-align: -1px; fill: none; stroke: currentColor;
@@ -2410,7 +2448,8 @@ ui <- fluidPage(
       .cm-undo-btn.is-redo svg.cm-redo-ico { display: inline; }
     ")),
 
-    tags$div(style = "margin-top: 10px;"),
+    # The prompt behind what is in the tabs below (the prompt box itself can be cleared and reused)
+    tags$div(class = "cm-prompt-echo", uiOutput("prompt_echo")),
     tabsetPanel(id = "main_tabs", type = "tabs",
       tabPanel("Code",
         tags$div(style = "margin-top: 8px;",
@@ -4157,7 +4196,14 @@ server <- function(input, output, session) {
         uiOutput("plot_exp_note"),
         tags$p(em("Add to code appends the R code that saves the plot, in your working directory, to the end of the Code window."),
                style = "font-size: 0.85em; color: #888;")
-      ) else tags$p(em("Classmate could not work out which lines of code drew this plot, so it cannot write the saving code for it."),
+      ) else tags$p(em(
+        if (identical(get0(f, envir = plot_code_why, inherits = FALSE), "several"))
+          paste("This plot is one of several drawn by the same line of code (for example plot(model) on a",
+                "regression model draws four separate plots), so Classmate cannot write saving code for just this one.",
+                "To save them together, put par(mfrow = c(2, 2)) before that line so they are drawn on one page.")
+        else
+          paste("Classmate could not match this plot to particular lines of code (for instance, the code may draw plots",
+                "inside a function or loop), so it cannot write the saving code for it.")),
                     style = "font-size: 0.85em; color: #888;"),
       footer = tagList(
         if (has_code) actionButton("plot_exp_add", "Add to code", class = "btn-primary"),
@@ -5342,11 +5388,11 @@ server <- function(input, output, session) {
   output$context_list_ui <- renderUI({
     choices <- context_choices()
     if (length(choices) == 0)
-      return(tags$p(em("None added yet.")))
+      return(tags$p(em("None added yet."), style = "margin-top: 10px;"))
     div(
       id = "context_list_box",
       style = paste0(
-        "max-height: 100px; overflow-y: auto;",
+        "max-height: 100px; overflow-y: auto; margin-top: 10px;",
         "border: 1px solid #e3e3e3; border-radius: 4px;",
         "padding: 2px 8px; background: #fafafa;"
       ),
@@ -5861,6 +5907,33 @@ server <- function(input, output, session) {
         "Bayesian packages also need a C++ compiler and can take several minutes to build the first time.")
   })
 
+  # One line above the tabs saying which prompt produced what is showing (code view: the prompt behind the
+  # code; answer view: the question). "(edited)" when the code in the editor no longer matches what was generated.
+  editor_text_slow <- debounce(reactive(input$code_editor %||% ""), 300)
+  output$prompt_echo <- renderUI({
+    txt <- ""; lbl <- "Prompt:"; edited <- FALSE
+    if (identical(ask_mode(), "answer")) {
+      txt <- answer_latest()$question %||% ""; lbl <- "Question:"
+    } else {
+      sc <- loaded_script_name()
+      if (!is.null(sc) && nzchar(sc)) {
+        txt <- sc; lbl <- "Script:"
+      } else {
+        txt <- last_prompt_for_code() %||% ""
+        gen <- last_extracted_code() %||% ""
+        cur <- editor_text_slow()
+        edited <- nzchar(trimws(txt)) && nzchar(trimws(gen)) && nzchar(trimws(cur)) &&
+                  !identical(trimws(cur), trimws(gen))
+      }
+    }
+    txt <- trimws(gsub("[[:space:]]+", " ", txt))
+    if (!nzchar(txt)) return(NULL)
+    div(class = "cm-echo",
+      span(class = "cm-echo-lbl", lbl),
+      span(class = "cm-echo-text", title = txt, txt),
+      if (edited) span(class = "cm-echo-edited", "(edited)"))
+  })
+
   pref_snapshot <- reactiveVal(NULL)    # relevant preferences when the dialog was opened
   pref_pending  <- reactiveVal(NULL)    # change awaiting the Regenerate / Keep decision
   relevant_prefs <- function()
@@ -5978,9 +6051,10 @@ server <- function(input, output, session) {
     pref_pending(list(old = old, new = new, label = label))
     showModal(modalDialog(
       title = "Update the code to match your new preferences?",
-      tags$p(sub("^Preferences changed: ", "You changed: ", label), "."),
+      tags$p(paste0(sub("^Preferences changed: ", "You changed: ", label), ".")),
       tags$p("Claude can rewrite the code in the editor to follow them. It will not be run automatically,",
-             "and it is listed in Past prompts as a Preference entry that restores these settings."),
+             "and it is listed in Past prompts as a Preference entry that restores these settings.",
+             "If your code is not affected by the change it is left exactly as it is, and you are told so."),
       footer = tagList(
         actionButton("pref_regen_go", "Rewrite the code", class = "btn-primary"),
         modalButton("Keep as it is")),
@@ -6679,9 +6753,6 @@ server <- function(input, output, session) {
     if (isTRUE(quota_exceeded())) { show_quota_modal(); return(invisible(NULL)) }
     capture_active_code()    # save what the previous code interaction looked like before it is cleared
     autorun_text <- NULL
-    pending_export(NULL)
-    hide_changes_tab()
-    console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); diff_rv(NULL)
     disable("ask_code"); disable("ask_plain")
     tryCatch({
       user_message <- build_user_message(
@@ -6691,7 +6762,7 @@ server <- function(input, output, session) {
         last_known_code     = last_extracted_code(),
         run_history         = run_history(),
         user_prompt         = current_prompt,
-        last_console_output = console_output_rv(),
+        last_console_output = character(0),    # R output is not sent when asking for code (it was cleared before this point until 0.5.115)
         file_schemas        = file_schema_cache()
       )
       new_user_turn   <- list(role = "user", content = user_message)
@@ -6783,8 +6854,12 @@ server <- function(input, output, session) {
       if (!is.null(pref_change) &&
           (!nzchar(trimws(parts$code)) ||
            identical(trimws(parts$code), trimws(isolate(input$code_editor) %||% "")))) {
-        showNotification("The new preferences did not require any change to the code.",
-                         type = "message", duration = 6)
+        showModal(modalDialog(
+          title = "The code has not been changed",
+          tags$p(paste0(sub("^Preferences changed: ", "You changed: ", pref_change$label), ".")),
+          tags$p("Claude checked your code against the new preference and none of it is affected,",
+                 "so the code, its R output and your Past prompts are exactly as they were."),
+          footer = modalButton("OK"), easyClose = TRUE))
         return(invisible(NULL))
       }
 
@@ -6805,6 +6880,10 @@ server <- function(input, output, session) {
         return(invisible(NULL))
       }
 
+      # Only now that new code is replacing the old: clear what belonged to the old code
+      pending_export(NULL)
+      hide_changes_tab()
+      console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); diff_rv(NULL)
       last_prompt_for_code(shown_prompt)
       if (!is.null(pref_change)) prompt_history(c(shown_prompt, prompt_history()))
       old_editor_code <- isolate(input$code_editor) %||% ""
