@@ -3053,7 +3053,7 @@ identifier_columns <- function(o) {
 # Returns list(objs, map (all tokens used in this run), id_cols, failed).
 pseudonymise_objects <- function(objs, map = character(0)) {
   tok_to_val <- map
-  val_to_tok <- if (length(map) > 0) setNames(names(map), unname(map)) else character(0)
+  val_to_tok <- if (length(map) > 0 && !is.null(names(map))) setNames(names(map), unname(map)) else character(0)
   id_cols <- character(0); failed <- character(0)
   out <- objs
   for (nm in names(objs)) {
@@ -7074,7 +7074,13 @@ server <- function(input, output, session) {
       list(ps = ps, masked = cand)
     }
 
-    check_and_install_if_needed(code_cur, function() {
+    # Anything unexpected going wrong while working out the answer gives a plain message and frees the
+    # buttons, rather than an error that ends the session
+    answer_safely <- function(f) function() tryCatch(f(), error = function(e) {
+      message("Classmate: the Answer step failed: ", conditionMessage(e))
+      fail("Something went wrong while working out that answer. Please try again, or use Ask for Code.")
+    })
+    check_and_install_if_needed(code_cur, answer_safely(function() {
       res <- NULL; usable <- FALSE; red <- list(text = "", map = character(0)); tok_all <- character(0)
       for (attempt in 1:2) {
         prep <- prepare_run(code_cur)
@@ -7094,7 +7100,11 @@ server <- function(input, output, session) {
             "cannot do that and that Ask for Code can; otherwise rewrite using only counting, ",
             "grouping, which.max() style lookups and joins.")
         } else {
-          to_run <- replace_known_literals(code_cur, setNames(names(tok_all), unname(tok_all)))
+          # value -> token lookup for strings the code mentions. It is empty when nothing has been masked, which
+          # is the usual case for data without identifying columns, and setNames() fails on an empty map.
+          lit_map <- if (length(tok_all) > 0 && !is.null(names(tok_all)))
+                       setNames(names(tok_all), unname(tok_all)) else character(0)
+          to_run <- replace_known_literals(code_cur, lit_map)
           res <- withProgress(message = "Working on your answer...", value = 0.6,
                               run_answer_code(to_run, objects = prep$ps$objs))
           created  <- setdiff(ls(res$env, all.names = TRUE), prep$masked)
@@ -7160,7 +7170,7 @@ server <- function(input, output, session) {
         shown <- c(shown[1:200], sprintf("[... %d further lines not shown]", length(shown) - 200))
       shown_txt <- restore_placeholders(paste(shown, collapse = "\n"), tok_all)
       finalize(answer_tokens, code = code_cur, results_text = shown_txt)
-    })
+    }))
   }
 
   observeEvent(input$ask_plain, {

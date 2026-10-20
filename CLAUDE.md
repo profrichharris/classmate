@@ -236,10 +236,13 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.117 (2026-10-20)  
-**Current version:** 0.5.117
+**Last released:** 0.5.118 (2026-10-20)  
+**Current version:** 0.5.118
 
-Released in 0.5.117 (no unreleased changes):
+Released in 0.5.118 (no unreleased changes):
+- **Answer button crashed on data with no identifying columns** (reported with `spData::house`, prompt "tell me about the data"): `do_ask_answer()` built its value→token lookup with `setNames(names(tok_all), unname(tok_all))`; when nothing has been masked `tok_all` is an empty, unnamed `character(0)` and `setNames(NULL, character(0))` errors ("attempt to set an attribute on NULL"), killing `talk()`. So Answer failed for any data without name/ID-like columns. Fixed with a length/names guard here and in `pseudonymise_objects()`. The Answer step's `on_success` is now also wrapped (`answer_safely()`): any unexpected error gives "Something went wrong while working out that answer…", restores the prompt and re-enables the buttons instead of ending the session.
+
+Released in 0.5.117:
 - **No "Your usage" pop-up**: clicking the usage figure (a button only in Help mode) used to open a long usage summary; it now shows a one-paragraph standard Help entry (`HELP_TEXTS$usage_help`) like any other button, and does nothing outside Help mode (the bar itself counts down for keys with a quota).
 - **Daily spend for keys with no limit**: the usage button used to say "Session spend" but actually summed the usage log over the key's reset period (weekly by default), persisting across R restarts. A key with no `cost_limit` now shows "Daily spend" (since local midnight, refreshed every 5 minutes so it drops to zero after midnight) and the usage pop-up says so; keys with a limit are unchanged (spend over the key's reset period).
 - **Prompt caching across a class**: `build_system_prompt()` now returns two blocks — a shared one (rules identical for every student) then a varying one (loaded packages, tmap rules, output folder, preferences, language) — and `call_claude()` accepts a vector of system blocks and marks each for caching. Because all students use the same key/workspace, the first block is read from the cache by every student (measured: a different student's first call read ~1,900 shared tokens and only wrote its own ~1,600). Keep anything student-specific OUT of the first block. `cache_history()` marks the last earlier message for caching (ask-code and Answer paths) while the history window is not yet sliding (`MAX_HISTORY_TURNS`, 7 earlier messages ≈ 3–4 exchanges); measured: turn 3 read ~5,000 tokens and wrote 14. `call_claude()` returns `usage` (input/cache_write/cache_read/output) and `append_usage_entry()` keeps it as `tokens` on each usage-log entry (see `classmate:::classmate_state_path("usage")`) so hit rates can be checked. Rule order inside the prompt changed (rules first, preferences last) — wording unchanged.
