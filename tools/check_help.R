@@ -164,3 +164,16 @@ if (problems > 0) {
   quit(status = 1)
 }
 say("\nAll good.")
+
+# --- Stale-session guard list must cover every classmate::: used in app.R ----------
+src   <- paste(readLines(app_file, warn = FALSE), collapse = "\n")
+used  <- unique(regmatches(src, gregexpr("classmate:::[A-Za-z_.][A-Za-z0-9_.]*", src))[[1]])
+used  <- sub("^classmate:::", "", used)
+for (e in exprs) if (is.call(e) && identical(e[[1]], as.name("<-")) && identical(as.character(e[[2]]), "CM_NEEDS"))
+  needs <- eval(e[[3]])
+gap <- setdiff(used, needs)
+if (length(gap) > 0) {
+  cat("FAIL: CM_NEEDS (stale-session guard) in app.R is missing:", paste(gap, collapse = ", "), "\n")
+  quit(status = 1)
+}
+cat("OK: stale-session guard covers every classmate::: function used.\n")

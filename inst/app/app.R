@@ -4,6 +4,31 @@ library(shinyFiles)
 library(shinyAce)
 library(httr2)
 
+# --- Stale-session guard ------------------------------------------------------------
+# If the package was updated while R was running, the old version can still be loaded and may lack
+# functions this app.R needs. Rather than failing with a traceback, the app then shows a short notice,
+# prints the same advice to the console and closes. Keep CM_NEEDS in step with every classmate::: used
+# below (tools/check_help.R checks this).
+CM_NEEDS <- c(
+  "CLASSMATE_PIN_LOCKED_MSG",
+  "classmate_date_order",
+  "classmate_format_date",
+  "classmate_is_expired",
+  "classmate_key_kind",
+  "classmate_not_yet_valid",
+  "classmate_open_key",
+  "classmate_pin_fail",
+  "classmate_pin_locked",
+  "classmate_pin_tries_left",
+  "classmate_save_state",
+  "classmate_state_path",
+  "cm_clear_key",
+  "cm_get_key",
+  "cm_set_key")
+.cm_stale <- tryCatch(
+  !all(vapply(CM_NEEDS, exists, logical(1), envir = asNamespace("classmate"), inherits = FALSE)),
+  error = function(e) FALSE)
+
 # --- Project root (= the R working directory) and output paths --------------
 # talk() stores the user's working directory in this option before calling
 # runApp(), which would otherwise change the wd to this inst/app/ folder.
@@ -8001,4 +8026,21 @@ server <- function(input, output, session) {
   })
 }
 
-shinyApp(ui, server)
+if (.cm_stale) {
+  .cm_stale_msg <- paste("Classmate was updated while R was running. Please restart R",
+                         "(Session > Restart R in RStudio) and then run talk() again.")
+  message(.cm_stale_msg)
+  shinyApp(
+    fluidPage(style = "max-width: 560px; margin-top: 60px;",
+      h3("Classmate was updated"),
+      p(.cm_stale_msg),
+      p(em("This window will close in a few seconds."))),
+    function(input, output, session) {
+      ticks <- 0L
+      observe({
+        invalidateLater(8000, session)
+        ticks <<- ticks + 1L
+        if (ticks > 1L) stopApp()
+      })
+    })
+} else shinyApp(ui, server)

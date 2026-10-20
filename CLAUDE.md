@@ -236,10 +236,13 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.113 (2026-10-20)  
-**Current version:** 0.5.113
+**Last released:** 0.5.114 (2026-10-20)  
+**Current version:** 0.5.114
 
-Released in 0.5.113 (no unreleased changes):
+Released in 0.5.114 (no unreleased changes):
+- **Graceful stale-session failure**: `app.R` has a `CM_NEEDS` list of every `classmate:::` function it uses; if the loaded (old) namespace lacks any (package updated in-session by a version that predates `classmate_session_is_stale()`), the app shows a "Classmate was updated — restart R, then run talk()" page, prints the same to the console and closes after ~8 s instead of a traceback. `tools/check_help.R` fails if `CM_NEEDS` misses a `classmate:::` name — add new ones to it.
+
+Released in 0.5.113:
 - **Package install confirmation + Preferences note**: `check_and_install_if_needed()` now shows an "Install extra packages?" pop-up (`install_confirm_go` / `install_confirm_cancel`, with a compiler warning for brms/rstanarm and a size note for big packages) before `start_package_install()`; Cancel unfreezes and says the code was not run. Preferences shows `pref_pkg_note`: lists packages missing for the current choices (`pref_packages()`), with a Bayesian build-time warning.
 
 Released in 0.5.112:
