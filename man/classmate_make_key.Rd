@@ -9,6 +9,7 @@ classmate_make_key(
   cost_limit,
   reset_period = NULL,
   final_expiry = NULL,
+  valid_from = NULL,
   max_conversations,
   max_lines,
   pin = NULL,
@@ -34,6 +35,12 @@ If omitted, you are prompted to confirm or change the default. Options:
   \item \code{"hourly"}     — resets at the top of each clock hour
   \item \code{"daily"}      — resets at midnight each day
 }}
+
+\item{valid_from}{When the key becomes usable: a date (optionally with a
+time, e.g. \code{"31/12/2026 09:00"}) or a \code{POSIXct}. Default is now.
+Dates typed at the prompt or passed as text are read in either
+day/month/year or month/day/year order (your system's preferred order is
+used where it is ambiguous), and also as 2026-12-31 or 31 Dec 2026.}
 
 \item{max_conversations}{Maximum number of conversations per app start, from
 1 to 25. Default \code{3}. If omitted, you are prompted to confirm or

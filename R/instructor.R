@@ -27,6 +27,11 @@
 #'     \item \code{"hourly"}     — resets at the top of each clock hour
 #'     \item \code{"daily"}      — resets at midnight each day
 #'   }
+#' @param valid_from When the key becomes usable: a date (optionally with a
+#'   time, e.g. \code{"31/12/2026 09:00"}) or a \code{POSIXct}. Default is now.
+#'   Dates typed at the prompt or passed as text are read in either
+#'   day/month/year or month/day/year order (your system's preferred order is
+#'   used where it is ambiguous), and also as 2026-12-31 or 31 Dec 2026.
 #' @param max_conversations Maximum number of conversations per app start, from
 #'   1 to 25. Default \code{3}. If omitted, you are prompted to confirm or
 #'   change the default. Passing \code{NULL} (or typing \code{none} at the
@@ -48,6 +53,7 @@ classmate_make_key <- function(api_key           = NULL,
                                 cost_limit,
                                 reset_period      = NULL,
                                 final_expiry      = NULL,
+                                valid_from        = NULL,
                                 max_conversations,
                                 max_lines,
                                 pin               = NULL,
@@ -124,24 +130,59 @@ classmate_make_key <- function(api_key           = NULL,
     reset_period <- if (!nzchar(ans)) "weekly" else ans
   }
 
+  date_order <- classmate_date_order()
+  pattern    <- classmate_date_pattern(date_order)
+  message("Dates are entered as ", pattern, " (taken from your system settings); ",
+          "other forms such as 2026-12-31 or 31 Dec 2026 are also understood.")
+
+  if (is.null(valid_from)) {
+    now <- Sys.time()
+    ans <- trimws(readline(paste0(
+      "Start date [and optional time HH:MM] ", pattern,
+      " [default: now (", classmate_format_date(now, date_order), "), or press Enter to accept]: "
+    )))
+    valid_from <- if (!nzchar(ans)) now else {
+      parsed <- classmate_parse_date(ans, date_order)
+      if (is.na(parsed)) {
+        message("Invalid date — starting now.")
+        now
+      } else as.POSIXct(parsed)
+    }
+  } else if (is.character(valid_from)) {
+    p <- classmate_parse_date(valid_from, date_order)
+    if (is.na(p)) stop("Could not understand valid_from: '", valid_from, "'", call. = FALSE)
+    valid_from <- as.POSIXct(p)
+  } else if (inherits(valid_from, "Date")) {
+    valid_from <- as.POSIXct(format(valid_from), tz = "")
+  }
+
   if (is.null(final_expiry)) {
     default_expiry <- Sys.Date() + 7L * 15L
-    default_str    <- format(default_expiry, "%d/%m/%y")
+    default_str    <- classmate_format_date(default_expiry, date_order)
     ans <- trimws(readline(paste0(
-      "Final expiry date DD/MM/YY [default: ", default_str, ", or press Enter to accept]: "
+      "Final expiry date [and optional time HH:MM] ", pattern,
+      " [default: ", default_str, ", or press Enter to accept]: "
     )))
     final_expiry <- if (!nzchar(ans)) {
       default_expiry
     } else {
-      parsed <- tryCatch(as.Date(ans, format = "%d/%m/%y"), error = function(e) NA)
+      parsed <- classmate_parse_date(ans, date_order)
       if (is.na(parsed)) {
         message("Invalid date — using default of ", default_str, ".")
         default_expiry
-      } else parsed
+      } else if (isTRUE(attr(parsed, "has_time"))) as.POSIXct(parsed)
+      else as.Date(format(parsed))
     }
   } else if (is.character(final_expiry)) {
-    final_expiry <- as.Date(final_expiry, format = "%d/%m/%y")
+    parsed <- classmate_parse_date(final_expiry, date_order)
+    if (is.na(parsed)) stop("Could not understand final_expiry: '", final_expiry, "'", call. = FALSE)
+    final_expiry <- if (isTRUE(attr(parsed, "has_time"))) as.POSIXct(parsed)
+                    else as.Date(format(parsed))
   }
+  if (classmate_is_expired(final_expiry) ||
+      (inherits(final_expiry, "Date") && as.POSIXct(format(final_expiry + 1L), tz = "") <= valid_from) ||
+      (inherits(final_expiry, "POSIXt") && final_expiry <= valid_from))
+    stop("The final expiry is not after the start date.", call. = FALSE)
 
   if (missing(max_conversations)) {
     ans <- trimws(readline(paste0(
@@ -199,6 +240,7 @@ classmate_make_key <- function(api_key           = NULL,
     cost_limit        = cost_limit,
     reset_period      = reset_period,
     final_expiry      = final_expiry,
+    valid_from        = valid_from,
     max_conversations = max_conversations,
     max_lines         = max_lines,
     created           = Sys.time()
@@ -212,7 +254,8 @@ classmate_make_key <- function(api_key           = NULL,
     message("  Cost limit:   $", cost_limit, " per ", reset_period)
   else
     message("  Cost limit:   none")
-  message("  Final expiry: ", format(final_expiry, "%d/%m/%y"))
+  message("  Valid from:   ", classmate_format_date(valid_from, date_order, with_time = TRUE))
+  message("  Final expiry: ", classmate_format_date(final_expiry, date_order))
   if (!is.null(max_conversations))
     message("  Max conversations per start: ", max_conversations)
   else

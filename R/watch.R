@@ -82,7 +82,8 @@
 .watch_quota <- function(cfg) {
   if (is.null(cfg)) return(NULL)
 
-  expired <- !is.null(cfg$final_expiry) && Sys.Date() > as.Date(cfg$final_expiry)
+  expired <- classmate_is_expired(cfg$final_expiry)
+  not_yet <- classmate_not_yet_valid(cfg$valid_from)
 
   cutoff <- tryCatch(.watch_period_cutoff(cfg$reset_period), error = function(e) NULL)
   log    <- .watch_read_usage()
@@ -107,7 +108,9 @@
        limit_usd   = limit,
        reset_label = reset_label,
        over_limit  = over,
-       expired     = expired)
+       expired     = expired,
+       not_yet     = not_yet,
+       valid_from  = cfg$valid_from)
 }
 
 
@@ -503,6 +506,11 @@ whisper <- function(key = NULL) {
   cfg   <- .watch_load_cfg()
   quota <- .watch_quota(cfg)
   if (!is.null(quota)) {
+    if (isTRUE(quota$not_yet)) {
+      message("Your classmate key is not valid until ",
+              classmate_format_date(quota$valid_from, with_time = TRUE), ".")
+      return(invisible(NULL))
+    }
     if (quota$expired) {
       message("Your classmate key has expired. Please ask your instructor for a new one.")
       return(invisible(NULL))
@@ -670,6 +678,11 @@ raisehand <- function() {
   cfg   <- .watch_load_cfg()
   quota <- .watch_quota(cfg)
   if (!is.null(quota)) {
+    if (isTRUE(quota$not_yet)) {
+      message("Your classmate key is not valid until ",
+              classmate_format_date(quota$valid_from, with_time = TRUE), ".")
+      return(invisible(NULL))
+    }
     if (quota$expired) {
       message("Your classmate key has expired. Please ask your instructor for a new one.")
       return(invisible(NULL))

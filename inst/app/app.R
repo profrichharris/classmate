@@ -191,7 +191,59 @@ filename_timestamp_instruction <- function() paste0(
   "This applies to tmap, ggplot2, base R graphics, and any other plotting system."
 )
 
-format_preferences_clause <- function(coding, plotting, mapping, max_lines, comment_density) {
+# Extra "preferred approach" categories: key -> list(label, choices, default).
+# `choices` is what the dropdown offers; the first entry of "Same as ..." style
+# choices is resolved in approach_clause().
+APPROACH_EXTRAS <- list(
+  spatial  = list(label = "Spatial data:",
+                  choices = c("sf", "terra"), default = "sf",
+                  text = "for the spatial data model, prefer %s (sf for vector data, terra for raster data)"),
+  stats    = list(label = "Statistical approach:",
+                  choices = c("Classical (frequentist)", "Bayesian", "Resampling", "Machine learning"),
+                  default = "Classical (frequentist)",
+                  text = "for statistical inference, prefer a %s approach (Bayesian means brms or rstanarm; Resampling means bootstrap or permutation methods; Machine learning means prediction-focused methods with out-of-sample assessment)"),
+  modelling = list(label = "Modelling interface:",
+                  choices = c("Base R", "tidymodels", "mlr3"), default = "Base R",
+                  text = "for fitting and evaluating models, prefer %s (applies to classical and machine-learning models; Bayesian models use brms or rstanarm regardless)"),
+  tables   = list(label = "Tables:",
+                  choices = c("Base R", "gt", "flextable", "kableExtra"), default = "Base R",
+                  text = "for formatted tables, prefer %s (Base R means print() or knitr::kable())"),
+  strings  = list(label = "Strings and dates:",
+                  choices = c("Same as Coding", "tidyverse", "Base R"), default = "Same as Coding",
+                  text = "for strings and dates, prefer %s (stringr/lubridate for tidyverse)")
+)
+
+# Preferences that change the code Claude writes (comment density is handled by its own rewrite)
+PREF_RELEVANT <- c(coding = "Coding", plotting = "Plotting", mapping = "Mapping",
+                   spatial = "Spatial data", stats = "Statistical approach",
+                   modelling = "Modelling interface", tables = "Tables",
+                   strings = "Strings and dates")
+
+pref_change_label <- function(old, new, changed)
+  paste0("Preferences changed: ",
+         paste0(PREF_RELEVANT[changed], ": ", old[changed], " \u2192 ", new[changed], collapse = "; "))
+
+pref_change_instruction <- function(label)
+  paste0(sub("^Preferences changed: ", "My preferred approaches have changed: ", label), ". ",
+         "Rewrite the code currently in the editor so that it follows the new preferences, ",
+         "keeping exactly what the code does. Change only what the new preferences affect ",
+         "(for example, the package used for the relevant steps) and leave everything else as it is. ",
+         "If none of the changes affect this code, return it unchanged.")
+
+approach_clause <- function(approaches, coding) {
+  if (length(approaches) == 0L) return("")
+  parts <- vapply(names(APPROACH_EXTRAS), function(k) {
+    v <- approaches[[k]]
+    if (is.null(v) || !nzchar(v)) v <- APPROACH_EXTRAS[[k]]$default
+    if (identical(v, "Same as Coding")) v <- if (identical(coding, "data.table")) "Base R" else coding
+    sprintf(APPROACH_EXTRAS[[k]]$text, v)
+  }, "")
+  paste0("Further default preferences: ", paste(parts, collapse = "; "), ". ",
+         "These are likewise defaults, not requirements; use only what the task needs. ")
+}
+
+format_preferences_clause <- function(coding, plotting, mapping, max_lines, comment_density,
+                                      approaches = list()) {
   comment_instruction <- switch(comment_density,
     "None"    = paste(
       "Do not include any comments in the code — no # lines at all.",
@@ -221,6 +273,7 @@ format_preferences_clause <- function(coding, plotting, mapping, max_lines, comm
     "and feel free to deviate from a preference if it would be unusually awkward, ",
     "inelegant, or unable to do what's being asked - if you do deviate, ",
     "say so briefly in a one-line comment. ",
+    approach_clause(approaches, coding),
     if (is.infinite(max_lines))
       "CODE LENGTH: There is no code length limit set. Produce the most concise solution possible and do not pad with boilerplate. "
     else
@@ -360,7 +413,7 @@ build_language_clause <- function(language) {
 build_system_prompt <- function(coding, plotting, mapping, img_format, img_quality, img_size,
                                 max_lines = 50, comment_density = "Minimal",
                                 loaded_pkgs = character(0),
-                                language = "English") {
+                                language = "English", approaches = list()) {
   library_clause <- paste0(
     "PACKAGE LOADING RULE: Always include an explicit library() call for every ",
     "package your code uses. ",
@@ -380,7 +433,7 @@ build_system_prompt <- function(coding, plotting, mapping, img_format, img_quali
     if (tolower(mapping) == "tmap") tmap_v4_instruction,
     tmap_breaks_instruction,
     filename_timestamp_instruction(),
-    format_preferences_clause(coding, plotting, mapping, max_lines, comment_density),
+    format_preferences_clause(coding, plotting, mapping, max_lines, comment_density, approaches),
     format_image_preferences_clause(img_format, img_quality, img_size),
     build_language_clause(language),
     code_description_rule,
@@ -1670,8 +1723,29 @@ call_claude <- function(messages, model, max_tokens, system_prompt = NULL,
 
 # --- UI ----------------------------------------------------------------------
 
+# Curved back / forward arrows for the Undo / Redo buttons (which one shows is set by the is-redo class)
+UNDO_ICONS <- HTML(paste0(
+  '<svg class="cm-undo-ico" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/>',
+  '<path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>',
+  '<svg class="cm-redo-ico" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/>',
+  '<path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg>'))
+
 ui <- fluidPage(
   useShinyjs(),
+
+  # Tell the server which date order (dmy / mdy / ymd) the browser's locale uses
+  tags$script(HTML("
+    $(document).on('shiny:connected', function() {
+      try {
+        var parts = new Intl.DateTimeFormat(navigator.language,
+          {year: 'numeric', month: 'numeric', day: 'numeric'})
+          .formatToParts(new Date(2031, 11, 25));
+        var o = parts.filter(function(p) { return p.type !== 'literal'; })
+          .map(function(p) { return p.type[0]; }).join('');
+        if (o === 'dmy' || o === 'mdy' || o === 'ymd') Shiny.setInputValue('cm_date_order', o);
+      } catch (e) {}
+    });
+  ")),
 
   # Capture Ace editor selection and explanation text selection
   tags$script(HTML("
@@ -1838,6 +1912,74 @@ ui <- fluidPage(
     }
     body.help-mode #classmate-help-overlay { display: block; }
     body.help-mode.modal-open #classmate-help-overlay { display: none; }
+  ")),
+  # Screenshots (for writing tutorials): Cmd/Ctrl+Alt+S saves a picture of what is showing, the open pop-up
+  # window alone (cropped to its own size) or else the whole app, to screenshots/<date>_<time>.png in the
+  # working directory, with no further questions. It uses the browser's screen-capture feature, which asks
+  # permission once per browser session ("share this tab").
+  tags$script(HTML("
+    (function() {
+      var capStream = null, capVideo = null, busy = false, busySince = 0;
+      async function ensureStream() {
+        if (capStream && capStream.active) return true;
+        try {
+          var s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false,
+            preferCurrentTab: true, selfBrowserSurface: 'include', surfaceSwitching: 'exclude' });
+          var v = document.createElement('video'); v.muted = true; v.playsInline = true; v.srcObject = s;
+          await Promise.race([v.play(), new Promise(function(r) { setTimeout(r, 2000); })]);
+          s.getVideoTracks()[0].addEventListener('ended', function() { capStream = null; });
+          capStream = s; capVideo = v;
+          return true;
+        } catch (err) { return false; }
+      }
+      function fail(msg) { if (window.Shiny) Shiny.setInputValue('cm_screenshot_fail', { msg: msg, nonce: Math.random() }, { priority: 'event' }); }
+      async function takeScreenshot() {
+        if (busy && Date.now() - busySince < 15000) return; busy = true; busySince = Date.now();
+        try {
+          if (!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)) { fail('This browser cannot capture the screen.'); return; }
+          if (!(await ensureStream())) { fail('Screen capture was not allowed, so no screenshot was taken.'); return; }
+          // what to capture: the open pop-up window, else the whole app
+          var target = document.querySelector('.modal.in .modal-content, .modal.show .modal-content');
+          var rect = target ? target.getBoundingClientRect()
+                            : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+          var panel = document.getElementById('shiny-notification-panel');
+          var prev = panel ? panel.style.visibility : ''; if (panel) panel.style.visibility = 'hidden';
+          await new Promise(function(r) {          // let the browser draw a fresh frame (never wait for ever)
+            var done = false; function fin() { if (!done) { done = true; r(); } }
+            requestAnimationFrame(function() { setTimeout(fin, 120); }); setTimeout(fin, 500);
+          });
+          var vw = capVideo.videoWidth, vh = capVideo.videoHeight;
+          var st = capStream.getVideoTracks()[0].getSettings ? capStream.getVideoTracks()[0].getSettings() : {};
+          var sx, sy, sw, sh, k;
+          if (st.displaySurface === 'window' || st.displaySurface === 'monitor') {
+            // a window or screen was shared: find the page inside it (approximate)
+            var wide = (st.displaySurface === 'monitor') ? window.screen.width : window.outerWidth;
+            k = vw / wide;
+            var offX = (st.displaySurface === 'monitor' ? window.screenX : 0) + (window.outerWidth - window.innerWidth) / 2;
+            var offY = (st.displaySurface === 'monitor' ? window.screenY : 0) + (window.outerHeight - window.innerHeight) - (window.outerWidth - window.innerWidth) / 2;
+            sx = (offX + rect.left) * k; sy = (offY + rect.top) * k;
+          } else {                                   // the tab itself: the frame is the page
+            k = vw / window.innerWidth;
+            sx = rect.left * k; sy = rect.top * k;
+          }
+          sw = rect.width * k; sh = rect.height * k;
+          sx = Math.max(0, Math.min(sx, vw - 1)); sy = Math.max(0, Math.min(sy, vh - 1));
+          sw = Math.max(1, Math.min(sw, vw - sx)); sh = Math.max(1, Math.min(sh, vh - sy));
+          var c = document.createElement('canvas'); c.width = Math.round(sw); c.height = Math.round(sh);
+          c.getContext('2d').drawImage(capVideo, sx, sy, sw, sh, 0, 0, c.width, c.height);
+          if (panel) panel.style.visibility = prev;
+          var data = c.toDataURL('image/png').split(',')[1];
+          Shiny.setInputValue('cm_screenshot', { png: data, w: c.width, h: c.height, nonce: Math.random() }, { priority: 'event' });
+        } catch (err) { fail('The screenshot failed: ' + err); }
+        finally { busy = false; }
+      }
+      window.cmTakeScreenshot = takeScreenshot;
+      document.addEventListener('keydown', function(e) {
+        if ((e.metaKey || e.ctrlKey) && e.altKey && (e.code === 'KeyS' || e.key === 's' || e.key === 'S' || e.key === '\\u00df')) {
+          e.preventDefault(); e.stopPropagation(); takeScreenshot();
+        }
+      }, true);
+    })();
   ")),
   # Keyboard shortcuts: Cmd/Ctrl+Enter in the prompt box = Ask for Code, Cmd/Ctrl+Shift+Enter = Answer,
   # Cmd/Ctrl+Enter in the code editor = Run. They press the matching button, so they do nothing while it
@@ -2208,6 +2350,34 @@ ui <- fluidPage(
         actionButton("preferences", "Preferences")
       ))
     ),
+
+    tags$div(style = "display: none;",
+      tags$li(id = "undo_prompt_li", class = "cm-undo-li",
+        shinyjs::disabled(actionButton("undo_prompt", UNDO_ICONS, class = "btn-default btn-xs cm-undo-btn",
+                     title = "Step back to the previous prompt, code or answer (Redo returns you here)"))),
+      tags$li(id = "undo_code_li", class = "cm-undo-li",
+        shinyjs::disabled(actionButton("undo_code", UNDO_ICONS, class = "btn-default btn-xs cm-undo-btn",
+                     title = "Step back to the previous prompt, code or answer (Redo returns you here)")))
+    ),
+    tags$script(HTML("
+      (function() {
+        function place() {
+          var a = document.getElementById('prompt_tabs'), la = document.getElementById('undo_prompt_li');
+          var b = document.getElementById('main_tabs'),   lb = document.getElementById('undo_code_li');
+          if (a && la) a.appendChild(la);
+          if (b && lb) b.appendChild(lb);
+        }
+        $(place);
+      })();
+    ")),
+    tags$style(HTML("
+      .cm-undo-li { float: left; list-style: none; margin: 11px 0 0 8px; }
+      .cm-undo-btn { line-height: 1; padding: 1px 5px; border-radius: 3px; }
+      .cm-undo-btn svg { width: 11px; height: 11px; vertical-align: -1px; fill: none; stroke: currentColor;
+                         stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+      .cm-undo-btn svg.cm-redo-ico, .cm-undo-btn.is-redo svg.cm-undo-ico { display: none; }
+      .cm-undo-btn.is-redo svg.cm-redo-ico { display: inline; }
+    ")),
 
     tags$div(style = "margin-top: 10px;"),
     tabsetPanel(id = "main_tabs", type = "tabs",
@@ -2984,6 +3154,18 @@ HELP_TEXTS <- list(
     "read and check the code first. It applies to Ask for Code only (not Fix), and the result",
     "appears on the R output tab as usual."
   ),
+  undo_prompt = paste(
+    "Undo (curved back arrow) — Steps back to the previous prompt, code or answer, bringing it back in exactly the same way",
+    "as its Recall button (including, for a Preference entry, the preferences it set). It then turns into",
+    "Redo (curved forward arrow), which takes you back to exactly where you were before pressing Undo. Redo is only offered",
+    "until you do something else, such as ask a new prompt or recall another entry."
+  ),
+  undo_code = paste(
+    "Undo (curved back arrow) — Steps back to the previous prompt, code or answer, bringing it back in exactly the same way",
+    "as its Recall button. It then turns into Redo (curved forward arrow), which takes you back to exactly where you were",
+    "before pressing Undo. Redo is only offered until you do something else, such as ask a new prompt",
+    "or recall another entry."
+  ),
   clear_prompt = paste(
     "Clear — Erases all text in the prompt box. When Classmate first opens it is",
     "highlighted yellow: press it to clear the data-protection reminder, which",
@@ -3142,8 +3324,10 @@ HELP_TAB_TEXTS <- list(
   "Past prompts" = paste(
     "Past Prompts tab — Shows a history of all the prompts you have sent to the AI",
     "in this conversation, marked Answer or Code according to what they produced; code added",
-    "to save a plot appears as an Export entry. Use the Recall button beside an entry to bring",
-    "it all back: the prompt returns to the prompt box (blank for an Export entry), and you are",
+    "to save a plot appears as an Export entry, and a rewrite after changing Preferences as a",
+    "Preference entry. Use the Recall button beside an entry to bring",
+    "it all back: the prompt returns to the prompt box (blank for an Export or Preference entry; a",
+    "Preference entry also puts those preferences back), and you are",
     "taken back to its answer, or to its code with the R output, plots and warnings it produced."
   ),
   "Past conversations" = paste(
@@ -3226,7 +3410,8 @@ HELP_ID_PATTERNS <- list(
   ),
   "^recall_prompt_" = paste(
     "Recall (Past prompts) — Brings back this earlier prompt and everything it produced: the",
-    "prompt returns to the prompt box (blank for an Export entry), and you are taken back to",
+    "prompt returns to the prompt box (blank for an Export or Preference entry, which also restores",
+    "its preferences), and you are taken back to",
     "its answer, or to its code with the R output, plots and warnings if it was run."
   ),
   "^recall_answer_" = paste(
@@ -3332,7 +3517,17 @@ server <- function(input, output, session) {
   cost_limit_val        <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$cost_limit        else NULL)
   reset_period_val      <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$reset_period      else "weekly")
   final_expiry_val      <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$final_expiry      else NULL)
+  valid_from_val        <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$valid_from        else NULL)
   max_conversations_val <- reactiveVal(if (!is.null(.saved_cfg)) .saved_cfg$max_conversations else NULL)
+  # Date order (dmy / mdy / ymd) preferred by this user: from the browser's
+  # locale when available, otherwise from R's.
+  date_order <- reactive({
+    o <- input$cm_date_order
+    if (is.character(o) && length(o) == 1L && o %in% c("dmy", "mdy", "ymd")) o
+    else classmate:::classmate_date_order()
+  })
+  fmt_date <- function(x, with_time = inherits(x, "POSIXt"))
+    classmate:::classmate_format_date(x, date_order(), with_time)
   # Code length is set by the key (Inf = unlimited) and is not a user choice.
   # Keys made before this field existed fall back to 50 lines.
   max_lines_cap_val     <- reactiveVal(if (!is.null(.saved_cfg)) (.saved_cfg$max_lines %||% 50) else 50)
@@ -3369,25 +3564,43 @@ server <- function(input, output, session) {
   })
 
   key_expired <- reactive({
-    expiry <- final_expiry_val()
-    if (is.null(expiry)) return(FALSE)
-    Sys.Date() > as.Date(expiry)
+    invalidateLater(60000)
+    classmate:::classmate_is_expired(final_expiry_val())
+  })
+
+  key_not_started <- reactive({
+    invalidateLater(60000)
+    classmate:::classmate_not_yet_valid(valid_from_val())
   })
 
   quota_exceeded <- reactive({
-    if (key_expired()) return(TRUE)
+    if (key_expired() || key_not_started()) return(TRUE)
     limit <- cost_limit_val()
     if (is.null(limit)) return(FALSE)
     current_spend() >= limit
   })
 
   show_quota_modal <- function() {
+    if (isTRUE(key_not_started())) {
+      showModal(modalDialog(
+        title     = "Key not yet valid",
+        tags$p("Your Classmate key is not valid until ",
+               tags$strong(fmt_date(valid_from_val(), with_time = TRUE)), "."),
+        tags$p("Please try again then, or contact your instructor if you think this is wrong."),
+        easyClose = FALSE,
+        footer    = tagList(
+          actionButton("quota_open_prefs", "Open Preferences", class = "btn-primary"),
+          modalButton("Close")
+        )
+      ))
+      return(invisible(NULL))
+    }
     if (isTRUE(key_expired())) {
       expiry <- final_expiry_val()
       showModal(modalDialog(
         title     = "Key expired",
         tags$p("Your Classmate key expired on ",
-               tags$strong(format(as.Date(expiry), "%d %B %Y")), "."),
+               tags$strong(fmt_date(expiry)), "."),
         tags$p("Please contact your instructor for a new key. If you have been given a new key file,",
                "you can load it under Preferences."),
         easyClose = FALSE,
@@ -3521,7 +3734,7 @@ server <- function(input, output, session) {
   observeEvent(input$delete_key_confirm, {
     tryCatch(unlink(active_cfg_path()), error = function(e) NULL)
     classmate:::cm_clear_key()
-    cost_limit_val(NULL); reset_period_val("weekly"); final_expiry_val(NULL)
+    cost_limit_val(NULL); reset_period_val("weekly"); final_expiry_val(NULL); valid_from_val(NULL)
     max_conversations_val(NULL); max_lines_cap_val(50)
     key_status_msg("The key file has been deleted. Load a key file to continue.")
     shinyjs::reset("key_file")           # so that the same file can be chosen again
@@ -3630,6 +3843,7 @@ server <- function(input, output, session) {
     cost_limit_val(       payload$cost_limit)
     reset_period_val(     payload$reset_period)
     final_expiry_val(     payload$final_expiry)
+    valid_from_val(       payload$valid_from)
     max_conversations_val(payload$max_conversations)
     new_cap <- payload$max_lines %||% 50
     max_lines_cap_val(new_cap)
@@ -3698,8 +3912,10 @@ server <- function(input, output, session) {
         if (grepl("^rolling", reset_period)) "rolling window"
         else paste0("resets ", format(rt, "%d %b %Y"))
       }, error = function(e) "")
-      expiry_str <- if (!is.null(final_expiry_val()))
-        paste0("expires ", format(as.Date(final_expiry_val()), "%d/%m/%y"))
+      expiry_str <- if (isTRUE(key_not_started()))
+        paste0("starts ", fmt_date(valid_from_val(), with_time = TRUE))
+      else if (!is.null(final_expiry_val()))
+        paste0("expires ", fmt_date(final_expiry_val()))
       else NULL
       # Build button label lines (same content as the text column)
       btn_lines <- paste0(round(pct_remaining * 100), "% remaining")
@@ -4207,8 +4423,11 @@ server <- function(input, output, session) {
       paste0("Your allowance resets ", reset_label, ".")
     else NULL
     expiry_line <- if (!is.null(expiry))
-      paste0("Your Classmate key expires on ",
-             format(as.Date(expiry), "%d %B %Y"), ".")
+      paste0(if (!is.null(valid_from_val()))
+               paste0("Your Classmate key is valid from ",
+                      fmt_date(valid_from_val(), with_time = TRUE), " and ")
+             else "Your Classmate key ",
+             "expires on ", fmt_date(expiry), ".")
     else NULL
     showModal(modalDialog(
       title = "Your usage",
@@ -4268,7 +4487,8 @@ server <- function(input, output, session) {
     kind_of <- function(p) {
       r <- find_interaction_by_prompt(p)
       if (is.null(r)) "" else if (identical(r$kind, "answer")) "Answer"
-      else if (isTRUE(r$export)) "Export" else "Code"
+      else if (isTRUE(r$export)) "Export"
+      else if (!is.null(r$pref_new)) "Preference" else "Code"
     }
     digest_id <- function(p) match(p, history)
     tagList(lapply(history, function(p) {
@@ -4414,6 +4634,24 @@ server <- function(input, output, session) {
     }
   })
 
+  # Bring back what a past prompt produced (shared by Recall in Past prompts and by Undo / Redo)
+  recall_prompt_entry <- function(rec, p) {
+    if (!is.null(rec)) recall_interaction(rec)       # bring back everything the prompt produced
+    # A Preference entry puts the preferences back as they were when it was made
+    if (!is.null(rec$pref_new)) {
+      cur <- relevant_prefs()
+      for (k in names(rec$pref_new)) prefs[[k]] <- rec$pref_new[[k]]
+      diffk <- names(rec$pref_new)[!mapply(identical, cur[names(rec$pref_new)], rec$pref_new)]
+      if (length(diffk) > 0L)
+        showNotification(paste0("Preferences restored: ",
+          paste0(PREF_RELEVANT[diffk], ": ", unlist(rec$pref_new[diffk]), collapse = "; ")),
+          type = "message", duration = 6)
+    }
+    # An Export or Preference entry has no prompt of its own, so the prompt box is left blank
+    updateTextAreaInput(session, "prompt", value = if (isTRUE(rec$export) || !is.null(rec$pref_new)) "" else p)
+    updateTabsetPanel(session, "prompt_tabs", selected = "Your prompt")
+  }
+
   # Past prompt repeat: move to top (no duplicate)
   observeEvent(input$copy_past_prompt, {
     p   <- input$copy_past_prompt
@@ -4421,12 +4659,66 @@ server <- function(input, output, session) {
     idx <- match(p, ph)
     if (!is.na(idx)) ph <- c(p, ph[-idx]) else ph <- c(p, ph)
     prompt_history(ph)
-    rec <- find_interaction_by_prompt(p)       # bring back everything the prompt produced
-    if (!is.null(rec)) recall_interaction(rec)
-    # An Export entry has no prompt of its own, so the prompt box is left blank
-    updateTextAreaInput(session, "prompt", value = if (isTRUE(rec$export)) "" else p)
-    updateTabsetPanel(session, "prompt_tabs", selected = "Your prompt")
+    recall_prompt_entry(find_interaction_by_prompt(p), p)
   })
+
+  # --- Undo / Redo ---------------------------------------------------------------
+  # Undo recalls the interaction before the current one (as its Recall button would) and remembers where
+  # you were; the button then reads Redo until anything else changes the current interaction.
+  undo_state  <- reactiveVal(NULL)
+  current_seq <- reactive(if (identical(ask_mode(), "answer")) answer_latest()$seq else active_code_id())
+  undo_pos    <- function() {                      # index of the current interaction in interactions()
+    cur <- isolate(current_seq())
+    if (is.null(cur)) return(NA_integer_)
+    match(cur, vapply(isolate(interactions()), function(r) as.integer(r$seq %||% 0L), integer(1)))
+  }
+  redo_ready  <- reactive({
+    u <- undo_state()
+    !is.null(u) && identical(u$target, current_seq())
+  })
+  can_undo    <- reactive({
+    cur <- current_seq()
+    if (is.null(cur)) return(FALSE)
+    i <- match(cur, vapply(interactions(), function(r) as.integer(r$seq %||% 0L), integer(1)))
+    !is.na(i) && i < length(interactions())
+  })
+  observe({
+    redo <- redo_ready()
+    ok   <- redo || can_undo()
+    tip  <- if (redo) "Redo: return to where you were before pressing Undo"
+            else "Undo: step back to the previous prompt, code or answer"
+    for (id in c("undo_prompt", "undo_code")) {
+      shinyjs::runjs(sprintf("var b = document.getElementById('%s'); if (b) { b.title = '%s'; b.setAttribute('aria-label', '%s'); b.classList.toggle('is-redo', %s); }",
+                             id, tip, tip, if (redo) "true" else "false"))
+      shinyjs::toggleState(id, condition = ok)
+    }
+  })
+  do_undo_redo <- function() {
+    if (isTRUE(isolate(ui_busy()))) return(invisible(NULL))
+    if (isolate(redo_ready())) {
+      u <- isolate(undo_state()); undo_state(NULL)
+      rec <- NULL
+      for (r in isolate(interactions())) if (identical(r$seq, u$from)) { rec <- r; break }
+      req(!is.null(rec))
+      recall_interaction(rec)
+      if (identical(rec$kind, "code") && !is.null(u$tab)) goto_tab(u$tab)
+      for (k in names(u$prefs)) prefs[[k]] <- u$prefs[[k]]
+      updateTextAreaInput(session, "prompt", value = u$prompt %||% "")
+      return(invisible(NULL))
+    }
+    i <- undo_pos()
+    if (is.na(i) || i >= length(isolate(interactions()))) return(invisible(NULL))
+    from  <- isolate(current_seq())
+    state <- list(from = from, prompt = isolate(input$prompt) %||% "", tab = isolate(input$main_tabs),
+                  prefs = relevant_prefs())
+    capture_active_code()                           # keep the current code exactly as it is, for Redo
+    rec <- isolate(interactions())[[i + 1L]]
+    recall_prompt_entry(rec, rec$prompt %||% "")
+    state$target <- isolate(current_seq())
+    undo_state(state)
+  }
+  observeEvent(input$undo_prompt, do_undo_redo(), ignoreInit = TRUE)
+  observeEvent(input$undo_code,   do_undo_redo(), ignoreInit = TRUE)
 
   # --- Past Conversations ----------------------------------------------------
   output$past_conversations_ui <- renderUI({
@@ -4521,6 +4813,7 @@ server <- function(input, output, session) {
     answer_hist(recalled$answer_hist %||% list())
     interactions(recalled$interactions %||% list())
     active_code_id(NULL)
+    undo_state(NULL)
     placeholder_map(character(0))
     goto_tab("Code")
     if (length(recalled$codes) == 0 && !is.null(recalled$answer_latest)) set_ask_mode("answer")
@@ -5410,6 +5703,11 @@ server <- function(input, output, session) {
     coding          = pref_val("coding",          "tidyverse"),
     plotting        = pref_val("plotting",         "ggplot2"),
     mapping         = pref_val("mapping",          "tmap"),
+    spatial         = pref_val("spatial",          APPROACH_EXTRAS$spatial$default),
+    stats           = pref_val("stats",            APPROACH_EXTRAS$stats$default),
+    modelling       = pref_val("modelling",        APPROACH_EXTRAS$modelling$default),
+    tables          = pref_val("tables",           APPROACH_EXTRAS$tables$default),
+    strings         = pref_val("strings",          APPROACH_EXTRAS$strings$default),
     model           = MODEL_SONNET,   # fixed: a model name saved in old preferences is ignored
     img_format      = pref_val("img_format",       "png"),
     img_quality     = pref_val("img_quality",      "Medium"),
@@ -5423,7 +5721,13 @@ server <- function(input, output, session) {
   )
 
 
+  pref_snapshot <- reactiveVal(NULL)    # relevant preferences when the dialog was opened
+  pref_pending  <- reactiveVal(NULL)    # change awaiting the Regenerate / Keep decision
+  relevant_prefs <- function()
+    setNames(lapply(names(PREF_RELEVANT), function(k) isolate(prefs[[k]])), names(PREF_RELEVANT))
+
   show_preferences_modal <- function() {
+    pref_snapshot(relevant_prefs())
     lang         <- prefs$language
     lang_choices <- if (tolower(lang) == "english") "English" else c(lang, "English")
     showModal(modalDialog(
@@ -5443,12 +5747,22 @@ server <- function(input, output, session) {
       tags$h5("Preferred approach for..."),
       tags$div(class = "pref-grid",
         selectInput("pref_coding", "Coding:",
-                    choices = c("tidyverse", "Base R"), selected = prefs$coding, width = "100%"),
+                    choices = c("tidyverse", "Base R", "data.table"), selected = prefs$coding, width = "100%"),
         selectInput("pref_plotting", "Plotting:",
-                    choices = c("ggplot2", "Base R"), selected = prefs$plotting, width = "100%"),
+                    choices = c("ggplot2", "Base R", "plotly"), selected = prefs$plotting, width = "100%"),
         selectInput("pref_mapping", "Mapping:",
                     choices = c("tmap", "ggplot2", "leaflet", "mapsf", "Base R"),
-                    selected = prefs$mapping, width = "100%")),
+                    selected = prefs$mapping, width = "100%"),
+        selectInput("pref_spatial", APPROACH_EXTRAS$spatial$label,
+                    choices = APPROACH_EXTRAS$spatial$choices, selected = prefs$spatial, width = "100%"),
+        selectInput("pref_stats", APPROACH_EXTRAS$stats$label,
+                    choices = APPROACH_EXTRAS$stats$choices, selected = prefs$stats, width = "100%"),
+        selectInput("pref_modelling", APPROACH_EXTRAS$modelling$label,
+                    choices = APPROACH_EXTRAS$modelling$choices, selected = prefs$modelling, width = "100%"),
+        selectInput("pref_tables", APPROACH_EXTRAS$tables$label,
+                    choices = APPROACH_EXTRAS$tables$choices, selected = prefs$tables, width = "100%"),
+        selectInput("pref_strings", APPROACH_EXTRAS$strings$label,
+                    choices = APPROACH_EXTRAS$strings$choices, selected = prefs$strings, width = "100%")),
       tags$p(em(
         "These are defaults Claude will lean towards, not hard rules — ",
         "you can always ask for something different in your prompt."
@@ -5504,11 +5818,41 @@ server <- function(input, output, session) {
           actionButton("pref_load_key", "Load new key file", class = "btn-default btn-sm"),
           actionButton("pref_delete_key", "Delete key file", class = "btn-default btn-sm",
                        style = "margin-left: 6px;")),
-        modalButton("Close"))
+        actionButton("pref_close", "Close", class = "btn-default"))
     ))
   }
 
   observeEvent(input$preferences, show_preferences_modal())
+
+  # Closing Preferences after changing something that affects generated code offers to rewrite the code
+  observeEvent(input$pref_close, {
+    removeModal()
+    old <- pref_snapshot(); pref_snapshot(NULL)
+    if (is.null(old)) return()
+    new     <- relevant_prefs()
+    changed <- names(new)[!mapply(identical, old[names(new)], new)]
+    if (length(changed) == 0L) return()
+    if (!nzchar(trimws(input$code_editor %||% "")) || isTRUE(ui_busy())) return()
+    label <- pref_change_label(old, new, changed)
+    pref_pending(list(old = old, new = new, label = label))
+    showModal(modalDialog(
+      title = "Update the code to match your new preferences?",
+      tags$p(sub("^Preferences changed: ", "You changed: ", label), "."),
+      tags$p("Claude can rewrite the code in the editor to follow them. It will not be run automatically,",
+             "and it is listed in Past prompts as a Preference entry that restores these settings."),
+      footer = tagList(
+        actionButton("pref_regen_go", "Rewrite the code", class = "btn-primary"),
+        modalButton("Keep as it is")),
+      easyClose = FALSE
+    ))
+  })
+
+  observeEvent(input$pref_regen_go, {
+    removeModal()
+    pc <- pref_pending(); pref_pending(NULL)
+    req(pc)
+    do_ask_code(pref_change_instruction(pc$label), pref_change = pc)
+  })
 
   # Language dropdown in Preferences: quick switch between English and set language
   observeEvent(input$pref_language, {
@@ -5577,6 +5921,11 @@ server <- function(input, output, session) {
   observeEvent(input$pref_coding,          { prefs$coding          <- input$pref_coding })
   observeEvent(input$pref_plotting,        { prefs$plotting        <- input$pref_plotting })
   observeEvent(input$pref_mapping,         { prefs$mapping         <- input$pref_mapping })
+  observeEvent(input$pref_spatial,         { prefs$spatial         <- input$pref_spatial })
+  observeEvent(input$pref_stats,           { prefs$stats           <- input$pref_stats })
+  observeEvent(input$pref_modelling,       { prefs$modelling       <- input$pref_modelling })
+  observeEvent(input$pref_tables,          { prefs$tables          <- input$pref_tables })
+  observeEvent(input$pref_strings,         { prefs$strings         <- input$pref_strings })
   observeEvent(input$pref_img_format,      { prefs$img_format      <- input$pref_img_format })
   observeEvent(input$pref_img_quality,     { prefs$img_quality     <- input$pref_img_quality })
   observeEvent(input$pref_img_size,        { prefs$img_size        <- input$pref_img_size })
@@ -5689,6 +6038,7 @@ server <- function(input, output, session) {
     answer_hist(list())
     interactions(list())
     active_code_id(NULL)
+    undo_state(NULL)
     placeholder_map(character(0))
     set_ask_mode("code")
     pending_log_entries(list())
@@ -6181,7 +6531,10 @@ server <- function(input, output, session) {
   })
 
   # --- Ask for Code ----------------------------------------------------------
-  do_ask_code <- function(current_prompt) {
+  do_ask_code <- function(current_prompt, pref_change = NULL) {
+    # What is shown in Past prompts / the log: for a preference-change rewrite this is a short label,
+    # while the full instruction is what Claude is sent
+    shown_prompt <- if (!is.null(pref_change)) pref_change$label else current_prompt
     if (isTRUE(quota_exceeded())) { show_quota_modal(); return(invisible(NULL)) }
     capture_active_code()    # save what the previous code interaction looked like before it is cleared
     autorun_text <- NULL
@@ -6212,7 +6565,10 @@ server <- function(input, output, session) {
           system_prompt = build_system_prompt(prefs$coding, prefs$plotting, prefs$mapping,
                                               prefs$img_format, prefs$img_quality, prefs$img_size,
                                               prefs$max_lines, prefs$comment_density,
-                                              loaded_packages(), prefs$language)
+                                              loaded_packages(), prefs$language,
+                                              approaches = list(spatial = prefs$spatial, stats = prefs$stats,
+                                                                modelling = prefs$modelling,
+                                                                tables = prefs$tables, strings = prefs$strings))
         ),
         error = function(e) list(text = "", stop_reason = "error")
       )
@@ -6280,8 +6636,16 @@ server <- function(input, output, session) {
 
       record_usage(api_result$cost_usd)
       conversation_history(c(history_so_far, list(list(role = "assistant", content = raw_response))))
-      prompt_history(c(current_prompt, prompt_history()))
+      if (is.null(pref_change)) prompt_history(c(current_prompt, prompt_history()))
       parts <- split_response_into_text_and_code(raw_response)
+
+      if (!is.null(pref_change) &&
+          (!nzchar(trimws(parts$code)) ||
+           identical(trimws(parts$code), trimws(isolate(input$code_editor) %||% "")))) {
+        showNotification("The new preferences did not require any change to the code.",
+                         type = "message", duration = 6)
+        return(invisible(NULL))
+      }
 
       if (nzchar(trimws(parts$code)) && code_too_long(parts$code, prefs$max_lines)) {
         showModal(modalDialog(
@@ -6300,7 +6664,8 @@ server <- function(input, output, session) {
         return(invisible(NULL))
       }
 
-      last_prompt_for_code(current_prompt)
+      last_prompt_for_code(shown_prompt)
+      if (!is.null(pref_change)) prompt_history(c(shown_prompt, prompt_history()))
       old_editor_code <- isolate(input$code_editor) %||% ""
       last_extracted_code(parts$code)
       last_code_description(parts$description %||% "")
@@ -6316,14 +6681,16 @@ server <- function(input, output, session) {
         hide_changes_tab()
         goto_tab("Code")
       }
-      sq <- add_interaction(list(kind = "code", prompt = current_prompt, code = parts$code,
+      sq <- add_interaction(list(kind = "code", prompt = shown_prompt, code = parts$code,
+                                 pref_old = pref_change$old, pref_new = pref_change$new,
                                  description = parts$description %||% "", editor_code = parts$code,
                                  console = character(0), warnings = character(0), plots = character(0),
                                  last_run_code = NULL, failed = FALSE, error = "", diff = d,
                                  tab = if (!is.null(d)) "Changes" else "Code"))
       active_code_id(sq)
-      unconf_add(parts$code, current_prompt, parts$description, "ask", sq)
-      if (isTRUE(input$autorun_code) && nzchar(trimws(parts$code))) autorun_text <- parts$code
+      unconf_add(parts$code, shown_prompt, parts$description, "ask", sq)
+      # A rewrite triggered by changing Preferences is never auto-run, so a settings change cannot run code by accident
+      if (isTRUE(input$autorun_code) && is.null(pref_change) && nzchar(trimws(parts$code))) autorun_text <- parts$code
     }, finally = { enable("ask_code"); enable("ask_plain") })
     # AutoRun Code: run what was just generated (passed directly, as the editor's own value has not
     # reached the server yet)
@@ -7457,6 +7824,11 @@ server <- function(input, output, session) {
         coding          = prefs$coding,
         plotting        = prefs$plotting,
         mapping         = prefs$mapping,
+        spatial         = prefs$spatial,
+        stats           = prefs$stats,
+        modelling       = prefs$modelling,
+        tables          = prefs$tables,
+        strings         = prefs$strings,
         model           = prefs$model,
         img_format      = prefs$img_format,
         img_quality     = prefs$img_quality,
@@ -7518,6 +7890,21 @@ server <- function(input, output, session) {
       )
     ))
   }
+
+  # Screenshots sent by the browser (Cmd/Ctrl+Alt+S): saved as screenshots/<date>_<time>.png in the working directory
+  observeEvent(input$cm_screenshot, {
+    shot <- input$cm_screenshot; req(nzchar(shot$png %||% ""))
+    dir  <- file.path(project_root(), "screenshots")
+    dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+    stamp <- format(Sys.time(), "%Y%m%d_%H%M%S"); f <- file.path(dir, paste0(stamp, ".png")); n <- 1L
+    while (file.exists(f)) { n <- n + 1L; f <- file.path(dir, paste0(stamp, "_", n, ".png")) }
+    ok <- tryCatch({ writeBin(openssl::base64_decode(shot$png), f); TRUE }, error = function(e) FALSE)
+    showNotification(if (ok) paste0("Screenshot saved: screenshots/", basename(f)) else "Could not save the screenshot.",
+                     type = if (ok) "message" else "error", duration = 3)
+  })
+  observeEvent(input$cm_screenshot_fail, {
+    showNotification(input$cm_screenshot_fail$msg %||% "No screenshot was taken.", type = "warning", duration = 6)
+  })
 
   observeEvent(input$quit,         { show_quit_confirm_modal() })
   observeEvent(input$confirm_quit, { removeModal(); do_quit_with_autosave() })
