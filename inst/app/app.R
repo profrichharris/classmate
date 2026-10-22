@@ -2830,6 +2830,8 @@ ui <- fluidPage(
       #context_list_box, .cm-context-empty { height: 76px; overflow-y: auto; box-sizing: border-box; margin-top: 10px;
         border: 1px solid #e3e3e3; border-radius: 4px; padding: 2px 8px; background: #fafafa; }
       .cm-context-empty { padding-top: 6px; }
+      /* The data-protection notice in the prompt box is dark red until the prompt box is cleared */
+      #prompt.cm-notice { color: #8b0000; }
       /* Magnifier beside each file / object in the context list, to the left of the tick or cross */
       #context_list_box .checkbox { position: relative; padding-left: 26px; }
       #context_list_box .cm-inspect { position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
@@ -4041,8 +4043,7 @@ server <- function(input, output, session) {
   # data-protection notice and freeze Ask/Ask for Code until the student clears it.
   .PROTECTION_NOTICE <- paste0(
     "Enter your prompt here. Always prioritise data protection. Never include ",
-    "personal data or information in your prompts, and do not make any reference ",
-    "to real individuals.\n\n𝗣𝗿𝗲𝘀𝘀 𝗖𝗹𝗲𝗮𝗿 𝘁𝗼 𝗰𝗼𝗻𝘁𝗶𝗻𝘂𝗲."  # bold: a text box cannot hold bold text, so Unicode bold letters
+    "personal data or information in your prompts.\n\n𝗣𝗿𝗲𝘀𝘀 𝗖𝗹𝗲𝗮𝗿 𝘁𝗼 𝗰𝗼𝗻𝘁𝗶𝗻𝘂𝗲."  # bold: a text box cannot hold bold text, so Unicode bold letters
 
   )
   if (!.resuming_pause) {
@@ -4861,8 +4862,10 @@ server <- function(input, output, session) {
         document.getElementById('clear_prompt').style.borderColor = '#d4ac0d';
         document.getElementById('clear_prompt').style.color = '#000000';
       ")
+      shinyjs::addClass("prompt", "cm-notice")      # the notice is shown in dark red
       return()
     }
+    shinyjs::removeClass("prompt", "cm-notice")
     shinyjs::runjs("
       document.getElementById('clear_prompt').style.backgroundColor = '';
       document.getElementById('clear_prompt').style.borderColor = '';
@@ -5547,9 +5550,10 @@ server <- function(input, output, session) {
     idx <- scan_pkg_data()
     pkgs <- sort(unique(idx$package))
     counts <- vapply(pkgs, function(p) sum(idx$package == p), integer(1))
-    # The package chosen last time is chosen again (if it is still there)
+    # The package chosen (or last added from) is chosen again, if it is still there; otherwise, and the first time,
+    # Classmate's own datasets are shown
     last <- isolate(pkgdata_last())
-    if (!(last %in% c(PKGDATA_ONLINE, pkgs))) last <- ""
+    if (!(last %in% c(PKGDATA_ONLINE, pkgs)) || !nzchar(last)) last <- PKGDATA_ONLINE
     pkgdata_last(last)
     pkgdata_pkg_val(last)
     showModal(modalDialog(
@@ -5806,6 +5810,8 @@ server <- function(input, output, session) {
     ad <- pkgdata_added()                     # datasets added for context: hidden from the list while they stay in it
     for (it in plan) if (!is.null(it$key)) ad[it$key] <- it$name
     pkgdata_added(ad)
+    keys_added <- Filter(Negate(is.null), lapply(plan, `[[`, "key"))
+    if (length(keys_added) > 0) pkgdata_last(sub("::.*$", "", keys_added[[length(keys_added)]]))   # the package last added from
     nms <- vapply(plan, `[[`, "", "name")
     selected_objects(union(selected_objects(), nms))
     # Record the loading in the code log, so the log is a complete, reproducible pipeline

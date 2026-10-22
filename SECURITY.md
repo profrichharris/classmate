@@ -164,7 +164,7 @@ The student must click **I understand** to proceed, or **Quit** to exit. This di
 
 On every fresh launch of the app (not on pause-resume), the prompt input box is pre-filled with the following text:
 
-> *Always prioritise data protection. Never include personal data or information in your prompts, and do not make any reference to real individuals.*
+> *Enter your prompt here. Always prioritise data protection. Never include personal data or information in your prompts.*
 >
 > *Press Clear to continue.*
 

@@ -236,10 +236,14 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.128 (2026-10-22)  
-**Current version:** 0.5.128
+**Last released:** 0.5.129 (2026-10-22)  
+**Current version:** 0.5.129
 
-Released in 0.5.128 (no unreleased changes):
+Released in 0.5.129 (no unreleased changes):
+- **Data-protection notice in the prompt box** (`.PROTECTION_NOTICE`) now reads "Enter your prompt here. Always prioritise data protection. Never include personal data or information in your prompts." (the "do not make any reference to real individuals" clause was dropped; SECURITY.md matches) and is shown in dark red (`#8b0000`): `shinyjs::addClass("prompt", "cm-notice")` while `protection_notice_active()` and removed when the prompt box is cleared (CSS `#prompt.cm-notice`). A text box cannot colour part of its text, so the whole notice, including the bold "Press Clear to continue.", is dark red. The system-prompt rules about real individuals are unchanged.
+- **Load Package Data opens on "Classmate (online datasets)" by default** (user request): the first time, or when no package was selected last time (the drop-down was left on "Choose a package…"), `show_pkgdata_modal()` preselects `PKGDATA_ONLINE`. A package chosen in the drop-down, or the package of the last dataset added (`commit_pkg_plan()` sets `pkgdata_last` to the package of the last plan item), is remembered and shown the next time instead. Offline, the default list shows the "could not reach GitHub" message until another package is chosen. Tested live: first open -> Classmate list; add from `datasets` -> reopens on `datasets`; choose nothing -> reopens on Classmate.
+
+Released in 0.5.128:
 - **Context list is a fixed-depth, alphabetical box** (user request): `#context_list_box` (and the empty-state `.cm-context-empty`, which now sits in the same box showing "None added yet.") is 76 px high = exactly three rows (row pitch 25 px) and scrolls, so the page no longer moves as items are added or removed (the "Remove deselected · Remove all" links keep their space too: `context_links` is toggled with `visibility`, not `display`); `context_choices()` sorts files and objects together alphabetically (case-insensitive, ignoring the "[class]" label), so new ones slot into place. Only the display is sorted, not `selected_objects()`.
 - **Load Package Data remembers the last package and leaves out what is already in the context** (user request). `pkgdata_last` is no longer reset when the dialog opens or closes (the earlier blank-on-open was only to avoid the stale-input flash, fixed separately in 0.5.124), so reopening preselects the package chosen last time if it is still available; ticks are still cleared. `pkgdata_added` (named character: dataset key -> object name in the workspace) is filled by `commit_pkg_plan()` (plan items now carry `key`); `pkgdata_shown()` drops rows whose key is in it while that object name is still in `selected_objects()`, so removing it from the context (Remove deselected / Remove all) brings it back. The list says how many were left out ("N datasets are not shown because they have already been added") and, when nothing else is left, "Everything listed here has already been added…". Not remembered across Pause/resume (the context is restored but `pkgdata_added` starts empty, so those datasets show again). Tested live: first open blank; reopen -> `datasets` preselected with 107 of 108 (mtcars omitted, note shown); after removing mtcars from the context it is listed again (108).
 
