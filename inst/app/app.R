@@ -6822,7 +6822,8 @@ server <- function(input, output, session) {
         "(e.g. '# Load data'); Most: section markers plus short notes on non-obvious lines.",
         "Even at Most, line-by-line commenting is avoided.",
         "Code that runs longer than the time you choose is stopped (the 2 minutes default suits most work; choose",
-        "longer for slow methods, or Never)."
+        "longer for slow methods). Higher code consistency reduces variability between yours and other users' code",
+        "within classroom settings."
       )),
       # Key file buttons at the left of the footer, Close at the right
       footer = tags$div(style = "display: flex; justify-content: space-between; align-items: center;",

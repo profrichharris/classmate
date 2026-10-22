@@ -236,10 +236,13 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.132 (2026-10-22)  
-**Current version:** 0.5.132
+**Last released:** 0.5.133 (2026-10-22)  
+**Current version:** 0.5.133
 
-Released in 0.5.132 (no unreleased changes):
+Released in 0.5.133 (no unreleased changes):
+- **Preferences note revised again** (user's wording): the time-limit sentence now ends "…choose longer for slow methods)." (no ", or Never") and a final sentence was added: "Higher code consistency reduces variability between yours and other users' code within classroom settings." (so the consistency slider now has this one explanation; the earlier longer explanation stays removed).
+
+Released in 0.5.132:
 - **Shorter note at the bottom of Preferences** (user's wording): "Maximum length is set by your key. Claude will aim to stay within it but it may be exceeded. Loaded scripts will generate a warning if they exceed the limit. Comment levels — None: no comments; Minimal: brief section markers only (e.g. '# Load data'); Most: section markers plus short notes on non-obvious lines. Even at Most, line-by-line commenting is avoided. Code that runs longer than the time you choose is stopped (the 2 minutes default suits most work; choose longer for slow methods, or Never)." The advice about pressing Stop (and choosing No if RStudio asks to terminate R) and the note about compiled code were removed from this note; the Stop advice remains in the blue Running box and the Run Help text.
 
 Released in 0.5.131:
