@@ -236,12 +236,15 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.120 (2026-10-20)  
-**Current version:** 0.5.120
+**Last released:** 0.5.121 (2026-10-22)  
+**Current version:** 0.5.121
 
-Released in 0.5.120 (no unreleased changes):
+Released in 0.5.121 (no unreleased changes):
+- Looking at an item (the Look at window) is no longer recorded in the code log (see the Look at entry below); everything else is as in 0.5.120.
+
+Released in 0.5.120:
 - **sp objects and rasters now have a schema**: `schema_from_r_object()` only knew sf/data frames/matrices/lists, so for `spData::house` (a `SpatialPointsDataFrame`) no column names were sent and Claude replied that it could not confirm that `price` exists. It now reads the `@data` slot of sp `Spatial*DataFrame` objects (type `sp <class>`) and layer names of `SpatRaster`s. Checked with the real model: "Map the price variable" now converts with `st_as_sf()` and maps `price`.
-- **Look at items added for context** (magnifier left of the tick/cross in the context list): each row's label now carries a `cm-inspect` button (positioned left by CSS; `data-help-id="inspect_item"`, `onclick` sets `input$inspect_item`) that opens a tabbed "Look at: name" window — Table (first 200 rows, plain HTML), Variables, Summary, Structure, plus Spatial for sf / sp objects (attribute table = geometry dropped); non-tabular objects get Overview/Summary/Structure; files are previewed with `inspect_read_file()` (first 200 rows for csv/tsv/Excel/Stata/SPSS/SAS, flagged `cm_partial`). Fail-safe: 15 s time limit (`inspect_with_limit`), every tab built in its own `tryCatch`, missing objects / unreadable files / unsupported types give a "Classmate cannot show this one" window. Local only — nothing is sent to Claude. No quick-plot tab (deliberately). **Code log**: each successful look is logged (`source="inspect"`, code from `inspect_log_code()`: `head()/str()/summary()` for data, `sf::st_crs()/st_bbox()` for sf, a `read.csv(…, nrows = 200)` etc. for files; consecutive repeats of the same item are skipped), and so are Quick Console commands that ran cleanly (`source="quick_console"`; errors, time-outs, package installs and q()/quit() are left out). Neither goes into Past prompts or Past code (those come from `prompt_history` / `run_history` entries with `source = "ask_code"`).
+- **Look at items added for context** (magnifier left of the tick/cross in the context list): each row's label now carries a `cm-inspect` button (positioned left by CSS; `data-help-id="inspect_item"`, `onclick` sets `input$inspect_item`) that opens a tabbed "Look at: name" window — Table (first 200 rows, plain HTML), Variables, Summary, Structure, plus Spatial for sf / sp objects (attribute table = geometry dropped); non-tabular objects get Overview/Summary/Structure; files are previewed with `inspect_read_file()` (first 200 rows for csv/tsv/Excel/Stata/SPSS/SAS, flagged `cm_partial`). Fail-safe: 15 s time limit (`inspect_with_limit`), every tab built in its own `tryCatch`, missing objects / unreadable files / unsupported types give a "Classmate cannot show this one" window. Local only — nothing is sent to Claude. No quick-plot tab (deliberately). **Not in the code log** (decided 2026-10-22): looking at an item is deliberately not logged. Quick Console commands that ran cleanly *are* logged (`source="quick_console"`; errors, time-outs, package installs and q()/quit() are left out); they do not go into Past prompts or Past code (those come from `prompt_history` / `run_history` entries with `source = "ask_code"`).
 - **Quick Console scrolls to the newest output** after every Run: the output box has an id (`qc_output_box`) and a page script listens for `shiny:value` on `qc_output_ui` and scrolls it to the bottom (repeated at 0/150/500 ms while the new text is laid out).
 
 Released in 0.5.119:

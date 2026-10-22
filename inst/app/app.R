@@ -1485,41 +1485,6 @@ inspect_read_file <- function(path) {
     stop("No preview is available for .", ext, " files."))
 }
 
-# The R code that does what the Look-at window shows, for the code log (so that the log is a complete record of
-# what was done to the data). `ref` is how the item is written in code: an object name, or the file path.
-inspect_log_code <- function(kind, ref, obj) {
-  q <- function(x) deparse(x)
-  if (kind == "file") {
-    ext <- tolower(tools::file_ext(ref))
-    read <- switch(ext,
-      csv = sprintf("utils::read.csv(%s, nrows = 200)", q(ref)),
-      tsv = , txt = sprintf("utils::read.delim(%s, nrows = 200)", q(ref)),
-      xlsx = , xls = sprintf("readxl::read_excel(%s, n_max = 200)", q(ref)),
-      rds = sprintf("readRDS(%s)", q(ref)),
-      shp = , gpkg = , fgb = , geojson = , json = , kml = , gml = sprintf("sf::st_read(%s)", q(ref)),
-      sav = sprintf("haven::read_sav(%s, n_max = 200)", q(ref)),
-      dta = sprintf("haven::read_dta(%s, n_max = 200)", q(ref)),
-      sas7bdat = sprintf("haven::read_sas(%s, n_max = 200)", q(ref)),
-      NULL)
-    if (is.null(read)) return(NULL)
-    return(paste(c(paste0("# Looked at the file ", basename(ref), " (Look at window)"),
-                   paste0("look_at <- ", read),
-                   if (!inherits(obj, "sf") && is.data.frame(obj)) c("head(look_at, 200)", "str(look_at)", "summary(look_at)")
-                   else c("str(look_at, max.level = 2)")), collapse = "\n"))
-  }
-  lines <- if (inherits(obj, "sf"))
-    c(sprintf("head(sf::st_drop_geometry(%s), 200)", ref), sprintf("sf::st_geometry_type(%s)[1]", ref),
-      sprintf("sf::st_crs(%s)", ref), sprintf("sf::st_bbox(%s)", ref),
-      sprintf("str(%s, max.level = 2)", ref), sprintf("summary(sf::st_drop_geometry(%s))", ref))
-  else if (methods::is(obj, "Spatial") && methods::.hasSlot(obj, "data"))
-    c(sprintf("head(%s@data, 200)", ref), sprintf("summary(%s@data)", ref), sprintf("%s@bbox", ref),
-      sprintf("str(%s, max.level = 2)", ref))
-  else if (is.data.frame(obj) || is.matrix(obj))
-    c(sprintf("head(%s, 200)", ref), sprintf("str(%s)", ref), sprintf("summary(%s)", ref))
-  else c(sprintf("print(%s)", ref), sprintf("summary(%s)", ref), sprintf("str(%s, max.level = 2)", ref))
-  paste(c(paste0("# Looked at ", ref, " (Look at window)"), lines), collapse = "\n")
-}
-
 # The tabs for one object: Table / Variables / Summary for tabular data, plus Spatial for spatial data and
 # Structure for anything. Each tab is built on its own, so one that fails does not stop the others.
 inspect_panels <- function(obj) {
@@ -5646,17 +5611,6 @@ server <- function(input, output, session) {
     if (inherits(obj, "error")) return(cannot(conditionMessage(obj)))
     panels <- tryCatch(inspect_with_limit(inspect_panels(obj)), error = function(e) e)
     if (inherits(panels, "error")) return(cannot(conditionMessage(panels)))
-    # Record it in the code log (not in Past prompts / Past code), unless it is the same as the last entry
-    tryCatch({
-      code <- inspect_log_code(kind, nm, obj)
-      ents <- all_log_entries()
-      if (!is.null(code) && !(length(ents) > 0 && identical(ents[[length(ents)]]$code, code))) {
-        entry <- list(prompt = paste0("Looked at ", label, " (Look at window)"), code = code,
-                      description = "", source = "inspect")
-        pending_log_entries(c(pending_log_entries(), list(entry)))
-        all_log_entries(c(all_log_entries(), list(entry)))
-      }
-    }, error = function(e) invisible(NULL))
     tryCatch(
       showModal(modalDialog(
         title = paste0("Look at: ", label), size = "l",
