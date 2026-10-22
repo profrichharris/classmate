@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "note": "Datasets offered under 'Classmate (online datasets)' in Load Package Data. Check with: Rscript tools/check_datasets.R (add --update to refresh sizes and checksums).",
+  "datasets": [
+    {
+      "id": "chicago_tracts_income",
+      "title": "Chicago census tracts: median household income",
+      "description": "856 census tracts in the City of Chicago with median household income (US dollars), as polygons.",
+      "file": "chicago_tracts_income.gpkg",
+      "format": "gpkg",
+      "object": "chicago_tracts_income",
+      "bytes": 466944,
+      "sha256": "ff7b79aec9d24dcc58257d4484dcfb1a9e952e9eae124ad6f8f2a5f1c575bed3",
+      "source": "US Census Bureau: American Community Survey 2018-2022 5-year estimates (table B19013) with 2022 TIGER/Line census tract boundaries, clipped to the City of Chicago boundary. Retrieved with the tidycensus and tigris R packages.",
+      "retrieved": "2026-06-24",
+      "licence": "Public domain (work of the US federal government)",
+      "licence_id": "public-domain",
+      "licence_url": "https://www.usa.gov/government-works",
+      "attribution": "Source: US Census Bureau, 2018-2022 American Community Survey 5-year estimates (median household income, table B19013) and 2022 TIGER/Line census tract boundaries.",
+      "notice": "This product uses the Census Bureau Data API but is not endorsed or certified by the Census Bureau.",
+      "reviewed": "2026-10-22"
+    },
+    {
+      "id": "chicago_boundary",
+      "title": "City of Chicago boundary",
+      "description": "The City of Chicago boundary as a single polygon.",
+      "file": "chicago_boundary.gpkg",
+      "format": "gpkg",
+      "object": "chicago_boundary",
+      "bytes": 110592,
+      "sha256": "e988bb9bc7cf5a129ea851fb02ae7036767687f134b91c30ef2b0bb6a2d6930a",
+      "source": "US Census Bureau: 2022 TIGER/Line cartographic boundary file for places (Illinois), Chicago. Retrieved with the tigris R package.",
+      "retrieved": "2026-06-24",
+      "licence": "Public domain (work of the US federal government)",
+      "licence_id": "public-domain",
+      "licence_url": "https://www.usa.gov/government-works",
+      "attribution": "Source: US Census Bureau, 2022 TIGER/Line cartographic boundary file (places).",
+      "notice": "",
+      "reviewed": "2026-10-22"
+    }
+  ]
+}
