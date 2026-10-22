@@ -12,7 +12,9 @@ ALLOWED_LICENCES <- c(
   "public-domain",   # works of the US federal government, CC0 and similar
   "cc0",
   "cc-by",           # attribution required
-  "odbl"             # attribution and share-alike required: put the wording in "attribution" and "notice"
+  "odbl",            # attribution and share-alike required: put the wording in "attribution" and "notice"
+  "ogl",             # UK Open Government Licence v3.0: attribution required
+  "free-with-credit" # published free to download with no formal licence: credit the source in "attribution" and say so in "notice"
 )
 REQUIRED <- c("id", "title", "description", "file", "format", "object", "source", "retrieved", "licence",
               "licence_id", "licence_url", "attribution", "reviewed")
@@ -35,6 +37,8 @@ for (i in seq_along(m$datasets)) {
                                     paste(ALLOWED_LICENCES, collapse = ", ")))
   if (identical(d$licence_id, "odbl") && !nzchar(d$notice %||% ""))
     problems <- c(problems, sprintf("%s: an ODbL dataset needs its share-alike wording in 'notice'", id))
+  if (identical(d$licence_id, "free-with-credit") && !nzchar(d$notice %||% ""))
+    problems <- c(problems, sprintf("%s: a free-with-credit dataset needs a 'notice' saying no formal licence is stated", id))
   f <- file.path(dir, d$file %||% "")
   if (!file.exists(f)) { problems <- c(problems, sprintf("%s: file '%s' not found", id, d$file)); next }
   if (update) { m$datasets[[i]]$bytes <- file.size(f); m$datasets[[i]]$sha256 <- sha(f) }

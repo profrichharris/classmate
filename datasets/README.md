@@ -13,7 +13,7 @@ adds the credit and licence as comments to the code log when the data are downlo
 ## Adding a dataset
 
 1. Check the licence yourself: the data must be free to redistribute (public domain, CC0, CC-BY, or
-   ODbL with its share-alike wording in `notice`). Prefer plain formats (`.gpkg`, `.geojson`,
+   ODbL with its share-alike wording in `notice`, OGL, or published free to download with no formal licence, `free-with-credit`, which needs a `notice` saying so). `tools/prepare_childhood_lottery.R` shows how the Childhood Lottery files were built. Prefer plain formats (`.gpkg`, `.geojson`,
    `.csv`); avoid `.rds` / `.RData`.
 2. Put the file in this folder and add an entry to `datasets.json` (copy an existing one). Fill in
    every field; set `reviewed` to the date you checked the licence.
@@ -30,6 +30,7 @@ adds the credit and licence as comments to the code log when the data are downlo
 |------|--------|---------|
 | `chicago_tracts_income.gpkg` | US Census Bureau, ACS 2018-2022 5-year estimates (B19013) with 2022 TIGER/Line tracts, Chicago | Public domain (US federal government work) |
 | `chicago_boundary.gpkg` | US Census Bureau, 2022 TIGER/Line cartographic boundary file (places), Chicago | Public domain (US federal government work) |
+| `childhood_lottery.gpkg`, `childhood_lottery_metrics.csv` | Children's Commissioner for England, The Childhood Lottery (2026); ONS Dec 2025 UTLA boundaries | Free to download, credit required (no formal licence stated); boundaries OGL v3.0 |
 
 Not yet included: the Rogers Park residential building outlines (OpenStreetMap, ODbL): they need the
 "(c) OpenStreetMap contributors" credit and share-alike notice written up first.

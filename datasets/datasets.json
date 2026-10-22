@@ -37,6 +37,42 @@
       "attribution": "Source: US Census Bureau, 2022 TIGER/Line cartographic boundary file (places).",
       "notice": "",
       "reviewed": "2026-10-22"
+    },
+    {
+      "id": "childhood_lottery",
+      "title": "The Childhood Lottery: England upper-tier local authorities",
+      "description": "153 upper-tier local authorities in England (polygons) with the Children's Commissioner's Childhood Lottery measures: 128 metrics (values and 0-10 scores) across six pillars plus an overall score, one row per authority. See childhood_lottery_metrics for what each column means.",
+      "file": "childhood_lottery.gpkg",
+      "format": "gpkg",
+      "object": "childhood_lottery",
+      "source": "Children's Commissioner for England, The Childhood Lottery (published 19 October 2026), full dataset workbook (https://www.childrenscommissioner.gov.uk/the-childhood-lottery/), reshaped from long to wide (one row per local authority; _value and _score columns per metric; Yes/No answers coded 1/0). Boundaries: ONS Counties and Unitary Authorities (December 2025) Boundaries UK BGC, England only, British National Grid, simplified to 100 m for teaching.",
+      "retrieved": "2026-10-22",
+      "licence": "Free to download from the Children's Commissioner (no formal licence stated); ONS boundaries under the Open Government Licence v3.0",
+      "licence_id": "free-with-credit",
+      "licence_url": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+      "attribution": "Source: Children's Commissioner for England, The Childhood Lottery (2026). Boundaries: Office for National Statistics licensed under the Open Government Licence v.3.0. Contains OS data © Crown copyright and database right 2025.",
+      "notice": "The Children's Commissioner publishes this dataset for free download but states no formal licence (\"All rights reserved\"). Classmate redistributes it, unaltered in content, for teaching with the source credited. Boundaries contain OS data © Crown copyright and database right 2025.",
+      "reviewed": "2026-10-22",
+      "bytes": 1327104,
+      "sha256": "e0b9bde65bd6aa0b435619c978125b6715a5721d92e5b61050dc1a8c14d2719d"
+    },
+    {
+      "id": "childhood_lottery_metrics",
+      "title": "The Childhood Lottery: metric dictionary",
+      "description": "What each column of childhood_lottery means: pillar, full metric name, description, unit, source, whether it is scored, England average.",
+      "file": "childhood_lottery_metrics.csv",
+      "format": "csv",
+      "object": "childhood_lottery_metrics",
+      "source": "Children's Commissioner for England, The Childhood Lottery (published 19 October 2026), full dataset workbook (https://www.childrenscommissioner.gov.uk/the-childhood-lottery/), reshaped from long to wide (one row per local authority; _value and _score columns per metric; Yes/No answers coded 1/0). ",
+      "retrieved": "2026-10-22",
+      "licence": "Free to download from the Children's Commissioner (no formal licence stated)",
+      "licence_id": "free-with-credit",
+      "licence_url": "https://www.childrenscommissioner.gov.uk/the-childhood-lottery/",
+      "attribution": "Source: Children's Commissioner for England, The Childhood Lottery (2026).",
+      "notice": "The Children's Commissioner publishes this dataset for free download but states no formal licence (\"All rights reserved\"). Classmate redistributes it, unaltered in content, for teaching with the source credited. ",
+      "reviewed": "2026-10-22",
+      "bytes": 45581,
+      "sha256": "a72c022e1bf55133d34a1889bf0bf121b8d7d35918b846279843f14eeaae5333"
     }
   ]
 }

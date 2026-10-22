@@ -236,10 +236,13 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.133 (2026-10-22)  
-**Current version:** 0.5.133
+**Last released:** 0.5.134 (2026-10-22)  
+**Current version:** 0.5.134
 
-Released in 0.5.133 (no unreleased changes):
+Released in 0.5.134 (no unreleased changes):
+- **Childhood Lottery online datasets** (`childhood_lottery.gpkg` + `childhood_lottery_metrics.csv` in `datasets/`): Children's Commissioner for England workbook (long: 153 UTLAs x 128 metrics) reshaped wide (`<pillar>_<metric>_value` / `_score`, Yes/No coded 1/0, `overall_value`/`overall_score`) and joined to ONS Dec 2025 UTLA BGC boundaries (the only vintage matching all 153 GSS codes; 2023/2024 lack E08000038/39), simplified to 100 m, EPSG:27700. Rebuild with `tools/prepare_childhood_lottery.R`. Licence: the Commissioner states no formal licence ("All rights reserved", though free to download) so the new `free-with-credit` licence id (needs a `notice`) was added to `tools/check_datasets.R`, plus `ogl`; ONS boundaries are OGL v3.0. The user decided redistribution with credit was acceptable; an email to the Commissioner would settle it.
+
+Released in 0.5.133:
 - **Preferences note revised again** (user's wording): the time-limit sentence now ends "…choose longer for slow methods)." (no ", or Never") and a final sentence was added: "Higher code consistency reduces variability between yours and other users' code within classroom settings." (so the consistency slider now has this one explanation; the earlier longer explanation stays removed).
 
 Released in 0.5.132:
