@@ -1528,6 +1528,92 @@ inspect_panels <- function(obj) {
   panels
 }
 
+# --- When a request to Claude (or GitHub) fails: say what is wrong in plain words ---------------------------
+# net_error_kind(): "network" (no connection, DNS, timeout), "auth" (key refused), "busy" (rate limit or server
+# trouble) or "other". call_claude() records the kind of its last failure; claude_failure_text() turns it into a
+# sentence for the student, so a lost connection is never reported as a problem with the key.
+net_error_kind <- function(e) {
+  msg <- tryCatch(conditionMessage(e), error = function(x) "")
+  if (inherits(e, "httr2_http_401") || inherits(e, "httr2_http_403")) return("auth")
+  if (inherits(e, "httr2_http_429")) return("busy")
+  if (inherits(e, "httr2_http")) {
+    st <- tryCatch(e$resp$status_code, error = function(x) NULL)
+    return(if (!is.null(st) && st >= 500) "busy" else "other")
+  }
+  if (inherits(e, "httr2_failure") ||
+      grepl("resolve host|could not connect|failed to connect|timed out|timeout|ssl|connection|curl", msg, ignore.case = TRUE))
+    return("network")
+  "other"
+}
+claude_failure_text <- function(prefix = NULL) {
+  kind <- .cm$last_api_error %||% "none"
+  txt <- switch(kind,
+    network = "Classmate could not reach Claude. Please check your internet connection and try again.",
+    auth    = paste("Your key was not accepted. Check that your key file is current (Preferences > Load new key file),",
+                    "or ask your instructor."),
+    busy    = "Claude is busy at the moment. Please wait a minute and try again.",
+    "Claude did not reply. Please try again.")
+  paste(c(prefix, txt), collapse = " ")
+}
+
+# --- Classmate's own online datasets (Load Package Data > "Classmate (online datasets)") ---------------------
+# The datasets are kept, in their original formats, in the datasets/ folder of the Classmate repository on GitHub,
+# described by datasets/datasets.json (title, size, source, licence, the attribution wording required, checksum).
+# They are fetched on request, never bundled with the package. tools/check_datasets.R checks the paperwork.
+classmate_data_url <- function()
+  sub("/+$", "", getOption("classmate.data_url", "https://raw.githubusercontent.com/profrichharris/classmate/main/datasets"))
+
+# The list of datasets, as a data frame (an error if GitHub cannot be reached)
+fetch_dataset_manifest <- function() {
+  resp <- httr2::request(paste0(classmate_data_url(), "/datasets.json")) |>
+    httr2::req_timeout(15) |> httr2::req_perform()
+  m  <- jsonlite::fromJSON(httr2::resp_body_string(resp), simplifyVector = FALSE)
+  ds <- m$datasets
+  if (length(ds) == 0) stop("The list of datasets is empty.")
+  field <- function(f, default = "") vapply(ds, function(d) { v <- d[[f]]; if (is.null(v)) default else as.character(v) }, "")
+  data.frame(id = field("id"), title = field("title"), description = field("description"), file = field("file"),
+             format = field("format"), object = field("object"),
+             bytes = as.numeric(vapply(ds, function(d) as.numeric(d$bytes %||% 0), 0)), sha256 = field("sha256"),
+             source = field("source"), retrieved = field("retrieved"), licence = field("licence"),
+             licence_url = field("licence_url"), attribution = field("attribution"), notice = field("notice"),
+             stringsAsFactors = FALSE)
+}
+
+fmt_bytes <- function(b) if (is.na(b) || b <= 0) "" else if (b < 1e6) sprintf("%.0f KB", b / 1e3) else sprintf("%.1f MB", b / 1e6)
+
+# Download one dataset (once; kept in a cache folder), check it against its checksum and read it
+online_dataset_load <- function(row) {
+  dir <- file.path(tools::R_user_dir("classmate", "cache"), "datasets")
+  dir.create(dir, showWarnings = FALSE, recursive = TRUE)
+  dest <- file.path(dir, row$file)
+  sum_of <- function(f) unclass(as.character(openssl::sha256(file(f))))
+  if (!file.exists(dest) || !identical(sum_of(dest), row$sha256)) {
+    tmp <- paste0(dest, ".part")
+    on.exit(unlink(tmp), add = TRUE)
+    httr2::request(paste0(classmate_data_url(), "/", utils::URLencode(row$file))) |>
+      httr2::req_timeout(180) |> httr2::req_perform(path = tmp)
+    if (!identical(sum_of(tmp), row$sha256))
+      stop("the downloaded file did not match its checksum, so it was not used")
+    file.rename(tmp, dest)
+  }
+  switch(tolower(row$format),
+    gpkg = , geojson = , shp = { if (!requireNamespace("sf", quietly = TRUE)) stop("the sf package is needed to read this file")
+                                 suppressWarnings(sf::st_read(dest, quiet = TRUE)) },
+    csv  = utils::read.csv(dest, check.names = FALSE),
+    stop("files of type '", row$format, "' are not supported"))
+}
+
+# The R code that recreates the object, with its attribution as comments, for the code log
+online_dataset_code <- function(row, name) {
+  wrap <- function(txt, lead) if (nzchar(txt)) paste0("# ", strwrap(paste0(lead, txt), width = 100, exdent = 2)) else character(0)
+  read <- switch(tolower(row$format),
+    csv = "utils::read.csv(f, check.names = FALSE)", "sf::st_read(f, quiet = TRUE)")
+  paste(c(wrap(row$title, "Classmate dataset: "), wrap(row$attribution, ""), wrap(row$licence, "Licence: "),
+          wrap(row$notice, ""),
+          sprintf('%s <- local({ f <- tempfile(fileext = ".%s"); utils::download.file("%s/%s", f, mode = "wb", quiet = TRUE); %s })',
+                  name, tolower(row$format), classmate_data_url(), row$file, read)), collapse = "\n")
+}
+
 build_fix_system_prompt <- function(language = "English") {
   paste(
     "You are an expert R programming assistant helping a student fix broken R code.",
@@ -1914,14 +2000,18 @@ call_claude <- function(messages, model, max_tokens, system_prompt = NULL,
   body <- c(list(model = model, max_tokens = max_tokens, messages = messages), model_extra_params(model))
   if (!is.null(system_block)) body$system <- system_block
 
-  resp <- request("https://api.anthropic.com/v1/messages") |>
+  .cm$last_api_error <- NULL
+  resp <- tryCatch(request("https://api.anthropic.com/v1/messages") |>
     req_headers(
       "x-api-key"         = api_key,
       "anthropic-version" = "2023-06-01",
       "content-type"      = "application/json"
     ) |>
     req_body_json(body) |>
-    req_perform()
+    req_timeout(120) |>
+    req_options(connecttimeout = 15) |>      # a dead connection fails in seconds, not minutes
+    req_perform(),
+    error = function(e) { .cm$last_api_error <- net_error_kind(e); stop(e) })
 
   result <- resp_body_json(resp)
   u <- result$usage %||% list()
@@ -4106,9 +4196,17 @@ server <- function(input, output, session) {
 
   activate_key <- function(payload, on_success = function() invisible(NULL)) {
     withProgress(message = "Checking key...", value = 0.5, {
-      ok <- validate_api_key(payload$api_key)
+      st <- claude_key_status(payload$api_key)
     })
-    if (!ok) { show_key_error(); return(invisible(NULL)) }
+    if (identical(st, "unknown")) {          # no reply at all: not the key's fault
+      showModal(modalDialog(
+        title = "Could not check the key",
+        "Classmate could not reach Claude to check your key. Please check your internet connection and try again.",
+        footer = actionButton("key_error_ok", "OK", class = "btn-primary")))
+      return(invisible(NULL))
+    }
+    if (!identical(st, "ok")) { show_key_error(); return(invisible(NULL)) }
+    classmate:::cm_set_key(payload$api_key)    # held privately, not in the ANTHROPIC_API_KEY variable
 
     # If the key_id differs from the active config, this is a newly issued key
     # from the instructor — reset the usage log so the student gets a fresh quota.
@@ -5241,8 +5339,26 @@ server <- function(input, output, session) {
     sum(file.size(list.files(d, full.names = TRUE, recursive = TRUE)), na.rm = TRUE) / 1e6
   }
   # Load a whole package's datasets into the scratch store (once); returns its info data frame
+  PKGDATA_ONLINE <- ".online"       # the drop-down value for Classmate's own online datasets
   pkgdata_load_pkg <- function(pkg) {
     if (!is.null(pkgdata_store[[pkg]])) return(pkgdata_store[[pkg]])
+    if (identical(pkg, PKGDATA_ONLINE)) {
+      empty <- data.frame(object = character(0), class = character(0), dims = character(0), title = character(0),
+                          loadname = character(0), key = character(0), kind = character(0), path = character(0),
+                          stringsAsFactors = FALSE)
+      m <- tryCatch(fetch_dataset_manifest(), error = function(e) e)
+      if (inherits(m, "error")) {
+        info <- empty; attr(info, "error") <- conditionMessage(m)
+        attr(info, "error_kind") <- if (inherits(m, "httr2_http_404")) "missing" else net_error_kind(m)
+        return(info)                       # not stored, so the next try asks again
+      }
+      info <- data.frame(object = m$object, class = toupper(m$format), dims = vapply(m$bytes, fmt_bytes, ""),
+                         title = m$title, loadname = NA_character_, key = paste0(PKGDATA_ONLINE, "::", m$id),
+                         kind = "online", path = NA_character_, stringsAsFactors = FALSE)
+      attr(info, "manifest") <- m; attr(info, "big") <- FALSE; attr(info, "values") <- list()
+      assign(pkg, info, envir = pkgdata_store)
+      return(info)
+    }
     idx <- scan_pkg_data(); idx <- idx[idx$package == pkg, ]
     ds  <- idx[idx$kind == "data", ]; fl <- idx[idx$kind == "file", ]
     # rows for the spatial files (read with sf only when added)
@@ -5289,24 +5405,24 @@ server <- function(input, output, session) {
     pkgdata_last(input$pkgdata_pkg %||% "")
     pkgdata_pkg_val(input$pkgdata_pkg %||% "")
   })
+  pkgdata_redraw <- reactiveVal(0L)     # bumped whenever the dialog is shown, so the list is drawn afresh (with its ticks)
   show_pkgdata_modal <- function() {
+    pkgdata_redraw(isolate(pkgdata_redraw()) + 1L)
     pkgdata_pkg_val(isolate(pkgdata_last()))     # blank on a fresh open
     idx <- scan_pkg_data()
-    if (nrow(idx) == 0) {
-      showNotification("No installed package comes with datasets.", type = "warning", duration = 5)
-      return(invisible(NULL))
-    }
     pkgs <- sort(unique(idx$package))
     counts <- vapply(pkgs, function(p) sum(idx$package == p), integer(1))
     showModal(modalDialog(
       title = "Load package data",
       tags$p("Pick a package to see its datasets and any spatial files (shapefiles, GeoPackages, GeoJSON) it comes",
              "with, tick the ones you want (in one or several packages) and press Add: they are put in your R",
-             "workspace and added to the context for your prompt."),
+             "workspace and added to the context for your prompt. \"Classmate (online datasets)\" lists data that",
+             "Classmate keeps on GitHub, with its source and licence: for those the button is Download."),
       tags$label("Package:", `for` = "pkgdata_pkgfilter"),
       textInput("pkgdata_pkgfilter", NULL, placeholder = "Filter the package list (e.g. sp) (optional)", width = "100%"),
       selectInput("pkgdata_pkg", NULL,
-                  choices = c("Choose a package..." = "", setNames(pkgs, paste0(pkgs, " (", counts, ")"))),
+                  choices = c("Choose a package..." = "", "Classmate (online datasets)" = PKGDATA_ONLINE,
+                              setNames(pkgs, paste0(pkgs, " (", counts, ")"))),
                   selected = isolate(pkgdata_last()), width = "100%"),
       uiOutput("pkgdata_filters"),
       uiOutput("pkgdata_items"),
@@ -5325,10 +5441,12 @@ server <- function(input, output, session) {
     if (nzchar(q)) pkgs <- pkgs[grepl(tolower(q), tolower(pkgs), fixed = TRUE)]
     counts <- vapply(pkgs, function(p) sum(idx$package == p), integer(1))
     cur <- isolate(input$pkgdata_pkg %||% "")
+    online <- !nzchar(q) || grepl(tolower(q), "classmate online datasets", fixed = TRUE)
     updateSelectInput(session, "pkgdata_pkg",
-      choices  = c(if (length(pkgs) == 0) c("No package matches" = "") else c("Choose a package..." = ""),
+      choices  = c(if (length(pkgs) == 0 && !online) c("No package matches" = "") else c("Choose a package..." = ""),
+                   if (online) c("Classmate (online datasets)" = PKGDATA_ONLINE),
                    if (length(pkgs) > 0) setNames(pkgs, paste0(pkgs, " (", counts, ")"))),
-      selected = if (cur %in% pkgs) cur else "")
+      selected = if (cur %in% c(pkgs, if (online) PKGDATA_ONLINE)) cur else "")
   })
   observeEvent(input$load_package_data, {
     pkgdata_sel(character(0)); pkgdata_clear_store(); pkgdata_last("")
@@ -5358,7 +5476,21 @@ server <- function(input, output, session) {
     info
   })
   output$pkgdata_items <- renderUI({
+    pkgdata_redraw()
     d <- pkgdata_shown()
+    err <- attr(pkgdata_info(), "error")
+    if (!is.null(err))
+      return(tags$p(style = "color: #b22222; margin-top: 8px;", title = err,
+        if (identical(attr(pkgdata_info(), "error_kind"), "missing"))
+          paste("Classmate's online datasets are not available yet: the list was not found on GitHub.",
+                "Please try again later, or ask your instructor.")
+        else if (identical(attr(pkgdata_info(), "error_kind"), "network"))
+          paste("Classmate could not reach its online datasets on GitHub. Check your internet connection, then",
+                "choose \"Classmate (online datasets)\" again to retry.")
+        else
+          paste("Classmate could not read its online datasets from GitHub. Please try again in a little while,",
+                "or ask your instructor.")))
+    man <- attr(pkgdata_info(), "manifest")
     tagList(
       div(style = "margin: 2px 0 6px 0; font-size: 0.85em;",
           actionLink("pkgdata_tick_all", "Tick all shown"), " · ", actionLink("pkgdata_untick_all", "Untick all shown")),
@@ -5367,6 +5499,14 @@ server <- function(input, output, session) {
           checkboxGroupInput("pkgdata_choice", NULL,
             choiceNames  = lapply(seq_len(nrow(d)), function(i)
               tagList(tags$strong(d$object[i]),
+                      if (identical(d$kind[i], "online")) {
+                        id <- gsub("[^A-Za-z0-9_]", "", sub("^.*::", "", d$key[i]))
+                        link <- function(what, label) tags$a(label, href = "#", style = "font-size: 0.85em;",
+                          onclick = sprintf("event.preventDefault(); event.stopPropagation(); Shiny.setInputValue('pkgdata_%s', '%s', {priority: 'event'});", what, id))
+                        tags$span(style = "color: #666;", paste0(" — ", d$class[i], ", ", d$dims[i], "; ", d$title[i]),
+                                  tags$span(style = "margin-left: 8px;", link("about", "About"), " · ", link("licence", "Licence")))
+                      } else NULL,
+                      if (identical(d$kind[i], "online")) NULL else
                       tags$span(style = "color: #666;",
                                 if (!is.na(d$class[i])) paste0(" — ", d$class[i], if (nzchar(d$dims[i])) paste0(", ", d$dims[i])),
                                 if (nzchar(d$title[i] %||% ""))
@@ -5378,7 +5518,15 @@ server <- function(input, output, session) {
   observeEvent(input$pkgdata_tick_all,   updateCheckboxGroupInput(session, "pkgdata_choice", selected = pkgdata_shown()$key))
   observeEvent(input$pkgdata_untick_all, updateCheckboxGroupInput(session, "pkgdata_choice", selected = character(0)))
   # Keep the ticks from every package: only the keys currently shown are replaced
+  # While another pop-up temporarily replaces the dialog (About / Licence, the replace check) its tick boxes
+  # disappear and report "nothing ticked"; that must not clear the ticks, so syncing is held meanwhile (TRUE),
+  # and for a couple of seconds after the dialog is redrawn, a stale "nothing ticked" is ignored (a time).
+  pkgdata_hold <- reactiveVal(FALSE)
+  pkgdata_release <- function() pkgdata_hold(Sys.time() + 2.5)
   observeEvent(input$pkgdata_choice, ignoreNULL = FALSE, {
+    h <- isolate(pkgdata_hold())
+    if (isTRUE(h)) return()
+    if (inherits(h, "POSIXct") && Sys.time() < h && is.null(input$pkgdata_choice)) return()
     shown <- tryCatch(isolate(pkgdata_shown())$key, error = function(e) character(0))
     pkgdata_sel(union(setdiff(pkgdata_sel(), shown), input$pkgdata_choice %||% character(0)))
   })
@@ -5387,14 +5535,50 @@ server <- function(input, output, session) {
     tags$p(style = "margin-top: 8px; font-size: 0.9em;",
            if (length(k) == 0) em("Nothing ticked yet.") else
              tagList(tags$strong(paste0(length(k), " ticked: ")),
-                     paste(sub("#[0-9]+$", "", sub("::", " :: ", sub("::file:", "::", k, fixed = TRUE), fixed = TRUE)), collapse = ", ")))
+                     paste(sub("^\\.online ::", "Classmate ::",
+                               sub("#[0-9]+$", "", sub("::", " :: ", sub("::file:", "::", k, fixed = TRUE), fixed = TRUE))), collapse = ", ")))
   })
   output$pkgdata_add_btn <- renderUI({
-    n <- length(pkgdata_sel())
-    lab <- if (n == 0) "Add" else paste0("Add (", n, ")")
+    k <- pkgdata_sel(); n <- length(k)
+    # Online datasets are downloaded: the button says so when everything ticked comes from Classmate's list
+    verb <- if (n > 0 && all(startsWith(k, paste0(PKGDATA_ONLINE, "::")))) "Download" else "Add"
+    lab <- if (n == 0) "Add" else paste0(verb, " (", n, ")")
     if (n == 0) disabled(actionButton("pkgdata_add", lab, class = "btn-primary"))
     else actionButton("pkgdata_add", lab, class = "btn-primary")
   })
+
+  # About / Licence pop-ups for Classmate's online datasets. They replace the Load Package Data dialog for a
+  # moment; Close brings it back (the package choice and ticks are kept).
+  online_row <- function(id) {
+    man <- attr(pkgdata_load_pkg(PKGDATA_ONLINE), "manifest")
+    if (is.null(man)) NULL else man[match(id, man$id), ]
+  }
+  observeEvent(input$pkgdata_about, {
+    mr <- online_row(input$pkgdata_about); req(!is.null(mr), !is.na(mr$id))
+    pkgdata_hold(TRUE)
+    showModal(modalDialog(
+      title = paste0("About: ", mr$title), easyClose = FALSE,
+      tags$p(mr$description),
+      tags$p(tags$strong("Source: "), mr$source),
+      tags$p(tags$strong("Retrieved: "), mr$retrieved),
+      tags$p(tags$strong("File: "), mr$file, " (", toupper(mr$format), ", ", fmt_bytes(mr$bytes), ")"),
+      tags$p(tags$strong("Name in R: "), tags$code(mr$object)),
+      footer = actionButton("pkgdata_info_close", "Close")))
+  })
+  observeEvent(input$pkgdata_licence, {
+    mr <- online_row(input$pkgdata_licence); req(!is.null(mr), !is.na(mr$id))
+    pkgdata_hold(TRUE)
+    showModal(modalDialog(
+      title = paste0("Licence: ", mr$title), easyClose = FALSE,
+      tags$p(tags$strong("Licence: "), mr$licence,
+             if (nzchar(mr$licence_url)) tagList(" (", tags$a("terms", href = mr$licence_url, target = "_blank", rel = "noopener"), ")")),
+      tags$p(tags$strong("Please credit the data as: "), mr$attribution),
+      if (nzchar(mr$notice)) tags$p(tags$strong("Notice: "), mr$notice),
+      tags$p(style = "font-size: 0.85em; color: #888;",
+             "This credit and licence are also added, as comments, to your code log when the data are downloaded."),
+      footer = actionButton("pkgdata_info_close", "Close")))
+  })
+  observeEvent(input$pkgdata_info_close, { pkgdata_release(); show_pkgdata_modal() })
 
   # Add: copy the ticked datasets into the workspace (replace check first) and add them to the context
   observeEvent(input$pkgdata_add, {
@@ -5402,6 +5586,27 @@ server <- function(input, output, session) {
     plan <- list(); failed <- character(0); used <- character(0)
     for (k in keys) {
       pk   <- sub("::.*$", "", k)
+      if (identical(pk, PKGDATA_ONLINE)) {                # one of Classmate's online datasets: download it
+        man <- attr(pkgdata_load_pkg(PKGDATA_ONLINE), "manifest")
+        mr  <- if (is.null(man)) NULL else man[match(sub("^.*::", "", k), man$id), ]
+        val <- if (is.null(mr)) NULL else tryCatch(
+          withProgress(message = paste0("Downloading ", mr$object, " (", fmt_bytes(mr$bytes), ")..."), value = 0.5,
+                       online_dataset_load(mr)),
+          error = function(err) {
+            why <- if (inherits(err, "httr2_http_404")) "That file is not available on GitHub yet."
+                   else if (identical(net_error_kind(err), "network"))
+                     "Classmate could not reach GitHub. Please check your internet connection and try again."
+                   else conditionMessage(err)
+            showNotification(paste0("Could not download ", mr$object, ". ", why), type = "error", duration = 10)
+            NULL })
+        if (is.null(val)) { failed <- c(failed, k); next }
+        final <- if (mr$object %in% used) make.names(paste0(mr$object, "_classmate")) else mr$object
+        used  <- c(used, final)
+        plan[[length(plan) + 1L]] <- list(name = final, package = "Classmate", value = val,
+                                          code = online_dataset_code(mr, final),
+                                          credit = paste(c(mr$attribution, if (nzchar(mr$notice)) mr$notice), collapse = " "))
+        next
+      }
       info <- pkgdata_load_pkg(pk)
       row  <- info[match(k, info$key), ]
       nm   <- row$object
@@ -5439,6 +5644,7 @@ server <- function(input, output, session) {
                           !identical(get(it$name, envir = .GlobalEnv), it$value), plan)
     if (length(conflicts) > 0) {
       pkgdata_plan(plan)
+      pkgdata_hold(TRUE)
       showModal(modalDialog(
         title = "Replace existing objects?",
         tags$p("Your workspace already has ", tags$strong(paste(vapply(conflicts, `[[`, "", "name"), collapse = ", ")),
@@ -5454,8 +5660,8 @@ server <- function(input, output, session) {
     }
     commit_pkg_plan(plan, reopen = FALSE)
   })
-  observeEvent(input$pkgdata_replace, commit_pkg_plan(pkgdata_plan(), reopen = TRUE))
-  observeEvent(input$pkgdata_replace_cancel, show_pkgdata_modal())
+  observeEvent(input$pkgdata_replace, { pkgdata_hold(FALSE); commit_pkg_plan(pkgdata_plan(), reopen = TRUE) })
+  observeEvent(input$pkgdata_replace_cancel, { pkgdata_release(); show_pkgdata_modal() })
   # Copy the chosen datasets into the workspace and add them to the context. The dialog stays open (the
   # student may want to add more); the ticks are cleared. `reopen` redraws it after a replace check.
   commit_pkg_plan <- function(plan, reopen = FALSE) {
@@ -5474,6 +5680,11 @@ server <- function(input, output, session) {
     else updateCheckboxGroupInput(session, "pkgdata_choice", selected = character(0))
     showNotification(paste0("Added ", paste(nms, collapse = ", "), " to your workspace and the context."),
                      type = "message", duration = 6)
+    # Data from Classmate's online list comes with credit wording that should travel with it
+    credits <- unique(Filter(function(x) !is.null(x) && nzchar(x), lapply(plan, function(it) it$credit)))
+    if (length(credits) > 0)
+      showNotification(tagList(tags$strong("Please credit the data: "), paste(unlist(credits), collapse = " ")),
+                       type = "message", duration = 15)
   }
 
 
@@ -6039,6 +6250,8 @@ server <- function(input, output, session) {
                    "restart R and run talk() again to carry on where you left off. See R output tab for details.")
           else
             paste0("Installation failed for: ", paste(still_missing, collapse = ", "), ". ",
+                   if (any(grepl("resolve host|could not connect|cannot open URL|timed out|internet", combined, ignore.case = TRUE)))
+                     "This looks like a connection problem: please check your internet connection. " else "",
                    "See R output tab for details."),
           style = "color:#b22222; font-weight:bold;"
         )
@@ -7015,7 +7228,7 @@ server <- function(input, output, session) {
 
       if (!nzchar(trimws(raw_response))) {
         output$run_status <- renderUI(tags$span(
-          "No response from Claude. Check your API key and try again.",
+          claude_failure_text(),
           style = "color: #b22222;"
         ))
         return(invisible(NULL))
@@ -7197,7 +7410,7 @@ server <- function(input, output, session) {
                         call_ai(windowed, plan_prompt, 2000))
     raw <- r1$text
     if (!nzchar(trimws(raw)))
-      return(fail("No response from Claude. Check your API key and try again."))
+      return(fail(claude_failure_text()))
     if (identical(r1$stop_reason, "max_tokens")) {
       finish()
       showModal(modalDialog(
@@ -7375,7 +7588,7 @@ server <- function(input, output, session) {
                          list(role = "user", content = results_msg))),
         build_answer_write_system_prompt(prefs$language), 1600))
       if (!nzchar(trimws(r2$text)))
-        return(fail("No response from Claude when writing the answer. Please try again."))
+        return(fail(claude_failure_text("The answer could not be written.")))
       record_usage(r2$cost_usd %||% 0)
 
       new_pkgs <- vapply(extract_pkg_info(code_cur), `[[`, character(1), "pkg")
@@ -7619,7 +7832,7 @@ server <- function(input, output, session) {
           )
         })
         if (!nzchar(trimws(api_result$text))) {
-          explain_result(list(explanation = "Could not generate an explanation — please check your API key and try again."))
+          explain_result(list(explanation = claude_failure_text("Could not generate an explanation.")))
         } else {
           record_usage(api_result$cost_usd)
           raw <- api_result$text
@@ -7686,10 +7899,7 @@ server <- function(input, output, session) {
           )
         })
         if (!nzchar(trimws(api_result$text))) {
-          detail <- if (nzchar(api_result$error_msg %||% ""))
-            paste0(" (", api_result$error_msg, ")") else ""
-          explain_result(list(explanation = paste0(
-            "Could not generate an explanation", detail, ".")))
+          explain_result(list(explanation = claude_failure_text("Could not generate an explanation.")))
         } else {
           last_explain_level(level)
           record_usage(api_result$cost_usd)
@@ -7745,7 +7955,7 @@ server <- function(input, output, session) {
           )
         })
         if (!nzchar(trimws(api_result$text))) {
-          explain_result(list(explanation = "Could not generate an explanation — please check your API key and try again."))
+          explain_result(list(explanation = claude_failure_text("Could not generate an explanation.")))
         } else {
           record_usage(api_result$cost_usd)
           explain_result(parse_explain_response(api_result$text))
@@ -7823,7 +8033,7 @@ server <- function(input, output, session) {
 
       if (!nzchar(trimws(api_result$text))) {
         explain_result(list(
-          explanation = "Could not generate an explanation — please check your API key and try again."
+          explanation = claude_failure_text("Could not generate an explanation.")
         ))
       } else if (identical(api_result$stop_reason, "max_tokens")) {
         explain_result(list(
@@ -7884,7 +8094,7 @@ server <- function(input, output, session) {
 
       if (!nzchar(trimws(api_result$text))) {
         explain_result(list(
-          explanation = "Could not generate an explanation — please check your API key and try again."
+          explanation = claude_failure_text("Could not generate an explanation.")
         ))
       } else if (identical(api_result$stop_reason, "max_tokens")) {
         explain_result(list(
@@ -8034,7 +8244,7 @@ server <- function(input, output, session) {
     if (!nzchar(trimws(api_result$text))) {
       showModal(modalDialog(
         title  = "Fix failed",
-        "No response from Claude. Please check your API key and try again.",
+        claude_failure_text(),
         footer = modalButton("OK")
       ))
       return(invisible(NULL))

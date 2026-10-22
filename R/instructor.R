@@ -230,7 +230,7 @@ classmate_make_key <- function(api_key           = NULL,
   }, error = function(e) FALSE)
 
   if (!ok)
-    stop("API key could not be validated. Please check the key and try again.",
+    stop("API key could not be validated. Please check the key and your internet connection, then try again.",
          call. = FALSE)
 
   payload <- list(
