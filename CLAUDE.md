@@ -236,10 +236,14 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.127 (2026-10-22)  
-**Current version:** 0.5.127
+**Last released:** 0.5.128 (2026-10-22)  
+**Current version:** 0.5.128
 
-Released in 0.5.127 (no unreleased changes):
+Released in 0.5.128 (no unreleased changes):
+- **Context list is a fixed-depth, alphabetical box** (user request): `#context_list_box` (and the empty-state `.cm-context-empty`, which now sits in the same box showing "None added yet.") is 76 px high = exactly three rows (row pitch 25 px) and scrolls, so the page no longer moves as items are added or removed (the "Remove deselected · Remove all" links keep their space too: `context_links` is toggled with `visibility`, not `display`); `context_choices()` sorts files and objects together alphabetically (case-insensitive, ignoring the "[class]" label), so new ones slot into place. Only the display is sorted, not `selected_objects()`.
+- **Load Package Data remembers the last package and leaves out what is already in the context** (user request). `pkgdata_last` is no longer reset when the dialog opens or closes (the earlier blank-on-open was only to avoid the stale-input flash, fixed separately in 0.5.124), so reopening preselects the package chosen last time if it is still available; ticks are still cleared. `pkgdata_added` (named character: dataset key -> object name in the workspace) is filled by `commit_pkg_plan()` (plan items now carry `key`); `pkgdata_shown()` drops rows whose key is in it while that object name is still in `selected_objects()`, so removing it from the context (Remove deselected / Remove all) brings it back. The list says how many were left out ("N datasets are not shown because they have already been added") and, when nothing else is left, "Everything listed here has already been added…". Not remembered across Pause/resume (the context is restored but `pkgdata_added` starts empty, so those datasets show again). Tested live: first open blank; reopen -> `datasets` preselected with 107 of 108 (mtcars omitted, note shown); after removing mtcars from the context it is listed again (108).
+
+Released in 0.5.127:
 - **Wording about stopping, and Run unfrozen after a stop** (user report: pressing Stop in RStudio makes RStudio ask "R is not responding to your request to interrupt processing… terminate R?"). Cause: Classmate catches the interrupt so the app survives, but RStudio sees R still busy inside `runApp` and nags; it cannot be removed (the only ways round it are to let the interrupt end the app, e.g. Stop = Pause, or a background-process design with an in-app Stop). So the text now leads with the time limit and prepares for the dialog: progress box "It will stop by itself after N. To stop it sooner, press Stop in RStudio (or Esc in the R console); if RStudio then asks whether to terminate R, choose No." (`run_progress_detail()`), the same advice in the Preferences note and the Run Help text. And a stopped run no longer freezes Run: `do_run_code()` / the Fix re-run set `last_run_code` to NULL when `run_result$stopped` is set (normally Run stays disabled until the code is edited), so Run can be pressed again, e.g. after allowing a longer limit.
 
 Released in 0.5.126:

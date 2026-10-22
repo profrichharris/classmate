@@ -2786,7 +2786,7 @@ ui <- fluidPage(
     ),
     # Remove links directly above the list of files and objects added for context (shown only when there
     # is something to remove)
-    tags$div(id = "context_links", style = "display: none; margin: 6px 0 6px 0; font-size: 0.85em;",
+    tags$div(id = "context_links", style = "visibility: hidden; margin: 6px 0 6px 0; font-size: 0.85em;",
       actionLink("remove_context", "Remove deselected"), " \u00b7 ", actionLink("remove_all_context", "Remove all")),
     uiOutput("context_list_ui"),
 
@@ -2825,6 +2825,11 @@ ui <- fluidPage(
       })();
     ")),
     tags$style(HTML("
+      /* The list of files and objects added for context is a box of fixed depth (about three rows) that scrolls,
+         also when empty, so the page does not move as items are added */
+      #context_list_box, .cm-context-empty { height: 76px; overflow-y: auto; box-sizing: border-box; margin-top: 10px;
+        border: 1px solid #e3e3e3; border-radius: 4px; padding: 2px 8px; background: #fafafa; }
+      .cm-context-empty { padding-top: 6px; }
       /* Magnifier beside each file / object in the context list, to the left of the tick or cross */
       #context_list_box .checkbox { position: relative; padding-left: 26px; }
       #context_list_box .cm-inspect { position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
@@ -4908,7 +4913,9 @@ server <- function(input, output, session) {
   observe({
     show_remove <- length(selected_files()) > 0 || length(selected_objects()) > 0 ||
                    isTRUE(help_mode())
-    shinyjs::toggle("context_links", condition = show_remove)
+    # hidden, not removed, so the page does not move when the first item is added
+    shinyjs::runjs(sprintf("document.getElementById('context_links').style.visibility = '%s';",
+                           if (show_remove) "visible" else "hidden"))
   })
 
   observeEvent(input$help_toggle, {
@@ -5525,7 +5532,8 @@ server <- function(input, output, session) {
   }
   pkgdata_clear_store <- function() { rm(list = ls(pkgdata_store, all.names = TRUE), envir = pkgdata_store) }
 
-  pkgdata_last <- reactiveVal("")      # the package last chosen, to restore the dialog after a replace check
+  pkgdata_last <- reactiveVal("")      # the package last chosen: reselected when the dialog is opened again
+  pkgdata_added <- reactiveVal(character(0))   # key ("package::object") -> name of the object added for context
   # The dialog's outputs follow pkgdata_pkg_val, not the raw input: a closed dialog leaves its old input value
   # behind, and reading that when the dialog is reopened drew the old package's lists first and then shrank
   pkgdata_pkg_val <- reactiveVal("")
@@ -5536,10 +5544,14 @@ server <- function(input, output, session) {
   pkgdata_redraw <- reactiveVal(0L)     # bumped whenever the dialog is shown, so the list is drawn afresh (with its ticks)
   show_pkgdata_modal <- function() {
     pkgdata_redraw(isolate(pkgdata_redraw()) + 1L)
-    pkgdata_pkg_val(isolate(pkgdata_last()))     # blank on a fresh open
     idx <- scan_pkg_data()
     pkgs <- sort(unique(idx$package))
     counts <- vapply(pkgs, function(p) sum(idx$package == p), integer(1))
+    # The package chosen last time is chosen again (if it is still there)
+    last <- isolate(pkgdata_last())
+    if (!(last %in% c(PKGDATA_ONLINE, pkgs))) last <- ""
+    pkgdata_last(last)
+    pkgdata_pkg_val(last)
     showModal(modalDialog(
       title = "Load package data",
       tags$p("Pick a package to see its datasets and any spatial files (shapefiles, GeoPackages, GeoJSON) it comes",
@@ -5551,7 +5563,7 @@ server <- function(input, output, session) {
       selectInput("pkgdata_pkg", NULL,
                   choices = c("Choose a package..." = "", "Classmate (online datasets)" = PKGDATA_ONLINE,
                               setNames(pkgs, paste0(pkgs, " (", counts, ")"))),
-                  selected = isolate(pkgdata_last()), width = "100%"),
+                  selected = last, width = "100%"),
       uiOutput("pkgdata_filters"),
       uiOutput("pkgdata_items"),
       div(style = "min-height: 30px;", uiOutput("pkgdata_ticked")),     # reserved, so the dialog does not grow when it appears
@@ -5577,10 +5589,10 @@ server <- function(input, output, session) {
       selected = if (cur %in% c(pkgs, if (online) PKGDATA_ONLINE)) cur else "")
   })
   observeEvent(input$load_package_data, {
-    pkgdata_sel(character(0)); pkgdata_clear_store(); pkgdata_last("")
+    pkgdata_sel(character(0)); pkgdata_clear_store()      # the last package is kept (see show_pkgdata_modal)
     show_pkgdata_modal()
   })
-  observeEvent(input$pkgdata_cancel, { pkgdata_clear_store(); pkgdata_sel(character(0)); pkgdata_last(""); removeModal() })
+  observeEvent(input$pkgdata_cancel, { pkgdata_clear_store(); pkgdata_sel(character(0)); removeModal() })
 
   # Info for the chosen package (loading it on first use)
   pkgdata_info <- reactive({
@@ -5599,9 +5611,16 @@ server <- function(input, output, session) {
   # What is shown: the package's datasets, filtered by name and type
   pkgdata_shown <- reactive({
     info <- pkgdata_info(); req(info)
+    big <- isTRUE(attr(info, "big"))
+    # Datasets already added for context (and not since removed from it) are left out of the list
+    added <- pkgdata_added()
+    gone  <- names(added)[unname(added) %in% selected_objects()]
+    n_hidden <- sum(info$key %in% gone)
+    info <- info[!(info$key %in% gone), , drop = FALSE]
     q <- trimws(input$pkgdata_filter %||% ""); t <- input$pkgdata_type %||% ""
     if (nzchar(q)) info <- info[grepl(tolower(q), tolower(paste(info$object, info$title)), fixed = TRUE), ]
-    if (nzchar(t) && !isTRUE(attr(info, "big"))) info <- info[info$class == t, ]
+    if (nzchar(t) && !big) info <- info[info$class == t, ]
+    attr(info, "hidden") <- n_hidden
     info
   })
   output$pkgdata_items <- renderUI({
@@ -5624,7 +5643,11 @@ server <- function(input, output, session) {
       div(style = "margin: 2px 0 6px 0; font-size: 0.85em;",
           actionLink("pkgdata_tick_all", "Tick all shown"), " · ", actionLink("pkgdata_untick_all", "Untick all shown")),
       div(style = "max-height: 250px; overflow-y: auto; border: 1px solid #e3e3e3; border-radius: 4px; padding: 6px 10px;",
-        if (nrow(d) == 0) em("No datasets match.") else
+        if (nrow(d) == 0)
+          em(if ((attr(d, "hidden") %||% 0L) > 0L && !nzchar(trimws(input$pkgdata_filter %||% "")))
+               "Everything listed here has already been added. Remove it from the context list to add it again."
+             else "No datasets match.")
+        else
           checkboxGroupInput("pkgdata_choice", NULL,
             choiceNames  = lapply(seq_len(nrow(d)), function(i)
               tagList(tags$strong(d$object[i]),
@@ -5656,7 +5679,11 @@ server <- function(input, output, session) {
                                   if (identical(d$class[i], "spatial file")) paste0(" (", d$title[i], ")")
                                   else paste0(if (!is.na(d$class[i])) "; " else " — ", d$title[i])))),
             choiceValues = d$key,
-            selected     = intersect(d$key, isolate(pkgdata_sel())))))
+            selected     = intersect(d$key, isolate(pkgdata_sel())))),
+      if ((attr(d, "hidden") %||% 0L) > 0L)
+        tags$p(style = "margin: 4px 0 0 0; font-size: 0.8em; color: #888;",
+               attr(d, "hidden"), if (attr(d, "hidden") == 1L) " dataset is" else " datasets are",
+               " not shown because ", if (attr(d, "hidden") == 1L) "it has" else "they have", " already been added."))
   })
   observeEvent(input$pkgdata_tick_all,   updateCheckboxGroupInput(session, "pkgdata_choice", selected = pkgdata_shown()$key))
   observeEvent(input$pkgdata_untick_all, updateCheckboxGroupInput(session, "pkgdata_choice", selected = character(0)))
@@ -5712,7 +5739,7 @@ server <- function(input, output, session) {
         if (is.null(val)) { failed <- c(failed, k); next }
         final <- if (mr$object %in% used) make.names(paste0(mr$object, "_classmate")) else mr$object
         used  <- c(used, final)
-        plan[[length(plan) + 1L]] <- list(name = final, package = "Classmate", value = val,
+        plan[[length(plan) + 1L]] <- list(name = final, package = "Classmate", key = k, value = val,
                                           code = online_dataset_code(mr, final),
                                           credit = paste(c(mr$attribution, if (nzchar(mr$notice)) mr$notice), collapse = " "))
         next
@@ -5745,7 +5772,7 @@ server <- function(input, output, session) {
       else
         sprintf('%s <- local({ e <- new.env(); data("%s", package = "%s", envir = e); e[["%s"]] })',
                 final, row$loadname, pk, nm)
-      plan[[length(plan) + 1L]] <- list(name = final, package = pk, value = val, code = code)
+      plan[[length(plan) + 1L]] <- list(name = final, package = pk, key = k, value = val, code = code)
     }
     if (length(failed) > 0)
       showNotification(paste("Could not load:", paste(failed, collapse = ", ")), type = "error", duration = 8)
@@ -5776,6 +5803,9 @@ server <- function(input, output, session) {
   # student may want to add more); the ticks are cleared. `reopen` redraws it after a replace check.
   commit_pkg_plan <- function(plan, reopen = FALSE) {
     for (it in plan) assign(it$name, it$value, envir = .GlobalEnv)
+    ad <- pkgdata_added()                     # datasets added for context: hidden from the list while they stay in it
+    for (it in plan) if (!is.null(it$key)) ad[it$key] <- it$name
+    pkgdata_added(ad)
     nms <- vapply(plan, `[[`, "", "name")
     selected_objects(union(selected_objects(), nms))
     # Record the loading in the code log, so the log is a complete, reproducible pipeline
@@ -5888,19 +5918,16 @@ server <- function(input, output, session) {
       paste0(nm, " [", if (is.na(cl)) "not found" else cl, "]")
     }
     if (length(objs)  > 0) ch <- c(ch, stats::setNames(paste0("obj::", objs), vapply(objs, obj_label, "")))
+    # Files and objects together, in alphabetical order (ignoring case and the "[class]" label)
+    if (length(ch) > 1L) ch <- ch[order(tolower(sub(" \\[[^]]*\\]$", "", names(ch))), names(ch))]
     ch
   }
   output$context_list_ui <- renderUI({
     choices <- context_choices()
     if (length(choices) == 0)
-      return(tags$p(em("None added yet."), style = "margin-top: 10px;"))
+      return(div(class = "cm-context-empty", em("None added yet.")))
     div(
       id = "context_list_box",
-      style = paste0(
-        "max-height: 100px; overflow-y: auto; margin-top: 10px;",
-        "border: 1px solid #e3e3e3; border-radius: 4px;",
-        "padding: 2px 8px; background: #fafafa;"
-      ),
       checkboxGroupInput("context_list_checked", label = NULL,
         choiceNames  = lapply(seq_along(choices), function(i) tagList(
           # the magnifier sits to the left of the tick (placed by CSS); it opens the Look-at window
