@@ -1289,6 +1289,31 @@ build_plot_export_code <- function(snippet, file, format, quality, size) {
           trimws(snippet, which = "right"), "invisible(dev.off())"), collapse = "\n")
 }
 
+# How long code may run before it is stopped (2 minutes; `options(classmate.run_time_limit = secs)` is for testing)
+run_time_limit_secs <- function() as.numeric(getOption("classmate.run_time_limit", 120))
+RUN_LIMIT_CHOICES <- c("1 minute" = 60, "2 minutes" = 120, "5 minutes" = 300, "10 minutes" = 600,
+                       "15 minutes" = 900, "30 minutes" = 1800, "1 hour" = 3600, "Never" = Inf)
+RUN_LIMIT_DEFAULT <- "2 minutes"
+run_limit_label <- function(secs) {
+  if (!is.finite(secs)) return("never")
+  if (secs >= 3600 && secs %% 3600 == 0) return(if (secs == 3600) "1 hour" else paste(secs / 3600, "hours"))
+  if (secs >= 60 && secs %% 60 == 0) return(if (secs == 60) "1 minute" else paste(secs / 60, "minutes"))
+  paste(secs, "seconds")
+}
+run_progress_detail <- function() {
+  lim <- run_time_limit_secs()
+  paste("To stop it sooner, press Stop in RStudio (or Esc in the R console).",
+        if (is.finite(lim)) paste0("It stops by itself after ", run_limit_label(lim), "."))
+}
+# Why a run was stopped, in plain words
+run_stopped_message <- function(kind, secs) {
+  keep <- "Anything it had already created is still in your workspace."
+  if (identical(kind, "timeout"))
+    paste0("Stopped: the code ran for more than ", run_limit_label(secs), ". You can allow longer runs in Preferences, or try a ",
+           "simpler version, for example fewer iterations, a smaller dataset or a coarser method. ", keep)
+  else paste("The code was stopped before it finished.", keep)
+}
+
 # Is this top-level statement a call to par() or layout() (possibly assigned, as in op <- par(mfrow = ...))?
 is_layout_call <- function(e) {
   if (is.call(e) && identical(e[[1]], as.name("<-")) && length(e) == 3L) e <- e[[3]]
@@ -1335,6 +1360,11 @@ run_code <- function(code_text) {
     for (i in seq_along(hook_names)) setHook(hook_names[i], old_hooks[[i]], "replace")
   }, add = TRUE)
 
+  # Code that runs for too long is stopped (code that installs packages is exempt). This only takes effect when R
+  # reaches a point where it checks: long calculations inside compiled code can run past it until they return.
+  lim <- if (code_installs_packages(code_text)) Inf else run_time_limit_secs()
+  setTimeLimit(elapsed = lim, transient = FALSE)
+  on.exit(setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE), add = TRUE)
   result <- tryCatch({
     console_output <- capture.output({
       withCallingHandlers({
@@ -1358,11 +1388,20 @@ run_code <- function(code_text) {
     })
     list(success = TRUE, message = "Code ran successfully.",
          warnings = warnings_seen, output = strip_ansi(console_output))
-  }, error = function(e) {
-    list(success = FALSE,
-         message  = paste("Error running code:\n", strip_ansi(conditionMessage(e))),
+  }, interrupt = function(i) {              # the Stop button in RStudio, or Esc in the console
+    list(success = FALSE, stopped = "interrupt", message = run_stopped_message("interrupt", lim),
          warnings = warnings_seen, output = strip_ansi(console_output))
+  }, error = function(e) {
+    msg <- conditionMessage(e)
+    if (grepl("reached (elapsed|CPU) time limit", msg))
+      list(success = FALSE, stopped = "timeout", message = run_stopped_message("timeout", lim),
+           warnings = warnings_seen, output = strip_ansi(console_output))
+    else
+      list(success = FALSE,
+           message  = paste("Error running code:\n", strip_ansi(msg)),
+           warnings = warnings_seen, output = strip_ansi(console_output))
   })
+  setTimeLimit(cpu = Inf, elapsed = Inf, transient = FALSE)     # the limit is for the user's code only
 
   # Close device and collect any non-blank plot files (blank PNG ≈ < 8 KB)
   tryCatch(grDevices::dev.off(plot_dev), error = function(e) invisible(NULL))
@@ -2364,6 +2403,21 @@ ui <- fluidPage(
         if (v) ['pkgdata_filters', 'pkgdata_items', 'pkgdata_ticked', 'pkgdata_add_btn'].forEach(function(id) { delete v[id]; });
       });
     })();
+  ")),
+
+  # The blue "Running..." box at the bottom right (Shiny's progress notification) cannot be closed while the work
+  # is going on: it is the reassurance that something is happening. Other notifications keep their close button.
+  tags$style(HTML("
+    .shiny-notification:has(.progress) .shiny-notification-close { display: none !important; }
+    .shiny-notification.cm-no-close .shiny-notification-close { display: none !important; }
+  ")),
+  tags$script(HTML("
+    // browsers without :has(): mark any notification that contains a progress bar
+    new MutationObserver(function() {
+      document.querySelectorAll('.shiny-notification').forEach(function(n) {
+        if (n.querySelector('.progress')) n.classList.add('cm-no-close');
+      });
+    }).observe(document.documentElement, { childList: true, subtree: true });
   ")),
 
   # Quick Console: after each Run the output box scrolls to the very bottom, so the newest output is in view
@@ -3605,7 +3659,8 @@ HELP_TEXTS <- list(
     "confirmation; Classmate then asks for a key again), and set your preferred",
     "response language, coding style (base R, tidyverse, data.table), plotting",
     "library, mapping package, image export format, quality and size, and comment",
-    "density. The Claude model in use (Sonnet 5.5) and the maximum code length are",
+    "density, and how long code may run before it is stopped (1 minute to 1 hour, or never; the",
+    "default is 2 minutes). The Claude model in use (Sonnet 5.5) and the maximum code length are",
     "shown there too, but they cannot be changed (the code length is set by your key)."
   ),
   file_select = paste(
@@ -6355,6 +6410,7 @@ server <- function(input, output, session) {
     img_size        = pref_val("img_size",         "Journal double col. (180x120 mm)"),
     max_lines       = isolate(max_lines_cap_val()),
     comment_density = pref_val("comment_density",  "Minimal"),
+    run_limit       = {rl <- pref_val("run_limit", RUN_LIMIT_DEFAULT); if (rl %in% names(RUN_LIMIT_CHOICES)) rl else RUN_LIMIT_DEFAULT},
     language        = {
       .lp <- file.path(tools::R_user_dir("classmate", "config"), "language.rds")
       if (file.exists(.lp)) tryCatch(readRDS(.lp), error = function(e) "English") else "English"
@@ -6499,7 +6555,10 @@ server <- function(input, output, session) {
         ),
         selectInput("pref_comment_density", "Comments in generated code:",
           choices  = c("None", "Minimal", "Most"),
-          selected = prefs$comment_density, width = "100%")
+          selected = prefs$comment_density, width = "100%"),
+        selectInput("pref_run_limit", "Stop code that runs longer than:",
+          choices  = names(RUN_LIMIT_CHOICES),
+          selected = prefs$run_limit, width = "100%")
       ),
       tags$p(em(
         "Maximum length is set by your key. It is a soft target: Claude will aim to stay",
@@ -6507,7 +6566,10 @@ server <- function(input, output, session) {
         "load directly will also generate a warning if they exceed this limit.",
         "Comment levels — None: no comments at all; Minimal: brief section markers only",
         "(e.g. '# Load data'); Most: section markers plus short notes on non-obvious lines.",
-        "Even at Most, line-by-line commenting is avoided."
+        "Even at Most, line-by-line commenting is avoided.",
+        "Code that runs longer than the time you choose is stopped (the 2 minutes default suits most work; choose",
+        "longer for slow methods, or Never). Press Stop in RStudio, or Esc in the R console, to stop code sooner.",
+        "A very long step inside compiled code may not stop until it finishes."
       )),
       # Key file buttons at the left of the footer, Close at the right
       footer = tags$div(style = "display: flex; justify-content: space-between; align-items: center;",
@@ -6627,6 +6689,11 @@ server <- function(input, output, session) {
   observeEvent(input$pref_img_format,      { prefs$img_format      <- input$pref_img_format })
   observeEvent(input$pref_img_quality,     { prefs$img_quality     <- input$pref_img_quality })
   observeEvent(input$pref_img_size,        { prefs$img_size        <- input$pref_img_size })
+  # How long code may run before it is stopped (Preferences); run_code() reads it from the option
+  observe(options(classmate.run_time_limit = unname(RUN_LIMIT_CHOICES[[prefs$run_limit]])))
+  observeEvent(input$pref_run_limit, {
+    if (isTRUE(input$pref_run_limit %in% names(RUN_LIMIT_CHOICES))) prefs$run_limit <- input$pref_run_limit
+  }, ignoreInit = TRUE)
   observeEvent(input$pref_comment_density, {
     old_density <- prefs$comment_density
     new_density <- input$pref_comment_density
@@ -8175,7 +8242,7 @@ server <- function(input, output, session) {
     check_and_install_if_needed(code_text, function() {
       code_running(TRUE)
       tryCatch({
-        run_result <- withProgress(message = "Running code...", value = 0.5, run_code(code_text))
+        run_result <- withProgress(message = "Running code...", detail = run_progress_detail(), value = 0.5, run_code(code_text))
         last_run_code(code_text)
         handle_run_result(run_result)
         if (run_result$success) {
@@ -8213,7 +8280,7 @@ server <- function(input, output, session) {
   do_run_export <- function(block, full, file) {
     ui_busy(TRUE); code_running(TRUE)
     on.exit({ code_running(FALSE); ui_busy(FALSE) }, add = TRUE)
-    res <- withProgress(message = "Saving the plot...", value = 0.5, run_code(block))
+    res <- withProgress(message = "Saving the plot...", detail = run_progress_detail(), value = 0.5, run_code(block))
     run_status_is_run(TRUE)
     if (isTRUE(res$success)) {
       pending_export(NULL)
@@ -8334,7 +8401,7 @@ server <- function(input, output, session) {
     captured_fixed_code <- fixed_code
 
     check_and_install_if_needed(fixed_code, function() {
-      run_result <- withProgress(message = "Re-running fixed code...", value = 0.5,
+      run_result <- withProgress(message = "Re-running fixed code...", detail = run_progress_detail(), value = 0.5,
                                  run_code(captured_fixed_code))
       last_run_code(captured_fixed_code)
       handle_run_result(run_result, stay_on_code = TRUE)
@@ -8396,9 +8463,11 @@ server <- function(input, output, session) {
   })
 
 
-  run_status_ui <- function(success) {
+  run_status_ui <- function(success, stopped = NULL) {
     if (isTRUE(success))
       tags$span("Success!", style = "color: #1a6e1a; font-weight: bold;")
+    else if (!is.null(stopped))
+      tags$span("Stopped", style = "color: #b36b00; font-weight: bold;")
     else if (identical(success, FALSE))
       tags$span("Failed to run", style = "color: #b22222; font-weight: bold;")
     else
@@ -8424,13 +8493,14 @@ server <- function(input, output, session) {
     if (!isTRUE(run_result$success)) {
       err_line <- sub("^Error running code:\\s*\\n?\\s*", "", run_result$message %||% "")
       if (nzchar(trimws(err_line)))
-        base_output <- c(paste0("Error: ", err_line), if (length(base_output) > 0) base_output)
+        base_output <- c(if (is.null(run_result$stopped)) paste0("Error: ", err_line) else err_line,
+                         if (length(base_output) > 0) base_output)
     }
     plots <- run_result$plot_files %||% character(0)
     console_output_rv(base_output)
     plot_files_rv(plots)
     warnings_rv(run_result$warnings %||% character(0))
-    output$run_status <- renderUI(run_status_ui(run_result$success))
+    output$run_status <- renderUI(run_status_ui(run_result$success, run_result$stopped))
     # A successful run (Run, AutoRun or Fix) finishes with the prompt, so the prompt box is cleared
     if (isTRUE(run_result$success)) updateTextAreaInput(session, "prompt", value = "")
     has_output <- nzchar(trimws(paste(base_output, collapse = "\n"))) || length(plots) > 0
@@ -8553,7 +8623,8 @@ server <- function(input, output, session) {
         img_quality     = prefs$img_quality,
         img_size        = prefs$img_size,
         max_lines       = prefs$max_lines,
-        comment_density = prefs$comment_density
+        comment_density = prefs$comment_density,
+        run_limit       = prefs$run_limit
       ),
       conversation_history = conversation_history(),
       saved_conversations  = saved_conversations(),
