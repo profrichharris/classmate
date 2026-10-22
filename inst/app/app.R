@@ -2296,6 +2296,60 @@ ui <- fluidPage(
       }, true);
     })();
   ")),
+  # Hover cards (the About / Licence links beside Classmate's online datasets): the card shows while the pointer is
+  # over the link or the card, and closes shortly after it leaves both. A click also opens it (for touch screens).
+  tags$style(HTML("
+    #cm-hover-card { position: fixed; z-index: 99999; display: none; max-width: 430px; max-height: 70vh; overflow: auto;
+      background: #fff; color: #333; border: 1px solid #bbb; border-radius: 6px; padding: 8px 12px 2px 12px;
+      font-size: 0.85em; line-height: 1.35; text-align: left; box-shadow: 0 4px 14px rgba(0,0,0,0.25); }
+    #cm-hover-card p { margin: 0 0 7px 0; }
+  ")),
+  tags$script(HTML("
+    (function() {
+      var card = null, link = null, timer = null;
+      function el() {
+        if (card) return card;
+        card = document.createElement('div'); card.id = 'cm-hover-card'; document.body.appendChild(card);
+        card.addEventListener('mouseenter', function() { clearTimeout(timer); });
+        card.addEventListener('mouseleave', hideSoon);
+        return card;
+      }
+      function hide() { if (card) card.style.display = 'none'; link = null; }
+      function hideSoon() { clearTimeout(timer); timer = setTimeout(hide, 250); }
+      function show(a) {
+        clearTimeout(timer); var c = el();
+        if (link !== a) { c.innerHTML = a.getAttribute('data-card') || ''; link = a; }
+        c.style.display = 'block';
+        var r = a.getBoundingClientRect(), w = c.offsetWidth, h = c.offsetHeight;
+        var x = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+        var y = r.bottom + 4; if (y + h > window.innerHeight - 8) y = Math.max(8, r.top - h - 4);
+        c.style.left = x + 'px'; c.style.top = y + 'px';
+      }
+      document.addEventListener('mouseover', function(e) {
+        var a = e.target.closest ? e.target.closest('a.cm-hover-link') : null; if (a) show(a);
+      });
+      document.addEventListener('mouseout', function(e) {
+        var a = e.target.closest ? e.target.closest('a.cm-hover-link') : null;
+        if (a && !(e.relatedTarget && card && card.contains(e.relatedTarget))) hideSoon();
+      });
+      document.addEventListener('click', function(e) {
+        var a = e.target.closest ? e.target.closest('a.cm-hover-link') : null;
+        if (a) { e.preventDefault(); e.stopPropagation(); show(a); }
+        else if (card && !card.contains(e.target)) hide();
+      }, true);
+      document.addEventListener('keydown', function(e) { if (e.key === 'Escape') hide(); });
+      $(document).on('shiny:value', function(e) { if (e.name === 'pkgdata_items') hide(); });
+      // Shiny replays an output's last value into a dialog drawn again; for Load Package Data that was the old,
+      // taller list, drawn for an instant before the fresh one arrived (the dialog shrank). The dialog's outputs
+      // are re-sent every time it is shown (pkgdata_redraw), so the remembered values are dropped when it closes.
+      $(document).on('hidden.bs.modal', function() {
+        hide();
+        var v = window.Shiny && Shiny.shinyapp && Shiny.shinyapp.$values;
+        if (v) ['pkgdata_filters', 'pkgdata_items', 'pkgdata_ticked', 'pkgdata_add_btn'].forEach(function(id) { delete v[id]; });
+      });
+    })();
+  ")),
+
   # Quick Console: after each Run the output box scrolls to the very bottom, so the newest output is in view
   tags$script(HTML("
     $(document).on('shiny:value', function(e) {
@@ -5426,7 +5480,7 @@ server <- function(input, output, session) {
                   selected = isolate(pkgdata_last()), width = "100%"),
       uiOutput("pkgdata_filters"),
       uiOutput("pkgdata_items"),
-      uiOutput("pkgdata_ticked"),
+      div(style = "min-height: 30px;", uiOutput("pkgdata_ticked")),     # reserved, so the dialog does not grow when it appears
       footer = tagList(
         uiOutput("pkgdata_add_btn", inline = TRUE),
         actionButton("pkgdata_cancel", "Close")
@@ -5461,6 +5515,7 @@ server <- function(input, output, session) {
     withProgress(message = paste0("Reading the ", p, " datasets..."), value = 0.5, pkgdata_load_pkg(p))
   })
   output$pkgdata_filters <- renderUI({
+    pkgdata_redraw()
     info <- pkgdata_info(); req(info)
     big <- isTRUE(attr(info, "big"))
     fluidRow(
@@ -5500,11 +5555,25 @@ server <- function(input, output, session) {
             choiceNames  = lapply(seq_len(nrow(d)), function(i)
               tagList(tags$strong(d$object[i]),
                       if (identical(d$kind[i], "online")) {
-                        id <- gsub("[^A-Za-z0-9_]", "", sub("^.*::", "", d$key[i]))
-                        link <- function(what, label) tags$a(label, href = "#", style = "font-size: 0.85em;",
-                          onclick = sprintf("event.preventDefault(); event.stopPropagation(); Shiny.setInputValue('pkgdata_%s', '%s', {priority: 'event'});", what, id))
+                        mr <- man[match(sub("^.*::", "", d$key[i]), man$id), ]
+                        # The About / Licence text is a hover card (see the cm-hover script): it shows while the
+                        # pointer is over the link and goes when it moves away
+                        card_about <- as.character(tagList(
+                          tags$p(mr$description),
+                          tags$p(tags$strong("Source: "), mr$source),
+                          tags$p(tags$strong("Retrieved: "), mr$retrieved),
+                          tags$p(tags$strong("File: "), mr$file, " (", toupper(mr$format), ", ", fmt_bytes(mr$bytes), ")"),
+                          tags$p(tags$strong("Name in R: "), tags$code(mr$object))))
+                        card_licence <- as.character(tagList(
+                          tags$p(tags$strong("Licence: "), mr$licence,
+                                 if (nzchar(mr$licence_url)) tagList(" (", tags$a("terms", href = mr$licence_url, target = "_blank", rel = "noopener"), ")")),
+                          tags$p(tags$strong("Please credit the data as: "), mr$attribution),
+                          if (nzchar(mr$notice)) tags$p(tags$strong("Notice: "), mr$notice),
+                          tags$p(style = "color: #888;", "This credit and licence are also added, as comments, to your code log when the data are downloaded.")))
+                        link <- function(label, card) tags$a(label, href = "#", class = "cm-hover-link", `data-card` = card,
+                                                             style = "font-size: 0.85em;")
                         tags$span(style = "color: #666;", paste0(" — ", d$class[i], ", ", d$dims[i], "; ", d$title[i]),
-                                  tags$span(style = "margin-left: 8px;", link("about", "About"), " · ", link("licence", "Licence")))
+                                  tags$span(style = "margin-left: 8px;", link("About", card_about), " · ", link("Licence", card_licence)))
                       } else NULL,
                       if (identical(d$kind[i], "online")) NULL else
                       tags$span(style = "color: #666;",
@@ -5531,52 +5600,21 @@ server <- function(input, output, session) {
     pkgdata_sel(union(setdiff(pkgdata_sel(), shown), input$pkgdata_choice %||% character(0)))
   })
   output$pkgdata_ticked <- renderUI({
+    pkgdata_redraw()
     k <- pkgdata_sel()
     tags$p(style = "margin-top: 8px; font-size: 0.9em;",
-           if (length(k) == 0) em("Nothing ticked yet.") else
+           if (length(k) == 0) em("No data selected yet.") else
              tagList(tags$strong(paste0(length(k), " ticked: ")),
                      paste(sub("^\\.online ::", "Classmate ::",
                                sub("#[0-9]+$", "", sub("::", " :: ", sub("::file:", "::", k, fixed = TRUE), fixed = TRUE))), collapse = ", ")))
   })
   output$pkgdata_add_btn <- renderUI({
+    pkgdata_redraw()
     n <- length(pkgdata_sel())
     lab <- if (n == 0) "Add" else paste0("Add (", n, ")")
     if (n == 0) disabled(actionButton("pkgdata_add", lab, class = "btn-primary"))
     else actionButton("pkgdata_add", lab, class = "btn-primary")
   })
-
-  # About / Licence pop-ups for Classmate's online datasets. They replace the Load Package Data dialog for a
-  # moment; Close brings it back (the package choice and ticks are kept).
-  online_row <- function(id) {
-    man <- attr(pkgdata_load_pkg(PKGDATA_ONLINE), "manifest")
-    if (is.null(man)) NULL else man[match(id, man$id), ]
-  }
-  observeEvent(input$pkgdata_about, {
-    mr <- online_row(input$pkgdata_about); req(!is.null(mr), !is.na(mr$id))
-    pkgdata_hold(TRUE)
-    showModal(modalDialog(
-      title = paste0("About: ", mr$title), easyClose = FALSE,
-      tags$p(mr$description),
-      tags$p(tags$strong("Source: "), mr$source),
-      tags$p(tags$strong("Retrieved: "), mr$retrieved),
-      tags$p(tags$strong("File: "), mr$file, " (", toupper(mr$format), ", ", fmt_bytes(mr$bytes), ")"),
-      tags$p(tags$strong("Name in R: "), tags$code(mr$object)),
-      footer = actionButton("pkgdata_info_close", "Close")))
-  })
-  observeEvent(input$pkgdata_licence, {
-    mr <- online_row(input$pkgdata_licence); req(!is.null(mr), !is.na(mr$id))
-    pkgdata_hold(TRUE)
-    showModal(modalDialog(
-      title = paste0("Licence: ", mr$title), easyClose = FALSE,
-      tags$p(tags$strong("Licence: "), mr$licence,
-             if (nzchar(mr$licence_url)) tagList(" (", tags$a("terms", href = mr$licence_url, target = "_blank", rel = "noopener"), ")")),
-      tags$p(tags$strong("Please credit the data as: "), mr$attribution),
-      if (nzchar(mr$notice)) tags$p(tags$strong("Notice: "), mr$notice),
-      tags$p(style = "font-size: 0.85em; color: #888;",
-             "This credit and licence are also added, as comments, to your code log when the data are downloaded."),
-      footer = actionButton("pkgdata_info_close", "Close")))
-  })
-  observeEvent(input$pkgdata_info_close, { pkgdata_release(); show_pkgdata_modal() })
 
   # Add: copy the ticked datasets into the workspace (replace check first) and add them to the context
   observeEvent(input$pkgdata_add, {
