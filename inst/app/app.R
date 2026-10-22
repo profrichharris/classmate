@@ -1092,15 +1092,31 @@ code_too_long <- function(code, max_lines) {
 # LCS-based diff: matches new lines forward through old lines, extracts just the
 # old section that corresponds to the new code, and identifies changed lines in both
 # panels. Returns NULL when there is no difference or the change is too substantial (< 60% of lines unchanged).
+# The code on a line without its comment: everything from the first "#" that is not inside a string
+# ("...", '...' or `...`, with backslash escapes) is dropped.
+strip_code_comment <- function(line) {
+  if (is.na(line) || !grepl("#", line, fixed = TRUE)) return(line)
+  ch <- strsplit(line, "", fixed = TRUE)[[1]]
+  quote <- ""; i <- 1L; n <- length(ch)
+  while (i <= n) {
+    c <- ch[i]
+    if (nzchar(quote)) {
+      if (c == "\\" && quote != "`") i <- i + 1L           # skip the escaped character
+      else if (c == quote) quote <- ""
+    } else if (c %in% c("\"", "'", "`")) quote <- c
+    else if (c == "#") return(substr(line, 1L, i - 1L))
+    i <- i + 1L
+  }
+  line
+}
+
 compute_diff <- function(old_code, new_code, max_changed_frac = 0.4) {
   old_lines <- strsplit(old_code, "\n", fixed = TRUE)[[1]]
   new_lines <- strsplit(new_code, "\n", fixed = TRUE)[[1]]
-  # Comments are ignored: a trailing comment is dropped (only when the line has no quotes, so a
-  # "#" inside a string is safe) and comment-only lines are treated as blank.
+  # Comments are ignored: a comment, on its own line or after code, is dropped (a "#" inside a string is not a
+  # comment: see strip_code_comment()), so adding or changing a comment never counts as a change.
   strip_trailing_op <- function(x) {
-    x <- trimws(x)
-    x <- ifelse(grepl("[\"']", x), x, sub("\\s*#.*$", "", x))
-    x[startsWith(x, "#")] <- ""
+    x <- trimws(vapply(x, strip_code_comment, "", USE.NAMES = FALSE))
     trimws(sub("[+,|&]\\s*$", "", x))
   }
   old_norm  <- strip_trailing_op(old_lines)

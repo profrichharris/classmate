@@ -236,10 +236,13 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.124 (2026-10-22)  
-**Current version:** 0.5.124
+**Last released:** 0.5.125 (2026-10-22)  
+**Current version:** 0.5.125
 
-Released in 0.5.124 (no unreleased changes):
+Released in 0.5.125 (no unreleased changes):
+- **Changes tab ignores comments properly** (user report: `col = "white",` vs `col = "white",   # tract border colour` was highlighted as a change): the 0.5.92 rule only dropped a trailing comment on lines *without* quotes, to keep a `#` inside a string safe, so any line with a string kept its comment. `compute_diff()` now uses `strip_code_comment()`, a small scanner that drops everything from the first `#` outside a string (`"..."`, `'...'`, `` `...` ``, with backslash escapes), so adding, removing or rewording a comment never counts as a change, and a real change on a commented line still does. Tested on the reported case, `#` inside strings/backticks, escaped quotes, comment-only lines and a comment on the last line (`/tmp/kt/diff_comment_test.R`). Not handled: R raw strings (`r"(...)"`) and a string that runs across lines. The prompt line's "(edited)" marker still compares the raw text, so adding a comment does mark the code as edited (the text did change).
+
+Released in 0.5.124:
 - **Load Package Data no longer flashes tall then shrinks when reopened** (user report): Shiny's client replays an output's last value into a newly bound output, so the reopened dialog first drew the previous package's long list (measured 747 px) and then the fresh blank one (415 px). The page script now deletes the remembered values (`Shiny.shinyapp.$values`) of `pkgdata_filters/items/ticked/add_btn` when a dialog closes, and those four outputs all depend on `pkgdata_redraw` so they are re-sent each time the dialog is shown (needed for the replace-check path, which relied on the replay); the "N ticked" line ("No data selected yet." when empty) has a reserved 30 px so the dialog does not grow when it appears. Measured on reopening: 0 -> ~415 px, no shrinking. Same replay quirk may affect other re-shown dialogs (Quick Console, Preferences), none reported.
 - **Hover cards for About / Licence** beside Classmate's online datasets (see the online datasets entry below): replaced the two small pop-ups.
 
