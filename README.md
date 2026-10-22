@@ -39,7 +39,7 @@ data from any of them, such as `datasets` or `spData`.
 It also offers **Classmate (online datasets)**: teaching data kept in the
 [`datasets/`](datasets/) folder of this repository, in its original formats. Choosing it
 lists each dataset with its size, source, licence and the credit wording that goes with it;
-**Download** fetches the files you tick from GitHub (once; they are checked against a
+**Add** fetches the files you tick from GitHub (once; they are checked against a
 checksum), imports them and adds them to the prompt's context. Nothing is bundled with the
 package itself. See [`datasets/README.md`](datasets/README.md) for how datasets are added.
 

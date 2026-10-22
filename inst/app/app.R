@@ -5417,7 +5417,7 @@ server <- function(input, output, session) {
       tags$p("Pick a package to see its datasets and any spatial files (shapefiles, GeoPackages, GeoJSON) it comes",
              "with, tick the ones you want (in one or several packages) and press Add: they are put in your R",
              "workspace and added to the context for your prompt. \"Classmate (online datasets)\" lists data that",
-             "Classmate keeps on GitHub, with its source and licence: for those the button is Download."),
+             "Classmate keeps on GitHub, with its source and licence: Add downloads them first."),
       tags$label("Package:", `for` = "pkgdata_pkgfilter"),
       textInput("pkgdata_pkgfilter", NULL, placeholder = "Filter the package list (e.g. sp) (optional)", width = "100%"),
       selectInput("pkgdata_pkg", NULL,
@@ -5539,10 +5539,8 @@ server <- function(input, output, session) {
                                sub("#[0-9]+$", "", sub("::", " :: ", sub("::file:", "::", k, fixed = TRUE), fixed = TRUE))), collapse = ", ")))
   })
   output$pkgdata_add_btn <- renderUI({
-    k <- pkgdata_sel(); n <- length(k)
-    # Online datasets are downloaded: the button says so when everything ticked comes from Classmate's list
-    verb <- if (n > 0 && all(startsWith(k, paste0(PKGDATA_ONLINE, "::")))) "Download" else "Add"
-    lab <- if (n == 0) "Add" else paste0(verb, " (", n, ")")
+    n <- length(pkgdata_sel())
+    lab <- if (n == 0) "Add" else paste0("Add (", n, ")")
     if (n == 0) disabled(actionButton("pkgdata_add", lab, class = "btn-primary"))
     else actionButton("pkgdata_add", lab, class = "btn-primary")
   })
