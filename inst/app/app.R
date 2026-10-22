@@ -1244,6 +1244,8 @@ start_pkg_install <- function(cran_pkgs, github_refs, repos) {
 # For each plot shown in the R output tab (keyed by the path of its PNG): the lines of code that
 # drew it, found while the code ran (see run_code()). Used to write the "save this plot" code.
 plot_code_cache <- new.env(parent = emptyenv())
+# The same for interactive output (keyed by the page's path relative to tempdir()): the statement that drew it
+widget_code_cache <- new.env(parent = emptyenv())
 # For plots whose code could not be found: why ("several" = one statement drew several pages), to explain it
 plot_code_why   <- new.env(parent = emptyenv())
 
@@ -1258,7 +1260,7 @@ plot_export_dpi <- function(quality) switch(quality, Low = 96, Medium = 150, Hig
 
 # A free name for a plot object: map (tmap), p (ggplot2) or fig, with a number added if it is taken
 tidy_plot_name <- function(cls, code) {
-  base_nm <- if ("tmap" %in% cls) "map" else if (any(c("gg", "ggplot") %in% cls)) "p" else "fig"
+  base_nm <- if (any(c("tmap", "leaflet") %in% cls)) "map" else if (any(c("gg", "ggplot", "plotly") %in% cls)) "p" else "fig"
   used <- c(ls(envir = globalenv()),
             tryCatch(all.names(parse(text = code, keep.source = FALSE)), error = function(e) character(0)))
   nm <- base_nm; k <- 1L
@@ -1353,6 +1355,15 @@ run_code <- function(code_text) {
     if (isTRUE(tryCatch(graphics::par("page"), error = function(e) TRUE))) starts <<- c(starts, cur_expr)
   }
   note_page_grid <- function(...) starts <<- c(starts, cur_expr)
+  # Interactive output (leaflet, plotly, tmap in view mode and other htmlwidgets) goes to RStudio's Viewer pane,
+  # which is not part of this app: the viewer hook collects the pages written, to be shown in the R output tab
+  widget_urls <- character(0)
+  old_viewer  <- getOption("viewer")
+  widget_stmt <- integer(0)     # the statement that was running when each page was written
+  options(viewer = function(url, height = NULL) {
+    widget_urls <<- c(widget_urls, url); widget_stmt <<- c(widget_stmt, cur_expr); invisible(NULL)
+  })
+  on.exit(options(viewer = old_viewer), add = TRUE)
   hook_names <- c("before.plot.new", "before.grid.newpage")
   old_hooks  <- lapply(hook_names, getHook)
   setHook("before.plot.new",      note_page_base, "append")
@@ -1375,7 +1386,13 @@ run_code <- function(code_text) {
           yy <- withVisible(eval(exprs[[i]], envir = globalenv()))
           if (yy$visible && !is.null(yy$value)) vis_cls[[as.character(i)]] <- class(yy$value)
           if (yy$visible) {
-            if (isS4(yy$value)) methods::show(yy$value) else print(yy$value)
+            v <- yy$value
+            if (inherits(v, "htmlwidget")) {
+              print(v, view = TRUE)                                  # view = TRUE: also when R is not interactive
+            } else if (inherits(v, "tmap") && isTRUE(tryCatch(tmap::tmap_mode() == "view", error = function(e) FALSE))) {
+              w <- tryCatch(tmap::tmap_leaflet(v), error = function(e) NULL)   # tmap in view mode draws a leaflet widget
+              if (is.null(w)) print(v) else print(w, view = TRUE)
+            } else if (isS4(v)) methods::show(v) else print(v)
           }
           # Did this statement draw anything? (a new page, or a change to the current page)
           n_now <- tryCatch(length(grDevices::recordPlot()[[1]]), error = function(e) n_prev)
@@ -1452,7 +1469,35 @@ run_code <- function(code_text) {
     if (isTRUE(r$ok) && isTRUE(r$changed)) wd_changed <- r$path
   }
 
-  c(result, list(plot_files = plot_files, wd_changed = wd_changed))
+  # The interactive pages written (inside tempdir(), which the app serves), as paths relative to it
+  td <- normalizePath(tempdir(), winslash = "/", mustWork = FALSE)
+  rel_of <- function(u) {
+    np <- normalizePath(sub("^file://", "", u), winslash = "/", mustWork = FALSE)
+    if (file.exists(np) && startsWith(np, paste0(td, "/"))) substring(np, nchar(td) + 2L) else NA_character_
+  }
+  w_rel <- vapply(widget_urls, rel_of, "", USE.NAMES = FALSE)
+  # The lines of code behind each page (as for plots), so that code to save it as a web page can be written
+  if (isTRUE(result$success) && !is.null(exprs) && length(w_rel) > 0 && !anyDuplicated(widget_stmt)) {
+    refs <- attr(exprs, "srcref"); lines <- strsplit(code_text, "\n", fixed = TRUE)[[1]]
+    if (!is.null(refs)) for (k in seq_along(w_rel)) if (!is.na(w_rel[k])) {
+      si <- widget_stmt[k]; e <- exprs[[si]]
+      cls  <- vis_cls[[as.character(si)]]
+      kind <- sym <- NULL
+      if (!is.null(cls)) { kind <- if (is.name(e)) "symbol" else "value"; if (is.name(e)) sym <- as.character(e) }
+      else if (is.call(e) && identical(e[[1]], as.name("print")) && length(e) >= 2 && is.name(e[[2]])) {
+        kind <- "symbol"; sym <- as.character(e[[2]])
+        cls  <- tryCatch(class(get(sym, envir = globalenv())), error = function(err) character(0))
+      }
+      if (identical(kind, "symbol") && is.null(cls))
+        cls <- tryCatch(class(get(sym, envir = globalenv())), error = function(err) character(0))
+      if (!is.null(kind))
+        assign(w_rel[k], list(code = paste(lines[refs[[si]][1L]:refs[[si]][3L]], collapse = "\n"),
+                              kind = kind, cls = cls %||% character(0), sym = sym %||% ""), envir = widget_code_cache)
+    }
+  }
+  widgets <- unique(w_rel[!is.na(w_rel)])
+
+  c(result, list(plot_files = plot_files, widgets = widgets %||% character(0), wd_changed = wd_changed))
 }
 
 # --- Look at an item added for context (the magnifier beside it in the context list) -----------------
@@ -2752,7 +2797,15 @@ ui <- fluidPage(
     tabsetPanel(id = "prompt_tabs", type = "tabs",
       tabPanel("Your prompt",
         tags$div(style = "margin-top: 8px;",
-          textAreaInput("prompt", label = NULL, rows = 4, width = "100%")
+          # The data-protection notice is drawn over the (empty, read-only) prompt box while it is active, because a
+          # text box cannot hold text in two colours or weights
+          tags$div(id = "prompt_wrap", style = "position: relative;",
+            textAreaInput("prompt", label = NULL, rows = 4, width = "100%"),
+            tags$div(id = "prompt_notice", class = "cm-prompt-notice", style = "display: none;",
+              tags$span(style = "color: #8b0000;",
+                "Enter your prompt here. Always prioritise data protection. Never include personal data or information in your prompts."),
+              tags$br(), tags$br(),
+              tags$strong(style = "color: #000000;", "Press Clear to continue.")))
         )
       ),
       tabPanel("Past prompts",
@@ -2830,8 +2883,17 @@ ui <- fluidPage(
       #context_list_box, .cm-context-empty { height: 76px; overflow-y: auto; box-sizing: border-box; margin-top: 10px;
         border: 1px solid #e3e3e3; border-radius: 4px; padding: 2px 8px; background: #fafafa; }
       .cm-context-empty { padding-top: 6px; }
+      /* Interactive plots in the Plots sub-tab: a miniature of the page, not clickable itself */
+      .cm-wthumb { display: inline-block; position: relative; width: 140px; height: 105px; margin: 4px; overflow: hidden;
+        vertical-align: top; cursor: pointer; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
+      .cm-wthumb:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+      .cm-wthumb iframe { width: 700px; height: 525px; border: 0; transform: scale(0.2); transform-origin: 0 0; pointer-events: none; }
+      .cm-wbadge { position: absolute; right: 2px; bottom: 2px; font-size: 9px; line-height: 1; padding: 2px 4px;
+        background: rgba(0,0,0,0.6); color: #fff; border-radius: 3px; pointer-events: none; }
       /* The data-protection notice in the prompt box is dark red until the prompt box is cleared */
-      #prompt.cm-notice { color: #8b0000; }
+      #prompt_wrap .form-group { margin-bottom: 0; }
+      .cm-prompt-notice { position: absolute; top: 1px; left: 1px; right: 1px; bottom: 1px; padding: 6px 12px;
+        background: #fff; border-radius: 3px; font-size: 14px; line-height: 1.42857; overflow: hidden; pointer-events: none; }
       /* Magnifier beside each file / object in the context list, to the left of the tick or cross */
       #context_list_box .checkbox { position: relative; padding-left: 26px; }
       #context_list_box .cm-inspect { position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
@@ -3867,8 +3929,10 @@ HELP_TAB_TEXTS <- list(
     "highlighted in yellow, so you can see exactly what was altered."
   ),
   "Plots" = paste(
-    "Plots sub-tab — Image output from your code, shown as thumbnails.",
-    "Click any thumbnail to expand it to full size."
+    "Plots sub-tab — Picture output from your code, shown as thumbnails. Click any thumbnail to expand it.",
+    "A thumbnail marked interactive (a tmap map in view mode, a leaflet map, a plotly chart...) expands into a",
+    "version you can zoom, move and click on, with a link to open it in a new browser tab and the option to add",
+    "code that saves it as a web page (.html file); a map needs an internet connection for its background tiles."
   ),
   "Results" = paste(
     "Results sub-tab — The printed text output from running the code: values,",
@@ -4039,19 +4103,8 @@ server <- function(input, output, session) {
     }, once = TRUE)
   }
 
-  # On every fresh open (not a pause-resume), pre-fill the prompt box with the
-  # data-protection notice and freeze Ask/Ask for Code until the student clears it.
-  .PROTECTION_NOTICE <- paste0(
-    "Enter your prompt here. Always prioritise data protection. Never include ",
-    "personal data or information in your prompts.\n\n𝗣𝗿𝗲𝘀𝘀 𝗖𝗹𝗲𝗮𝗿 𝘁𝗼 𝗰𝗼𝗻𝘁𝗶𝗻𝘂𝗲."  # bold: a text box cannot hold bold text, so Unicode bold letters
-
-  )
-  if (!.resuming_pause) {
-    session$onFlushed(function() {
-      updateTextAreaInput(session, "prompt", value = .PROTECTION_NOTICE)
-    }, once = TRUE)
-  }
-
+  # On every fresh open (not a pause-resume) the data-protection notice is shown over the prompt box (see the
+  # prompt_notice element in the UI) and Ask / Ask for Code stay frozen until the student presses Clear.
   current_spend <- reactive({
     # With a spending limit, spend is counted over the key's reset period. A key with no limit has no period
     # to count over, so it shows today's spend (since local midnight) instead.
@@ -4473,6 +4526,7 @@ server <- function(input, output, session) {
   warnings_rv       <- reactiveVal(character(0))
   last_error_msg    <- reactiveVal("")
   plot_files_rv     <- reactiveVal(character(0))
+  widget_files_rv   <- reactiveVal(character(0))   # interactive pages (paths relative to tempdir()), shown in R output
   diff_rv            <- reactiveVal(NULL)   # list(old_lines, new_lines, changed) or NULL
   changes_tab_shown  <- reactiveVal(FALSE)
 
@@ -4721,20 +4775,113 @@ server <- function(input, output, session) {
     sq <- add_interaction(list(kind = "code", export = TRUE, prompt = label, code = full,
                                description = label, editor_code = full,
                                console = console_output_rv(), warnings = warnings_rv(),
-                               plots = plot_files_rv(), last_run_code = NULL, failed = FALSE,
+                               plots = plot_files_rv(), widgets = widget_files_rv(), last_run_code = NULL, failed = FALSE,
                                error = "", diff = d, tab = if (!is.null(d)) "Changes" else "Code"))
     active_code_id(sq)
     prompt_history(c(label, prompt_history()))
     if (isTRUE(input$autorun_code)) do_run_export(to_run, full, file)
   })
 
+  # Expand an interactive plot: the page itself, interactive, with the link to open it in its own tab and the
+  # option to add code that saves it as a web page (an .html file that can be opened in any browser or shared)
+  expanded_widget <- reactiveVal(NULL)     # path of the page, relative to tempdir()
+  observeEvent(input$widget_expand, {
+    rel <- input$widget_expand
+    req(nzchar(rel), file.exists(file.path(tempdir(), rel)))
+    expanded_widget(rel)
+    src      <- paste0("/classmate_plots/", rel)
+    has_code <- exists(rel, envir = widget_code_cache, inherits = FALSE)
+    n        <- match(rel, widget_files_rv())
+    showModal(modalDialog(
+      title = "Interactive plot", size = "l",
+      tags$div(style = "font-size: 0.85em; margin-bottom: 4px;",
+        tags$a("Open in a new browser tab", href = src, target = "_blank", rel = "noopener"),
+        tags$span(style = "color: #888;", " (a map needs an internet connection for its background tiles)")),
+      tags$iframe(src = src, style = "width: 100%; height: 48vh; border: 1px solid #ddd; border-radius: 4px; background: #fff;"),
+      tags$hr(style = "margin: 10px 0;"),
+      if (has_code) tagList(
+        tags$h5("Save this plot as a web page"),
+        fluidRow(column(5, textInput("widget_exp_name", "File name:", value = paste0("interactive_", if (is.na(n)) 1L else n)))),
+        uiOutput("widget_exp_note"),
+        tags$p(em("Add to code appends the R code that saves it, in your working directory, as a single .html file (the plot",
+                  "stays interactive in it) to the end of the Code window."),
+               style = "font-size: 0.85em; color: #888;")
+      ) else tags$p(em("Classmate could not work out which lines of code drew this, so it cannot write the saving code for it."),
+                    style = "font-size: 0.85em; color: #888;"),
+      footer = tagList(
+        if (has_code) actionButton("widget_exp_add", "Add to code", class = "btn-primary"),
+        modalButton("Close")),
+      easyClose = TRUE))
+  })
+  widget_exp_file <- reactive({
+    nm <- trimws(basename(input$widget_exp_name %||% ""))
+    nm <- sub("\\.[A-Za-z0-9]{1,4}$", "", nm)
+    paste0(if (nzchar(nm)) nm else "interactive", ".html")
+  })
+  output$widget_exp_note <- renderUI({
+    if (file.exists(file.path(project_root(), widget_exp_file())))
+      tags$p(paste0(widget_exp_file(), " already exists in your working directory and will be overwritten."),
+             style = "color: #b36b00; font-size: 0.85em;")
+  })
+  observeEvent(input$widget_exp_add, {
+    rel <- expanded_widget(); req(rel)
+    capture_active_code()
+    info <- get(rel, envir = widget_code_cache)
+    base <- sub("[[:space:]]+$", "", input$code_editor %||% "")
+    obj  <- info$code; create_line <- NULL
+    if (identical(info$kind, "symbol")) {
+      obj <- info$sym
+    } else if (identical(info$kind, "value")) {
+      # An unassigned plot or map typed out: tidy the code so that it is created once, shown, and then saved
+      nm <- tidy_plot_name(info$cls, base)
+      new_base <- NULL
+      if (lengths(regmatches(base, gregexpr(info$code, base, fixed = TRUE))) == 1L) {
+        at   <- regexpr(info$code, base, fixed = TRUE)
+        cand <- paste0(substr(base, 1L, at - 1L), nm, " <- ", info$code, "\nprint(", nm, ")",
+                       substr(base, at + nchar(info$code), nchar(base)))
+        if (tryCatch({ parse(text = cand, keep.source = FALSE); TRUE }, error = function(e) FALSE)) new_base <- cand
+      }
+      if (!is.null(new_base)) { base <- new_base; obj <- nm; create_line <- paste0(nm, " <- ", info$code) }
+    }
+    file <- widget_exp_file()
+    # tmap maps are saved with tmap_save(); any other htmlwidget (leaflet, plotly...) with htmlwidgets::saveWidget(),
+    # as one self-contained file when pandoc is there to build it (RStudio brings it)
+    pandoc <- isTRUE(tryCatch(requireNamespace("rmarkdown", quietly = TRUE) && rmarkdown::pandoc_available(),
+                              error = function(e) FALSE))
+    save_call <- if ("tmap" %in% info$cls) sprintf("tmap::tmap_save(%s, %s)", obj, deparse(file))
+                 else sprintf("htmlwidgets::saveWidget(%s, %s, selfcontained = %s)", obj, deparse(file), if (pandoc) "TRUE" else "FALSE")
+    block <- paste(c(sprintf("# Save the interactive plot as a web page (%s)", file), save_call,
+                     if (!pandoc && !("tmap" %in% info$cls))
+                       paste0("# (pandoc was not found, so the page needs the folder ", sub("\\.html$", "", file), "_files beside it)")),
+                   collapse = "\n")
+    full   <- paste0(base, if (nzchar(base)) "\n\n" else "", block)
+    to_run <- if (!is.null(create_line)) paste0(create_line, "\n\n", block) else block
+    removeModal()
+    pending_export(list(snippet = to_run, full = full, file = file))
+    old_code <- input$code_editor %||% ""
+    updateAceEditor(session, "code_editor", value = full)
+    d <- if (nzchar(trimws(old_code))) compute_diff(old_code, full, max_changed_frac = Inf) else NULL
+    diff_rv(d)
+    if (!is.null(d)) show_changes_tab() else goto_tab("Code")
+    label <- paste0("Save interactive plot as ", file)
+    last_extracted_code(full); last_prompt_for_code(label); last_code_description(label)
+    sq <- add_interaction(list(kind = "code", export = TRUE, prompt = label, code = full,
+                               description = label, editor_code = full,
+                               console = console_output_rv(), warnings = warnings_rv(),
+                               plots = plot_files_rv(), widgets = widget_files_rv(), last_run_code = NULL, failed = FALSE,
+                               error = "", diff = d, tab = if (!is.null(d)) "Changes" else "Code"))
+    active_code_id(sq)
+    prompt_history(c(label, prompt_history()))
+    if (isTRUE(input$autorun_code)) do_run_export(to_run, full, file)
+  })
   output$console_output_ui <- renderUI({
     lines    <- console_output_rv()
     plots    <- plot_files_rv()
+    widgets  <- widget_files_rv()
     warnings <- warnings_rv()
 
     has_text     <- length(lines) > 0 && any(nzchar(lines))
-    has_plots    <- length(plots) > 0
+    has_plots    <- length(plots) > 0 || length(widgets) > 0     # pictures: ordinary plots and interactive ones
     has_warnings <- length(warnings) > 0
 
     if (!has_text && !has_plots && !has_warnings)
@@ -4752,6 +4899,16 @@ server <- function(input, output, session) {
       tags$pre(style = pre_style, paste(lines, collapse = "\n"))
 
     plots_ui <- if (has_plots) {
+      # Interactive output (a map or chart you can hover over, zoom and click) is shown as a small, fixed picture
+      # (the page itself, scaled down and not clickable); clicking it expands it, and then it is interactive
+      widget_items <- lapply(seq_along(widgets), function(i) {
+        rel <- widgets[[i]]
+        tags$div(class = "cm-wthumb", title = paste("Interactive plot", i, "— click to expand"),
+          onclick = sprintf("Shiny.setInputValue('widget_expand', '%s', {priority: 'event'});",
+                            gsub("[^A-Za-z0-9_./-]", "", rel)),
+          tags$iframe(src = paste0("/classmate_plots/", rel), tabindex = "-1", scrolling = "no"),
+          tags$span(class = "cm-wbadge", "interactive"))
+      })
       thumb_items <- lapply(seq_along(plots), function(i) {
         src <- paste0("/classmate_plots/", basename(plots[[i]]))
         tags$div(
@@ -4771,7 +4928,7 @@ server <- function(input, output, session) {
           )
         )
       })
-      tags$div(style = "padding-top: 4px;", do.call(tagList, thumb_items))
+      tags$div(style = "padding-top: 4px;", do.call(tagList, c(thumb_items, widget_items)))
     }
 
     warnings_ui <- if (has_warnings)
@@ -4829,7 +4986,7 @@ server <- function(input, output, session) {
     }
     # Explain: Code or Changes tab with code, R output tab with content, or after a failed run
     on_output_tab  <- isTRUE(input$main_tabs == "R output")
-    has_run_output <- length(console_output_rv()) > 0 || length(plot_files_rv()) > 0 || length(warnings_rv()) > 0
+    has_run_output <- length(console_output_rv()) > 0 || length(plot_files_rv()) > 0 || length(widget_files_rv()) > 0 || length(warnings_rv()) > 0
     if (!answer_view && !code_running() && !exceeded &&
         ((has_code && (on_code_tab || on_changes_tab)) || last_run_failed() ||
          (on_output_tab && has_run_output))) {
@@ -4862,10 +5019,12 @@ server <- function(input, output, session) {
         document.getElementById('clear_prompt').style.borderColor = '#d4ac0d';
         document.getElementById('clear_prompt').style.color = '#000000';
       ")
-      shinyjs::addClass("prompt", "cm-notice")      # the notice is shown in dark red
+      shinyjs::runjs("document.getElementById('prompt_notice').style.display = 'block';
+                      document.getElementById('prompt').readOnly = true;")
       return()
     }
-    shinyjs::removeClass("prompt", "cm-notice")
+    shinyjs::runjs("document.getElementById('prompt_notice').style.display = 'none';
+                    document.getElementById('prompt').readOnly = false;")
     shinyjs::runjs("
       document.getElementById('clear_prompt').style.backgroundColor = '';
       document.getElementById('clear_prompt').style.borderColor = '';
@@ -5298,7 +5457,7 @@ server <- function(input, output, session) {
     last_run_failed(FALSE)
     last_run_code(NULL)
     code_before_fix(NULL)
-    console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0))
+    console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); widget_files_rv(character(0))
     # Load most recent code into editor
     codes <- recalled$codes
     ask_code_entries <- Filter(function(e) identical(e$source, "ask_code"), codes)
@@ -6098,6 +6257,7 @@ server <- function(input, output, session) {
       r$console       <- if (ran_this) console_output_rv() else character(0)
       r$warnings      <- if (ran_this) warnings_rv()       else character(0)
       r$plots         <- if (ran_this) plot_files_rv()     else character(0)
+      r$widgets       <- if (ran_this) widget_files_rv()   else character(0)
       r$failed        <- ran_this && isTRUE(last_run_failed())
       r$error         <- if (ran_this) last_error_msg() else ""
       r$diff          <- diff_rv()
@@ -6135,6 +6295,8 @@ server <- function(input, output, session) {
     warnings_rv(rec$warnings %||% character(0))
     plots <- rec$plots %||% character(0)
     plot_files_rv(plots[file.exists(plots)])
+    wd <- rec$widgets %||% character(0)
+    widget_files_rv(wd[file.exists(file.path(tempdir(), wd))])
     last_run_code(rec$last_run_code)
     last_run_failed(isTRUE(rec$failed))
     last_error_msg(rec$error %||% "")
@@ -6401,7 +6563,7 @@ server <- function(input, output, session) {
       )
       if (length(combined) > 0) {
         console_output_rv(combined)
-        plot_files_rv(character(0))
+        plot_files_rv(character(0)); widget_files_rv(character(0))
       }
       last_run_failed(TRUE)
       last_error_msg(paste(combined, collapse = "\n"))
@@ -6854,7 +7016,7 @@ server <- function(input, output, session) {
     last_run_failed(FALSE)
     last_run_code(NULL)
     code_before_fix(NULL)
-    console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); diff_rv(NULL)
+    console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); widget_files_rv(character(0)); diff_rv(NULL)
     # Note: selected_files and selected_objects are intentionally NOT cleared —
     # the user's context files carry over into the new conversation.
     prompt_history(character(0))
@@ -7479,7 +7641,7 @@ server <- function(input, output, session) {
       # Only now that new code is replacing the old: clear what belonged to the old code
       pending_export(NULL)
       hide_changes_tab()
-      console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); diff_rv(NULL)
+      console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); widget_files_rv(character(0)); diff_rv(NULL)
       last_prompt_for_code(shown_prompt)
       if (!is.null(pref_change)) prompt_history(c(shown_prompt, prompt_history()))
       old_editor_code <- isolate(input$code_editor) %||% ""
@@ -8001,7 +8163,7 @@ server <- function(input, output, session) {
 
     # --- Output-explanation mode: R output tab is active with content -----------
     on_output_tab  <- isTRUE(input$main_tabs == "R output")
-    has_run_output <- length(console_output_rv()) > 0 || length(plot_files_rv()) > 0 || length(warnings_rv()) > 0
+    has_run_output <- length(console_output_rv()) > 0 || length(plot_files_rv()) > 0 || length(widget_files_rv()) > 0 || length(warnings_rv()) > 0
     if (on_output_tab && has_run_output && !last_run_failed()) {
       level <- last_explain_level()
       explain_level_at_last_gen(level)
@@ -8274,7 +8436,7 @@ server <- function(input, output, session) {
   do_run_code <- function(code_text) {
     pending_export(NULL)
     ui_busy(TRUE)
-    console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0))
+    console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); widget_files_rv(character(0))
 
     check_and_install_if_needed(code_text, function() {
       code_running(TRUE)
@@ -8537,11 +8699,13 @@ server <- function(input, output, session) {
     plots <- run_result$plot_files %||% character(0)
     console_output_rv(base_output)
     plot_files_rv(plots)
+    widget_files_rv(run_result$widgets %||% character(0))
     warnings_rv(run_result$warnings %||% character(0))
     output$run_status <- renderUI(run_status_ui(run_result$success, run_result$stopped))
     # A successful run (Run, AutoRun or Fix) finishes with the prompt, so the prompt box is cleared
     if (isTRUE(run_result$success)) updateTextAreaInput(session, "prompt", value = "")
-    has_output <- nzchar(trimws(paste(base_output, collapse = "\n"))) || length(plots) > 0
+    has_output <- nzchar(trimws(paste(base_output, collapse = "\n"))) || length(plots) > 0 ||
+                  length(run_result$widgets %||% character(0)) > 0
     if (!stay_on_code && has_output) {
       goto_tab("R output")
     } else {
