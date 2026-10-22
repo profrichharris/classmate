@@ -6812,20 +6812,17 @@ server <- function(input, output, session) {
         selectInput("pref_run_limit", "Stop code that runs longer than:",
           choices  = names(RUN_LIMIT_CHOICES),
           selected = prefs$run_limit, width = "100%"),
-        sliderInput("pref_consistency", "Consistency of the code:", min = 1, max = 10, value = prefs$consistency,
+        sliderInput("pref_consistency", "Generated code consistency:", min = 1, max = 10, value = prefs$consistency,
                     step = 1, ticks = TRUE, width = "100%")
       ),
       tags$p(em(
-        "Maximum length is set by your key. It is a soft target: Claude will aim to stay",
-        "within it but may exceed it when the task genuinely requires more. Scripts you",
-        "load directly will also generate a warning if they exceed this limit.",
-        "Comment levels — None: no comments at all; Minimal: brief section markers only",
+        "Maximum length is set by your key. Claude will aim to stay within it but it may be exceeded.",
+        "Loaded scripts will generate a warning if they exceed the limit.",
+        "Comment levels — None: no comments; Minimal: brief section markers only",
         "(e.g. '# Load data'); Most: section markers plus short notes on non-obvious lines.",
         "Even at Most, line-by-line commenting is avoided.",
         "Code that runs longer than the time you choose is stopped (the 2 minutes default suits most work; choose",
-        "longer for slow methods, or Never). To stop code sooner, press Stop in RStudio, or Esc in the R console;",
-        "if RStudio then asks whether to terminate R, choose No (the code has already been stopped).",
-        "A very long step inside compiled code may not stop until it finishes."
+        "longer for slow methods, or Never)."
       )),
       # Key file buttons at the left of the footer, Close at the right
       footer = tags$div(style = "display: flex; justify-content: space-between; align-items: center;",
