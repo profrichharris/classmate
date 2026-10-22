@@ -233,13 +233,16 @@ APPROACH_EXTRAS <- list(
   tables   = list(label = "Tables:",
                   choices = c("Base R", "gt", "flextable", "kableExtra"), default = "Base R",
                   text = "for formatted tables, prefer %s (Base R means print() or knitr::kable())"),
+  pipeline = list(label = "Pipeline:",
+                  choices = c("|>", "%>%", "Avoided"), default = "|>",
+                  text = "for pipelines, prefer %s"),
   strings  = list(label = "Strings and dates:",
                   choices = c("Same as Coding", "tidyverse", "Base R"), default = "Same as Coding",
                   text = "for strings and dates, prefer %s (stringr/lubridate for tidyverse)")
 )
 
 # Preferences that change the code Claude writes (comment density is handled by its own rewrite)
-PREF_RELEVANT <- c(coding = "Coding", plotting = "Plotting", mapping = "Mapping",
+PREF_RELEVANT <- c(coding = "Coding", pipeline = "Pipeline", plotting = "Plotting", mapping = "Mapping",
                    spatial = "Spatial data", stats = "Statistical approach",
                    modelling = "Modelling interface", tables = "Tables",
                    strings = "Strings and dates")
@@ -261,6 +264,10 @@ approach_clause <- function(approaches, coding) {
     v <- approaches[[k]]
     if (is.null(v) || !nzchar(v)) v <- APPROACH_EXTRAS[[k]]$default
     if (identical(v, "Same as Coding")) v <- if (identical(coding, "data.table")) "Base R" else coding
+    if (identical(k, "pipeline"))
+      v <- switch(v, "|>" = "the native pipe |>", "%>%" = "the magrittr pipe %>%",
+                  "Avoided" = "avoiding pipelines (save each intermediate step into an object instead of chaining steps)",
+                  v)
     sprintf(APPROACH_EXTRAS[[k]]$text, v)
   }, "")
   paste0("Further default preferences: ", paste(parts, collapse = "; "), ". ",
@@ -439,10 +446,50 @@ build_language_clause <- function(language) {
 # shared across a class, since all use the same key) followed by the part that varies (preferences, language,
 # output folder, packages already loaded). Keep anything student-specific out of the first block, or the
 # shared cache stops matching. call_claude() marks both blocks for caching.
+# Several popular background-map providers now answer without an API key with a tile stamped "API KEY REQUIRED"
+basemap_rule <- paste(
+  "BASEMAP RULE: For interactive maps (tmap in view mode, leaflet, mapview), never choose background map tiles",
+  "from a provider that needs an API key: CARTO / CartoDB (for example \"CartoDB.Positron\" or",
+  "\"CartoDB.DarkMatter\"), Stadia / Stamen, Thunderforest or MapTiler. Without a key they return tiles stamped",
+  "\"API KEY REQUIRED\". Leave the basemap at the package default (tmap's default basemaps already work), or use",
+  "\"OpenStreetMap\", \"Esri.WorldGrayCanvas\" (plain light grey), \"Esri.WorldTopoMap\" or \"Esri.WorldImagery\".")
+
+# --- Answer consistency (Preferences slider 1-10) -----------------------------------------------------------
+# The model offers no sampling controls (temperature, top_p and top_k are all rejected as deprecated), so
+# consistency between students is steered with instructions instead: the higher the level, the more of the style
+# is fixed. 1-3: no extra rule (Claude's natural variety); 4-7: light conventions; 8-10: a fixed, conventional style.
+# (Measured, same prompt six times: a histogram request gave 6 distinct texts without the strict rule and 2 with it.)
+CONSISTENCY_DEFAULT <- 8L
+consistency_rule <- function(level) {
+  level <- suppressWarnings(as.integer(level))
+  if (is.na(level) || level <= 3L) return(NULL)
+  light <- paste(
+    "CONSISTENCY RULE: Different students may send you the same request, so keep your code conventional and",
+    "predictable: use one pipe style throughout, the one set in the preferences (never mix pipe styles); load packages individually, one library() call per line in",
+    "alphabetical order, rather than a whole meta-package such as tidyverse; name new objects with short, plain,",
+    "descriptive lower_snake_case names built from the data's own names; add nothing that was not asked for beyond",
+    "sensible axis labels; and when several equally good approaches exist, take the most standard textbook one.")
+  if (level <= 7L) return(light)
+  paste(
+    "CONSISTENCY RULE (strict): Different students will send you the same request, and the code they receive should be",
+    "as close to identical as possible. Therefore always write the most conventional, simplest solution, in this fixed style:",
+    "(1) load only the packages the code needs, one library() call per line, in alphabetical order; (2) use the pipe",
+    "style set in the preferences, consistently, and never mix pipe styles; (3) never load tidyverse as a whole: load ggplot2, dplyr, sf and so on individually;",
+    "(4) call package functions without the package:: prefix unless a name clash makes it necessary; (5) name new",
+    "objects with short, plain, descriptive lower_snake_case names built from the data's own names (for example",
+    "income_df, median_income_value); (6) use these fixed defaults: histograms 30 bins, fill 'steelblue', colour 'white';",
+    "reference lines 'red' and dashed; maps classified in 5 quantile classes with the 'blues' palette; (7) add nothing that",
+    "was not asked for (no extra titles, annotations, themes or optional arguments beyond what is needed to do what was",
+    "asked), apart from sensible axis labels; (8) put one argument per line when a call has more than two arguments;",
+    "(9) when comments are wanted (see the comment preference), use only these forms, one per major step:",
+    "'# Load packages', '# Prepare data', '# Plot', '# Map'; (10) when several equally good approaches exist, always take",
+    "the first one that comes to mind from the list of the most standard textbook solutions.")
+}
+
 build_system_prompt <- function(coding, plotting, mapping, img_format, img_quality, img_size,
                                 max_lines = 50, comment_density = "Minimal",
                                 loaded_pkgs = character(0),
-                                language = "English", approaches = list()) {
+                                language = "English", approaches = list(), consistency = 1L) {
   library_rule <- paste0(
     "PACKAGE LOADING RULE: Always include an explicit library() call for every ",
     "package your code uses. ",
@@ -455,6 +502,8 @@ build_system_prompt <- function(coding, plotting, mapping, img_format, img_quali
     r_system_prompt,
     library_rule,
     tmap_breaks_instruction,
+    basemap_rule,
+    consistency_rule(consistency),
     code_description_rule,
     code_only_rule,
     scope_rule,
@@ -2802,10 +2851,10 @@ ui <- fluidPage(
           tags$div(id = "prompt_wrap", style = "position: relative;",
             textAreaInput("prompt", label = NULL, rows = 4, width = "100%"),
             tags$div(id = "prompt_notice", class = "cm-prompt-notice", style = "display: none;",
-              tags$span(style = "color: #8b0000;",
+              tags$span(style = "color: #8b0000; font-weight: bold;",
                 "Enter your prompt here. Always prioritise data protection. Never include personal data or information in your prompts."),
               tags$br(), tags$br(),
-              tags$strong(style = "color: #000000;", "Press Clear to continue.")))
+              tags$span(style = "color: #000000; font-weight: normal;", "Press Clear to continue.")))
         )
       ),
       tabPanel("Past prompts",
@@ -3002,6 +3051,7 @@ ui <- fluidPage(
       .cm-switch-lbl { display: inline-block; margin: 0 6px; }
       .cm-prompt-row.cm-hl { background-color: #fff3b0; border-radius: 3px; }
       .pref-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
+      .pref-grid.pref-grid-3 { grid-template-columns: 1fr 1fr 1fr; }      /* the nine preferred approaches: three by three */
       a.action-button.disabled, a.action-button[disabled] { pointer-events: none; opacity: 0.5; }
       /* Boxes in the context list show a cross, not a tick, when selected (selected = to be removed) */
       #context_list_box input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 14px; height: 14px;
@@ -3727,7 +3777,7 @@ HELP_TEXTS <- list(
     "Preferences — Opens the preferences panel, where you can load a new key file from your",
     "instructor (from your computer or a web address), delete the saved key file (after a",
     "confirmation; Classmate then asks for a key again), and set your preferred",
-    "response language, coding style (base R, tidyverse, data.table), plotting",
+    "response language, coding style (base R, tidyverse, data.table), pipeline style (|>, %>% or avoided), plotting",
     "library, mapping package, image export format, quality and size, and comment",
     "density, and how long code may run before it is stopped (1 minute to 1 hour, or never; the",
     "default is 2 minutes). The Claude model in use (Sonnet 5.5) and the maximum code length are",
@@ -6597,6 +6647,7 @@ server <- function(input, output, session) {
     coding          = pref_val("coding",          "tidyverse"),
     plotting        = pref_val("plotting",         "ggplot2"),
     mapping         = pref_val("mapping",          "tmap"),
+    pipeline        = {pl <- pref_val("pipeline", APPROACH_EXTRAS$pipeline$default); if (pl %in% APPROACH_EXTRAS$pipeline$choices) pl else APPROACH_EXTRAS$pipeline$default},
     spatial         = pref_val("spatial",          APPROACH_EXTRAS$spatial$default),
     stats           = pref_val("stats",            APPROACH_EXTRAS$stats$default),
     modelling       = pref_val("modelling",        APPROACH_EXTRAS$modelling$default),
@@ -6609,6 +6660,8 @@ server <- function(input, output, session) {
     max_lines       = isolate(max_lines_cap_val()),
     comment_density = pref_val("comment_density",  "Minimal"),
     run_limit       = {rl <- pref_val("run_limit", RUN_LIMIT_DEFAULT); if (rl %in% names(RUN_LIMIT_CHOICES)) rl else RUN_LIMIT_DEFAULT},
+    consistency     = {cn <- suppressWarnings(as.integer(pref_val("consistency", CONSISTENCY_DEFAULT)))
+                       if (is.na(cn) || cn < 1L || cn > 10L) CONSISTENCY_DEFAULT else cn},
     language        = {
       .lp <- file.path(tools::R_user_dir("classmate", "config"), "language.rds")
       if (file.exists(.lp)) tryCatch(readRDS(.lp), error = function(e) "English") else "English"
@@ -6695,9 +6748,11 @@ server <- function(input, output, session) {
       )),
       hr(),
       tags$h5("Preferred approach for..."),
-      tags$div(class = "pref-grid",
+      tags$div(class = "pref-grid pref-grid-3",
         selectInput("pref_coding", "Coding:",
                     choices = c("tidyverse", "Base R", "data.table"), selected = prefs$coding, width = "100%"),
+        selectInput("pref_pipeline", APPROACH_EXTRAS$pipeline$label,
+                    choices = APPROACH_EXTRAS$pipeline$choices, selected = prefs$pipeline, width = "100%"),
         selectInput("pref_plotting", "Plotting:",
                     choices = c("ggplot2", "Base R", "plotly"), selected = prefs$plotting, width = "100%"),
         selectInput("pref_mapping", "Mapping:",
@@ -6756,7 +6811,9 @@ server <- function(input, output, session) {
           selected = prefs$comment_density, width = "100%"),
         selectInput("pref_run_limit", "Stop code that runs longer than:",
           choices  = names(RUN_LIMIT_CHOICES),
-          selected = prefs$run_limit, width = "100%")
+          selected = prefs$run_limit, width = "100%"),
+        sliderInput("pref_consistency", "Consistency of the code:", min = 1, max = 10, value = prefs$consistency,
+                    step = 1, ticks = TRUE, width = "100%")
       ),
       tags$p(em(
         "Maximum length is set by your key. It is a soft target: Claude will aim to stay",
@@ -6880,6 +6937,7 @@ server <- function(input, output, session) {
   observeEvent(input$pref_coding,          { prefs$coding          <- input$pref_coding })
   observeEvent(input$pref_plotting,        { prefs$plotting        <- input$pref_plotting })
   observeEvent(input$pref_mapping,         { prefs$mapping         <- input$pref_mapping })
+  observeEvent(input$pref_pipeline,        { prefs$pipeline        <- input$pref_pipeline })
   observeEvent(input$pref_spatial,         { prefs$spatial         <- input$pref_spatial })
   observeEvent(input$pref_stats,           { prefs$stats           <- input$pref_stats })
   observeEvent(input$pref_modelling,       { prefs$modelling       <- input$pref_modelling })
@@ -6890,6 +6948,10 @@ server <- function(input, output, session) {
   observeEvent(input$pref_img_size,        { prefs$img_size        <- input$pref_img_size })
   # How long code may run before it is stopped (Preferences); run_code() reads it from the option
   observe(options(classmate.run_time_limit = unname(RUN_LIMIT_CHOICES[[prefs$run_limit]])))
+  observeEvent(input$pref_consistency, {
+    v <- suppressWarnings(as.integer(input$pref_consistency))
+    if (!is.na(v) && v >= 1L && v <= 10L) prefs$consistency <- v
+  }, ignoreInit = TRUE)
   observeEvent(input$pref_run_limit, {
     if (isTRUE(input$pref_run_limit %in% names(RUN_LIMIT_CHOICES))) prefs$run_limit <- input$pref_run_limit
   }, ignoreInit = TRUE)
@@ -7537,8 +7599,9 @@ server <- function(input, output, session) {
                                               prefs$max_lines, prefs$comment_density,
                                               loaded_packages(), prefs$language,
                                               approaches = list(spatial = prefs$spatial, stats = prefs$stats,
-                                                                modelling = prefs$modelling,
-                                                                tables = prefs$tables, strings = prefs$strings))
+                                                                modelling = prefs$modelling, pipeline = prefs$pipeline,
+                                                                tables = prefs$tables, strings = prefs$strings),
+                                              consistency = prefs$consistency)
         ),
         error = function(e) list(text = "", stop_reason = "error")
       )
@@ -8815,6 +8878,7 @@ server <- function(input, output, session) {
         coding          = prefs$coding,
         plotting        = prefs$plotting,
         mapping         = prefs$mapping,
+        pipeline        = prefs$pipeline,
         spatial         = prefs$spatial,
         stats           = prefs$stats,
         modelling       = prefs$modelling,
@@ -8826,7 +8890,8 @@ server <- function(input, output, session) {
         img_size        = prefs$img_size,
         max_lines       = prefs$max_lines,
         comment_density = prefs$comment_density,
-        run_limit       = prefs$run_limit
+        run_limit       = prefs$run_limit,
+        consistency     = prefs$consistency
       ),
       conversation_history = conversation_history(),
       saved_conversations  = saved_conversations(),
