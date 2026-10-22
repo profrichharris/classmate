@@ -1302,8 +1302,9 @@ run_limit_label <- function(secs) {
 }
 run_progress_detail <- function() {
   lim <- run_time_limit_secs()
-  paste("To stop it sooner, press Stop in RStudio (or Esc in the R console).",
-        if (is.finite(lim)) paste0("It stops by itself after ", run_limit_label(lim), "."))
+  stop_hint <- "press Stop in RStudio (or Esc in the R console); if RStudio then asks whether to terminate R, choose No"
+  if (is.finite(lim)) paste0("It will stop by itself after ", run_limit_label(lim), ". To stop it sooner, ", stop_hint, ".")
+  else paste0("To stop it, ", stop_hint, ".")
 }
 # Why a run was stopped, in plain words
 run_stopped_message <- function(kind, secs) {
@@ -3712,7 +3713,9 @@ HELP_TEXTS <- list(
   run_code = paste(
     "Run — Executes the code currently in the editor. Results and any plots",
     "appear in the R output tab. If the code runs successfully it is added to",
-    "Past Code and your code log. (Not available while the Answer view is showing.)",
+    "Past Code and your code log. Code that runs longer than the time set in Preferences is stopped (you can also",
+    "press Stop in RStudio, or Esc in the R console; if RStudio asks whether to terminate R, choose No), and Run",
+    "is then available again. (Not available while the Answer view is showing.)",
     "Shortcut: Command+Enter (Ctrl+Enter on Windows) runs the code from the code editor or from anywhere else on",
     "the page (for example after clicking another button), except in the prompt box, where it first asks for code."
   ),
@@ -6568,7 +6571,8 @@ server <- function(input, output, session) {
         "(e.g. '# Load data'); Most: section markers plus short notes on non-obvious lines.",
         "Even at Most, line-by-line commenting is avoided.",
         "Code that runs longer than the time you choose is stopped (the 2 minutes default suits most work; choose",
-        "longer for slow methods, or Never). Press Stop in RStudio, or Esc in the R console, to stop code sooner.",
+        "longer for slow methods, or Never). To stop code sooner, press Stop in RStudio, or Esc in the R console;",
+        "if RStudio then asks whether to terminate R, choose No (the code has already been stopped).",
         "A very long step inside compiled code may not stop until it finishes."
       )),
       # Key file buttons at the left of the footer, Close at the right
@@ -8243,7 +8247,8 @@ server <- function(input, output, session) {
       code_running(TRUE)
       tryCatch({
         run_result <- withProgress(message = "Running code...", detail = run_progress_detail(), value = 0.5, run_code(code_text))
-        last_run_code(code_text)
+        # Code that was stopped is not "done": Run stays available so it can be run again
+        last_run_code(if (!is.null(run_result$stopped)) NULL else code_text)
         handle_run_result(run_result)
         if (run_result$success) {
           last_run_failed(FALSE)
@@ -8403,7 +8408,7 @@ server <- function(input, output, session) {
     check_and_install_if_needed(fixed_code, function() {
       run_result <- withProgress(message = "Re-running fixed code...", detail = run_progress_detail(), value = 0.5,
                                  run_code(captured_fixed_code))
-      last_run_code(captured_fixed_code)
+      last_run_code(if (!is.null(run_result$stopped)) NULL else captured_fixed_code)
       handle_run_result(run_result, stay_on_code = TRUE)
       if (!is.null(local_d) && run_result$success) show_changes_tab()
 
