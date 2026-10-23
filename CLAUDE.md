@@ -236,10 +236,13 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.135 (2026-10-23)  
-**Current version:** 0.5.135
+**Last released:** 0.5.136 (2026-10-23)  
+**Current version:** 0.5.136
 
-Released in 0.5.135 (no unreleased changes):
+Released in 0.5.136 (no unreleased changes):
+- **Undo / Redo keep the code tab you are on** (user request): `do_undo_redo()` reads `input$main_tabs` when the button is pressed and `match_code_tab(rec, want)` selects that tab after the recall if it is Code, R output or Changes (Changes only if the recalled interaction has a diff, otherwise Code); from Past code or the Answer tabs the recall's own tab choice stands. Redo uses the tab you are on when you press Redo (not the one saved at Undo). Help text for `undo_code` updated. Parses and `tools/check_help.R` passes; not exercised against a live conversation (needs a real API key).
+
+Released in 0.5.135:
 - **Undo/Redo button and Code / Answer switch fixed in place** (user request): they are absolutely positioned in the `#main_tabs` bar at the offset they would have if all four code tabs (Code, Changes, R output, Past code) were showing, so they no longer shift as Changes / Past code (or the Answer tabs) appear and disappear. `cmFixSwitchPos()` in the mode-switch script measures the four tab labels and sets `left` on `#undo_code_li` and `#mode_switch_li`; re-run on load, resize, `shown.bs.tab`, shiny connect/idle and every 0.5 s for 20 s (the tab bar has no width at first load).
 - **Undo / Redo (both buttons) no longer put the prompt back in the Your prompt box**: like the Code / Answer switch they open the Past prompts tab with the relevant prompt highlighted (`show_prompt_in_past()` sends `cm_highlight_prompt`). Undo calls `recall_prompt_entry(rec, p, fill_prompt = FALSE)` (still restores the interaction and, for a Preference entry, the preferences); Redo recalls the interaction, tab and prefs and highlights its prompt; the prompt box is untouched either way. Help text for both buttons updated. Not exercised against a live conversation (needs a real API key); the file parses and `tools/check_help.R` passes.
 

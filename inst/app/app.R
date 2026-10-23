@@ -3776,9 +3776,10 @@ HELP_TEXTS <- list(
   undo_code = paste(
     "Undo (curved back arrow) — Steps back to the previous prompt, code or answer, bringing back what it produced in",
     "the same way as its Recall button. Your prompt box is left alone: the Past prompts tab opens with that prompt",
-    "highlighted instead, as the Code / Answer switch does. It then turns into Redo (curved forward arrow), which takes you back to exactly where you were",
-    "before pressing Undo. Redo is only offered until you do something else, such as ask a new prompt",
-    "or recall another entry."
+    "highlighted instead, as the Code / Answer switch does. It stays on the tab you are looking at (Code, R output or Changes)",
+    "when it can; if the earlier code has no changes to show, it opens the Code tab. It then turns into Redo (curved forward arrow),",
+    "which takes you back to exactly where you were before pressing Undo, again on the tab you are looking at. Redo is only offered",
+    "until you do something else, such as ask a new prompt or recall another entry."
   ),
   inspect_item = paste(
     "Look at this (magnifier beside a file or object in the context list) — Opens a window to look at it: its",
@@ -5433,15 +5434,22 @@ server <- function(input, output, session) {
       shinyjs::toggleState(id, condition = ok)
     }
   })
+  # Undo / Redo keep the tab you are looking at (Code, R output or Changes) where the recalled interaction
+  # has one: Changes only exists if it had changes, otherwise Code. From any other tab the recall's own choice stands.
+  match_code_tab <- function(rec, want) {
+    if (!identical(rec$kind, "code") || !isTRUE(want %in% c("Code", "R output", "Changes"))) return(invisible(NULL))
+    goto_tab(if (identical(want, "Changes") && is.null(rec$diff)) "Code" else want)
+  }
   do_undo_redo <- function() {
     if (isTRUE(isolate(ui_busy()))) return(invisible(NULL))
+    want_tab <- isolate(input$main_tabs)
     if (isolate(redo_ready())) {
       u <- isolate(undo_state()); undo_state(NULL)
       rec <- NULL
       for (r in isolate(interactions())) if (identical(r$seq, u$from)) { rec <- r; break }
       req(!is.null(rec))
       recall_interaction(rec)
-      if (identical(rec$kind, "code") && !is.null(u$tab)) goto_tab(u$tab)
+      match_code_tab(rec, want_tab)
       for (k in names(u$prefs)) prefs[[k]] <- u$prefs[[k]]
       show_prompt_in_past(rec$prompt)
       return(invisible(NULL))
@@ -5454,6 +5462,7 @@ server <- function(input, output, session) {
     capture_active_code()                           # keep the current code exactly as it is, for Redo
     rec <- isolate(interactions())[[i + 1L]]
     recall_prompt_entry(rec, rec$prompt %||% "", fill_prompt = FALSE)
+    match_code_tab(rec, want_tab)
     show_prompt_in_past(rec$prompt)
     state$target <- isolate(current_seq())
     undo_state(state)
