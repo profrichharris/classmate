@@ -1202,6 +1202,11 @@ compute_diff <- function(old_code, new_code, max_changed_frac = 0.4) {
   # Extract the old section that spans the matching region
   old_start   <- min(matched_old)
   old_end     <- max(matched_old)
+  # Lines changed before the first matching line (or after the last) replace old lines outside that span, so
+  # the old section must reach out to the start (or end) of the old code to show them
+  matched_new <- which(!is.na(new_to_old))
+  if (any(changed_new < min(matched_new))) old_start <- 1L
+  if (any(changed_new > max(matched_new))) old_end   <- max(which(nzchar(trimws(old_lines))))
   old_section <- old_lines[old_start:old_end]
   n_old_sec   <- length(old_section)
 

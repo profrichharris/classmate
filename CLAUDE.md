@@ -236,8 +236,11 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.136 (2026-10-23)  
-**Current version:** 0.5.136
+**Last released:** 0.5.137 (2026-10-23)  
+**Current version:** 0.5.137
+
+Released in 0.5.137 (no unreleased changes):
+- **Changes tab showed a truncated "previous code"** (user report: after changing `for (i in 1:5) {` to `1:8`, the old pane showed only `  print(i)` / `}`): `compute_diff()` cut the old section to the span from the first to the last *matching* line, so old lines replaced by a change before the first match (or after the last) were left out. Now the old section starts at line 1 when a changed new line precedes the first matched line, and ends at the last non-blank old line when one follows the last matched line; the replaced old lines are highlighted as usual. Checked on the reported case and on middle, first-line, last-line and appended changes (`/tmp/diff_edge.R`).
 
 Released in 0.5.136 (no unreleased changes):
 - **Undo / Redo keep the code tab you are on** (user request): `do_undo_redo()` reads `input$main_tabs` when the button is pressed and `match_code_tab(rec, want)` selects that tab after the recall if it is Code, R output or Changes (Changes only if the recalled interaction has a diff, otherwise Code); from Past code or the Answer tabs the recall's own tab choice stands. Redo uses the tab you are on when you press Redo (not the one saved at Undo). Help text for `undo_code` updated. Parses and `tools/check_help.R` passes; not exercised against a live conversation (needs a real API key).
