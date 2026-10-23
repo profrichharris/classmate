@@ -10,7 +10,7 @@
       "format": "gpkg",
       "object": "chicago_tracts_income",
       "bytes": 466944,
-      "sha256": "ff7b79aec9d24dcc58257d4484dcfb1a9e952e9eae124ad6f8f2a5f1c575bed3",
+      "sha256": "2cb932434d29901d5b6d404d3be233df6181b14fde673fa781e7cbb0a0c7adc9",
       "source": "US Census Bureau: American Community Survey 2018-2022 5-year estimates (table B19013) with 2022 TIGER/Line census tract boundaries, clipped to the City of Chicago boundary. Retrieved with the tidycensus and tigris R packages.",
       "retrieved": "2026-06-24",
       "licence": "Public domain (work of the US federal government)",
@@ -28,7 +28,7 @@
       "format": "gpkg",
       "object": "chicago_boundary",
       "bytes": 110592,
-      "sha256": "e988bb9bc7cf5a129ea851fb02ae7036767687f134b91c30ef2b0bb6a2d6930a",
+      "sha256": "7f49203ee05f7b11a984e147155bcd9320d03c1104e0c450dc02406f613d6355",
       "source": "US Census Bureau: 2022 TIGER/Line cartographic boundary file for places (Illinois), Chicago. Retrieved with the tigris R package.",
       "retrieved": "2026-06-24",
       "licence": "Public domain (work of the US federal government)",
@@ -54,7 +54,7 @@
       "notice": "The Children's Commissioner publishes this dataset for free download but states no formal licence (\"All rights reserved\"). Classmate redistributes it, unaltered in content, for teaching with the source credited. Boundaries contain OS data © Crown copyright and database right 2025.",
       "reviewed": "2026-10-22",
       "bytes": 1327104,
-      "sha256": "e0b9bde65bd6aa0b435619c978125b6715a5721d92e5b61050dc1a8c14d2719d"
+      "sha256": "7726611e036031e298c9384a409d8a86e1ec61ba467237a7c0d7de7f24efe896"
     },
     {
       "id": "childhood_lottery_metrics",

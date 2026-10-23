@@ -45,7 +45,8 @@ out <- st_transform(st_simplify(st_transform(out, 27700), dTolerance = 100, pres
 out <- st_make_valid(out)
 dir.create("datasets", showWarnings = FALSE)
 unlink("datasets/childhood_lottery.gpkg")
-st_write(out, "datasets/childhood_lottery.gpkg", layer = "childhood_lottery", quiet = TRUE)
+st_write(out, "datasets/childhood_lottery.gpkg", layer = "childhood_lottery", quiet = TRUE,
+         layer_options = "GEOMETRY_NAME=geometry")   # sf code usually says geometry, not geom
 m$value_col <- paste0(m$stem, "_value")
 m$score_col <- ifelse(paste0(m$stem, "_score") %in% names(wide), paste0(m$stem, "_score"), NA)
 write.csv(m[, c("pillar", "metric", "value_col", "score_col", "description", "value_type", "scored", "source",

@@ -239,6 +239,8 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 **Last released:** 0.5.137 (2026-10-23)  
 **Current version:** 0.5.137
 
+- **Geometry column renamed `geom` -> `geometry` in all three online GeoPackages** (user report: AI-written `mutate(area = st_area(geometry))` on the Childhood Lottery data failed because inside `mutate()` `geometry` resolved to a function from another package, the column being `geom`). Rewritten with `GEOMETRY_NAME=geometry` (`tools/prepare_childhood_lottery.R` does this now; the Chicago files were rewritten from their existing contents: same rows, columns and CRS), checksums refreshed, `datasets/README.md` tells whoever adds a dataset to do the same. Pushed on its own (data + tools + notes, no version bump or release) at the user's explicit request on 2026-10-23. Users with the old files cached re-download them automatically (the checksum no longer matches).
+
 Released in 0.5.137 (no unreleased changes):
 - **Changes tab showed a truncated "previous code"** (user report: after changing `for (i in 1:5) {` to `1:8`, the old pane showed only `  print(i)` / `}`): `compute_diff()` cut the old section to the span from the first to the last *matching* line, so old lines replaced by a change before the first match (or after the last) were left out. Now the old section starts at line 1 when a changed new line precedes the first matched line, and ends at the last non-blank old line when one follows the last matched line; the replaced old lines are highlighted as usual. Checked on the reported case and on middle, first-line, last-line and appended changes (`/tmp/diff_edge.R`).
 

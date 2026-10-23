@@ -14,7 +14,9 @@ adds the credit and licence as comments to the code log when the data are downlo
 
 1. Check the licence yourself: the data must be free to redistribute (public domain, CC0, CC-BY, or
    ODbL with its share-alike wording in `notice`, OGL, or published free to download with no formal licence, `free-with-credit`, which needs a `notice` saying so). `tools/prepare_childhood_lottery.R` shows how the Childhood Lottery files were built. Prefer plain formats (`.gpkg`, `.geojson`,
-   `.csv`); avoid `.rds` / `.RData`.
+   `.csv`); avoid `.rds` / `.RData`. Name the geometry column `geometry` (write GeoPackages with
+   `layer_options = "GEOMETRY_NAME=geometry"`): sf's default `geom` makes `st_area(geometry)` find R's
+   `geometry()` function instead of the column.
 2. Put the file in this folder and add an entry to `datasets.json` (copy an existing one). Fill in
    every field; set `reviewed` to the date you checked the licence.
 3. Run `Rscript tools/check_datasets.R --update` from the package root to fill in the size and
