@@ -236,10 +236,14 @@ cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.5.134 (2026-10-22)  
-**Current version:** 0.5.134
+**Last released:** 0.5.135 (2026-10-23)  
+**Current version:** 0.5.135
 
-Released in 0.5.134 (no unreleased changes):
+Released in 0.5.135 (no unreleased changes):
+- **Undo/Redo button and Code / Answer switch fixed in place** (user request): they are absolutely positioned in the `#main_tabs` bar at the offset they would have if all four code tabs (Code, Changes, R output, Past code) were showing, so they no longer shift as Changes / Past code (or the Answer tabs) appear and disappear. `cmFixSwitchPos()` in the mode-switch script measures the four tab labels and sets `left` on `#undo_code_li` and `#mode_switch_li`; re-run on load, resize, `shown.bs.tab`, shiny connect/idle and every 0.5 s for 20 s (the tab bar has no width at first load).
+- **Undo / Redo (both buttons) no longer put the prompt back in the Your prompt box**: like the Code / Answer switch they open the Past prompts tab with the relevant prompt highlighted (`show_prompt_in_past()` sends `cm_highlight_prompt`). Undo calls `recall_prompt_entry(rec, p, fill_prompt = FALSE)` (still restores the interaction and, for a Preference entry, the preferences); Redo recalls the interaction, tab and prefs and highlights its prompt; the prompt box is untouched either way. Help text for both buttons updated. Not exercised against a live conversation (needs a real API key); the file parses and `tools/check_help.R` passes.
+
+Released in 0.5.134:
 - **Childhood Lottery online datasets** (`childhood_lottery.gpkg` + `childhood_lottery_metrics.csv` in `datasets/`): Children's Commissioner for England workbook (long: 153 UTLAs x 128 metrics) reshaped wide (`<pillar>_<metric>_value` / `_score`, Yes/No coded 1/0, `overall_value`/`overall_score`) and joined to ONS Dec 2025 UTLA BGC boundaries (the only vintage matching all 153 GSS codes; 2023/2024 lack E08000038/39), simplified to 100 m, EPSG:27700. Rebuild with `tools/prepare_childhood_lottery.R`. Licence: the Commissioner states no formal licence ("All rights reserved", though free to download) so the new `free-with-credit` licence id (needs a `notice`) was added to `tools/check_datasets.R`, plus `ogl`; ONS boundaries are OGL v3.0. The user decided redistribution with credit was acceptable; an email to the Commissioner would settle it.
 
 Released in 0.5.133:

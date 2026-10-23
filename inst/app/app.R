@@ -3043,10 +3043,35 @@ ui <- fluidPage(
           if (window.Shiny) Shiny.setInputValue('mode_switch_clicked', cb.checked ? 'answer' : 'code', {priority: 'event'});
         });
         paint();
+        // Undo / Redo and the Code / Answer switch sit where they would if all four code tabs (Code, Changes,
+        // R output, Past code) were showing, so they do not shift as tabs come and go
+        function cmFixSwitchPos() {
+          var undo = document.getElementById('undo_code_li');
+          if (!ul || !undo || !ul.offsetWidth) return;
+          var x = 0;
+          ['Code', 'Changes', 'R output', 'Past code'].forEach(function(t) {
+            var m = document.createElement('li');
+            m.style.cssText = 'position:absolute;visibility:hidden;float:none;';
+            var a = document.createElement('a'); a.href = '#'; a.textContent = t; m.appendChild(a);
+            ul.appendChild(m);
+            x += a.offsetWidth + (parseFloat(getComputedStyle(a).marginRight) || 0);
+            ul.removeChild(m);
+          });
+          undo.style.left = x + 'px';
+          if (li) li.style.left = (x + undo.offsetWidth + (parseFloat(getComputedStyle(undo).marginLeft) || 0)) + 'px';
+        }
+        $(cmFixSwitchPos);
+        window.addEventListener('load', cmFixSwitchPos);
+        window.addEventListener('resize', cmFixSwitchPos);
+        if (document.fonts && document.fonts.ready) document.fonts.ready.then(cmFixSwitchPos);
+        $(document).on('shiny:connected shiny:idle shown.bs.tab', cmFixSwitchPos);   // the tab bar may not have a width at load
+        var n = 0, iv = setInterval(function() { cmFixSwitchPos(); if (++n > 40) clearInterval(iv); }, 500);
       })();
     ")),
     tags$style(HTML("
-      #main_tabs .cm-switch-li { float: left; margin: 0 0 0 16px; padding-top: 11px; font-size: 0.85em; color: #333; }
+      #main_tabs { position: relative; }
+      #main_tabs .cm-undo-li, #main_tabs .cm-switch-li { position: absolute; top: 0; }
+      #main_tabs .cm-switch-li { float: left; margin: 0 0 0 16px; padding-top: 11px; font-size: 0.85em; color: #333; white-space: nowrap; }
       #main_tabs .cm-switch-li > * { vertical-align: middle; }
       .cm-switch-lbl { display: inline-block; margin: 0 6px; }
       .cm-prompt-row.cm-hl { background-color: #fff3b0; border-radius: 3px; }
@@ -3742,14 +3767,16 @@ HELP_TEXTS <- list(
     "appears on the R output tab as usual."
   ),
   undo_prompt = paste(
-    "Undo (curved back arrow) — Steps back to the previous prompt, code or answer, bringing it back in exactly the same way",
-    "as its Recall button (including, for a Preference entry, the preferences it set). It then turns into",
+    "Undo (curved back arrow) — Steps back to the previous prompt, code or answer, bringing back what it produced in",
+    "the same way as its Recall button (including, for a Preference entry, the preferences it set). Your prompt box is left",
+    "alone: the Past prompts tab opens with that prompt highlighted instead, as the Code / Answer switch does. It then turns into",
     "Redo (curved forward arrow), which takes you back to exactly where you were before pressing Undo. Redo is only offered",
     "until you do something else, such as ask a new prompt or recall another entry."
   ),
   undo_code = paste(
-    "Undo (curved back arrow) — Steps back to the previous prompt, code or answer, bringing it back in exactly the same way",
-    "as its Recall button. It then turns into Redo (curved forward arrow), which takes you back to exactly where you were",
+    "Undo (curved back arrow) — Steps back to the previous prompt, code or answer, bringing back what it produced in",
+    "the same way as its Recall button. Your prompt box is left alone: the Past prompts tab opens with that prompt",
+    "highlighted instead, as the Code / Answer switch does. It then turns into Redo (curved forward arrow), which takes you back to exactly where you were",
     "before pressing Undo. Redo is only offered until you do something else, such as ask a new prompt",
     "or recall another entry."
   ),
@@ -5342,7 +5369,7 @@ server <- function(input, output, session) {
   })
 
   # Bring back what a past prompt produced (shared by Recall in Past prompts and by Undo / Redo)
-  recall_prompt_entry <- function(rec, p) {
+  recall_prompt_entry <- function(rec, p, fill_prompt = TRUE) {
     if (!is.null(rec)) recall_interaction(rec)       # bring back everything the prompt produced
     # A Preference entry puts the preferences back as they were when it was made
     if (!is.null(rec$pref_new)) {
@@ -5354,9 +5381,15 @@ server <- function(input, output, session) {
           paste0(PREF_RELEVANT[diffk], ": ", unlist(rec$pref_new[diffk]), collapse = "; ")),
           type = "message", duration = 6)
     }
+    if (!fill_prompt) return(invisible(NULL))        # Undo / Redo: the prompt box is left alone (see show_prompt_in_past)
     # An Export or Preference entry has no prompt of its own, so the prompt box is left blank
     updateTextAreaInput(session, "prompt", value = if (isTRUE(rec$export) || !is.null(rec$pref_new)) "" else p)
     updateTabsetPanel(session, "prompt_tabs", selected = "Your prompt")
+  }
+  # Open Past prompts with the given prompt highlighted (as the Code / Answer switch does)
+  show_prompt_in_past <- function(text) {
+    updateTabsetPanel(session, "prompt_tabs", selected = "Past prompts")
+    session$sendCustomMessage("cm_highlight_prompt", list(text = text %||% ""))
   }
 
   # Past prompt repeat: move to top (no duplicate)
@@ -5410,7 +5443,7 @@ server <- function(input, output, session) {
       recall_interaction(rec)
       if (identical(rec$kind, "code") && !is.null(u$tab)) goto_tab(u$tab)
       for (k in names(u$prefs)) prefs[[k]] <- u$prefs[[k]]
-      updateTextAreaInput(session, "prompt", value = u$prompt %||% "")
+      show_prompt_in_past(rec$prompt)
       return(invisible(NULL))
     }
     i <- undo_pos()
@@ -5420,7 +5453,8 @@ server <- function(input, output, session) {
                   prefs = relevant_prefs())
     capture_active_code()                           # keep the current code exactly as it is, for Redo
     rec <- isolate(interactions())[[i + 1L]]
-    recall_prompt_entry(rec, rec$prompt %||% "")
+    recall_prompt_entry(rec, rec$prompt %||% "", fill_prompt = FALSE)
+    show_prompt_in_past(rec$prompt)
     state$target <- isolate(current_seq())
     undo_state(state)
   }
