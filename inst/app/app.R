@@ -2946,6 +2946,8 @@ ui <- fluidPage(
         background: rgba(0,0,0,0.6); color: #fff; border-radius: 3px; pointer-events: none; }
       /* The data-protection notice in the prompt box is dark red until the prompt box is cleared */
       #prompt_wrap .form-group { margin-bottom: 0; }
+      /* The prompt box is mid grey (and read-only) while Ask for Code, Answer or Run is working */
+      #prompt.cm-busy { background-color: #bdbdbd; }
       .cm-prompt-notice { position: absolute; top: 1px; left: 1px; right: 1px; bottom: 1px; padding: 6px 12px;
         background: #fff; border-radius: 3px; font-size: 14px; line-height: 1.42857; overflow: hidden; pointer-events: none; }
       /* Magnifier beside each file / object in the context list, to the left of the tick or cross */
@@ -5045,8 +5047,19 @@ server <- function(input, output, session) {
   last_run_failed <- reactiveVal(FALSE)
   last_run_code   <- reactiveVal(NULL)
   ui_busy         <- reactiveVal(FALSE)
+  ask_code_active <- reactiveVal(FALSE)   # TRUE while Ask for Code is working (it does not use ui_busy)
+  # While Ask for Code, Answer or Run is working, the prompt box goes mid grey and cannot be edited (or cleared),
+  # so it cannot change mid-process
+  freeze_prompt <- function(on) {
+    shinyjs::runjs(sprintf("var p = document.getElementById('prompt');
+                            if (p) { p.readOnly = %s; p.classList.toggle('cm-busy', %s); }",
+                           if (on || isolate(protection_notice_active())) "true" else "false",
+                           if (on) "true" else "false"))
+    shinyjs::toggleState("clear_prompt", condition = !on)
+  }
   # TRUE on a fresh open; FALSE on pause-resume. Cleared when the student presses Clear.
   protection_notice_active <- reactiveVal(!.resuming_pause)
+  observe(freeze_prompt(isTRUE(ui_busy()) || isTRUE(ask_code_active())))
   observe({
     if (ui_busy()) {
       for (btn in c("ask_plain", "ask_code", "explain_code", "fix_code", "run_code",
@@ -7620,6 +7633,8 @@ server <- function(input, output, session) {
     capture_active_code()    # save what the previous code interaction looked like before it is cleared
     autorun_text <- NULL
     disable("ask_code"); disable("ask_plain")
+    ask_code_active(TRUE); freeze_prompt(TRUE)
+    on.exit(ask_code_active(FALSE), add = TRUE)
     tryCatch({
       user_message <- build_user_message(
         file_paths          = context_files(),
@@ -7800,7 +7815,7 @@ server <- function(input, output, session) {
   # its output is scrubbed of individual records, and Claude writes the answer.
   do_ask_answer <- function(current_prompt) {
     if (isTRUE(quota_exceeded())) { show_quota_modal(); return(invisible(NULL)) }
-    ui_busy(TRUE)
+    ui_busy(TRUE); freeze_prompt(TRUE)
     updateTextAreaInput(session, "prompt", value = "")
     disable("ask_code"); disable("ask_plain")
 
@@ -8544,7 +8559,7 @@ server <- function(input, output, session) {
   # --- Run the code ----------------------------------------------------------
   do_run_code <- function(code_text) {
     pending_export(NULL)
-    ui_busy(TRUE)
+    ui_busy(TRUE); freeze_prompt(TRUE)
     console_output_rv(character(0)); warnings_rv(character(0)); plot_files_rv(character(0)); widget_files_rv(character(0))
 
     check_and_install_if_needed(code_text, function() {
