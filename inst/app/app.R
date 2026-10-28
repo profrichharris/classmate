@@ -6014,26 +6014,68 @@ server <- function(input, output, session) {
   # the usual "Install extra packages?" step is offered, and the add is repeated once it has been installed; if it is
   # installed but cannot be loaded, the reason is shown. Loading spatial data also attaches sf (library(sf)) and the
   # code log records that line.
-  sf_ready <- function(retry) {
-    if (requireNamespace("sf", quietly = TRUE)) {
-      tryCatch(suppressPackageStartupMessages(library("sf", character.only = TRUE)), error = function(e) NULL)
-      return(TRUE)
+  # Packages that `pkg` needs but that are missing from this computer: the dependencies of an installed package that
+  # are not installed, plus any named in the error R gave when the package would not load
+  missing_dependencies <- function(pkg, why = "") {
+    ip   <- utils::installed.packages()
+    deps <- tryCatch(tools::package_dependencies(pkg, db = ip, which = c("Depends", "Imports"), recursive = TRUE)[[pkg]],
+                     error = function(e) character(0))
+    named <- regmatches(why, gregexpr("there is no package called [\u2018'\"][^\u2019'\"]+[\u2019'\"]", why))[[1]]
+    named <- sub("[\u2019'\"]$", "", sub("^there is no package called [\u2018'\"]", "", named))
+    setdiff(unique(c(deps, named)), c(rownames(ip), "R"))
+  }
+  # Makes sure `pkgs` can be used. If something is missing (a package, or a package one of them depends on) the usual
+  # "Install extra packages?" pop-up is shown, with the same freeze while installing as for code that needs a package,
+  # and `retry` is called once it has installed; `on_cancel` if the student declines. A package that is installed and
+  # has nothing missing but still will not load gets a pop-up with R's own error. Returns TRUE only when all can be used.
+  ensure_packages <- function(pkgs, what, retry, cancel_msg = "Installation cancelled.", on_cancel = NULL) {
+    need <- character(0); broken <- list(); via_deps <- FALSE
+    for (p in pkgs) {
+      if (requireNamespace(p, quietly = TRUE)) next
+      why <- tryCatch({ loadNamespace(p); "" }, error = function(e) conditionMessage(e))
+      if (!nzchar(system.file(package = p))) need <- c(need, p)
+      else {
+        m <- missing_dependencies(p, why)
+        if (length(m) > 0) { need <- c(need, m); via_deps <- TRUE } else broken[[p]] <- why
+      }
     }
-    why <- tryCatch({ loadNamespace("sf"); "" }, error = function(e) conditionMessage(e))
-    if (!nzchar(system.file(package = "sf"))) {
-      info <- list(list(pkg = "sf", github = NA_character_))
-      install_confirm(list(info = info, on_success = retry))
-      showModal(install_confirm_modal(info, "Loading spatial data needs a package that is not installed on this computer yet:"))
-    } else {
+    if (length(need) == 0 && length(broken) == 0) return(TRUE)
+    if (length(need) == 0) {                      # installed, nothing obviously missing: show R's own reason
+      p <- names(broken)[1]; why <- broken[[1]]
       showModal(modalDialog(
-        title = "The sf package could not be loaded",
-        tags$p("Spatial data need the ", tags$strong("sf"), " package. It is installed on this computer, but R could not load it:"),
+        title = paste0("The ", p, " package could not be loaded"),
+        tags$p(what, " needs the ", tags$strong(p), " package. It is installed on this computer, but R could not load it:"),
         tags$pre(style = "white-space: pre-wrap;", if (nzchar(why)) why else "(no reason was given)"),
         tags$p("Restarting R and running ", tags$code("talk()"), " again sometimes fixes this; if not, reinstalling it with ",
-               tags$code('install.packages("sf")'), " in the main R console usually does."),
+               tags$code(sprintf('install.packages("%s")', p)), " in the main R console usually does."),
         easyClose = TRUE, footer = modalButton("Close")))
+      return(FALSE)
     }
+    need <- unique(need)
+    info <- lapply(need, function(p) list(pkg = p, github = NA_character_))
+    install_confirm(list(info = info, on_success = retry, cancel_msg = cancel_msg, on_cancel = on_cancel))
+    showModal(install_confirm_modal(info, paste0(
+      what, " needs ", if (length(need) == 1) "a package" else "packages", " that ",
+      if (length(need) == 1) "is" else "are", " not installed on this computer yet",
+      if (via_deps) " (it is used by a package you already have)" else "", ":")))
     FALSE
+  }
+  # Spatial data are read with sf: it is attached (library(sf)) once it can be used
+  sf_ready <- function(retry) {
+    ok <- ensure_packages("sf", "Loading spatial data", retry,
+                          cancel_msg = "Installation cancelled, so the spatial data were not loaded.")
+    if (ok) tryCatch(suppressPackageStartupMessages(library("sf", character.only = TRUE)), error = function(e) NULL)
+    ok
+  }
+  # The packages needed to read a file (its column names, or a preview of it)
+  file_needs <- function(path, preview = FALSE) {
+    ext <- tolower(tools::file_ext(path))
+    switch(ext,
+      xlsx = , xls = "readxl",
+      shp = if (!preview && file.exists(sub("\\.shp$", ".dbf", path, ignore.case = TRUE))) "foreign" else "sf",
+      gpkg = , fgb = , geojson = , json = , kml = , gml = "sf",
+      sav = , dta = , sas7bdat = "haven",
+      character(0))
   }
   do_pkgdata_add <- function(keys) {
     req(length(keys) > 0)
@@ -6273,8 +6315,7 @@ server <- function(input, output, session) {
   })
 
   # Look at an item added for context (from its magnifier button)
-  observeEvent(input$inspect_item, {
-    val  <- input$inspect_item
+  show_inspect <- function(val) {
     kind <- if (startsWith(val, "file::")) "file" else "obj"
     nm   <- sub("^(file|obj)::", "", val)
     label <- if (kind == "file") basename(nm) else nm
@@ -6282,6 +6323,13 @@ server <- function(input, output, session) {
       title = paste0("Look at: ", label),
       tags$p("Classmate cannot show this one."), tags$p(em(why), style = "color: #888;"),
       footer = modalButton("Close"), easyClose = TRUE))
+    if (kind == "file") {                             # a package needed to read it may have to be installed first
+      need <- file_needs(nm, preview = TRUE)
+      if (length(need) > 0 && !ensure_packages(need, paste0("Looking at ", label),
+                                                retry = function() isolate(show_inspect(val)),
+                                                cancel_msg = "Installation cancelled, so the file could not be shown."))
+        return(invisible(NULL))
+    }
     obj <- tryCatch(inspect_with_limit(
       if (kind == "file") inspect_read_file(nm)
       else if (exists(nm, envir = .GlobalEnv, inherits = FALSE)) get(nm, envir = .GlobalEnv, inherits = FALSE)
@@ -6296,7 +6344,8 @@ server <- function(input, output, session) {
         do.call(tabsetPanel, c(list(id = "inspect_tabs"), panels)),
         footer = modalButton("Close"), easyClose = TRUE)),
       error = function(e) cannot(conditionMessage(e)))
-  })
+  }
+  observeEvent(input$inspect_item, show_inspect(input$inspect_item))
   observeEvent(input$context_list_checked, ignoreNULL = FALSE, {
     all_vals <- unname(isolate(context_choices()))
     ctx_crossed(if (length(all_vals) > 0) intersect(all_vals, input$context_list_checked %||% character(0)) else character(0))
@@ -6534,10 +6583,28 @@ server <- function(input, output, session) {
   selected_objects <- reactiveVal(character(0))
   file_schema_cache <- reactiveVal(list())
 
+  schema_retry   <- reactiveVal(0L)          # bumped after packages needed to read files have been installed
+  schema_skipped <- reactiveVal(character(0)) # files whose package the student declined to install
   observe({
+    schema_retry()
     paths <- selected_files()
     cache <- isolate(file_schema_cache())
-    new_paths <- setdiff(paths, names(cache))
+    new_paths <- setdiff(paths, c(names(cache), isolate(schema_skipped())))
+    if (length(new_paths) > 0) {
+      # Files that need a package that is missing (readxl, haven, sf...): offer to install it, and read those
+      # files' column names afterwards; the others are read now
+      needs <- lapply(new_paths, file_needs)
+      names(needs) <- new_paths
+      wait <- new_paths[!vapply(needs, function(p) length(p) == 0 || all(vapply(p, requireNamespace, logical(1), quietly = TRUE)), logical(1))]
+      if (length(wait) > 0) {
+        new_paths <- setdiff(new_paths, wait)
+        ensure_packages(unique(unlist(needs[wait])),
+                        paste0("Reading the column names of ", paste(basename(wait), collapse = ", ")),
+                        retry = function() schema_retry(isolate(schema_retry()) + 1L),
+                        cancel_msg = "Installation cancelled, so Classmate cannot see the column names of the file you added.",
+                        on_cancel = function() schema_skipped(c(isolate(schema_skipped()), wait)))
+      }
+    }
     if (length(new_paths) > 0) {
       new_schemas <- lapply(new_paths, extract_file_schema)
       names(new_schemas) <- new_paths
@@ -6622,11 +6689,13 @@ server <- function(input, output, session) {
 
   observeEvent(input$install_confirm_cancel, {
     removeModal()
+    ctx <- isolate(install_confirm())
+    msg <- ctx$cancel_msg %||% "Installation cancelled, so the code was not run."
     install_confirm(NULL)
+    if (is.function(ctx$on_cancel)) ctx$on_cancel()
     unfreeze_after_install()
     ui_busy(FALSE)
-    output$run_status <- renderUI(tags$span(
-      "Installation cancelled, so the code was not run.", style = "color:#b22222;"))
+    output$run_status <- renderUI(tags$span(msg, style = "color:#b22222;"))
   })
 
   observeEvent(input$install_confirm_go, {
