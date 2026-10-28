@@ -5262,8 +5262,10 @@ server <- function(input, output, session) {
     }
     digest_id <- function(p) match(p, history)
     tagList(lapply(history, function(p) {
-      # Escape single quotes in the prompt text so it survives the onclick string.
-      p_escaped <- gsub("'", "\\\\'", p, fixed = TRUE)
+      # The prompt goes into the onclick code as a JSON string (quotes, apostrophes, backslashes and line breaks
+      # are all escaped; htmltools escapes the attribute itself). Escaping only apostrophes, as before, broke Recall
+      # for any prompt containing one (and for backslashes or line breaks).
+      p_js <- as.character(jsonlite::toJSON(p, auto_unbox = TRUE))
       div(class = "cm-prompt-row", `data-p` = p,
         style = "display: flex; align-items: flex-start; border-bottom: 1px solid #eee; padding: 2px 0;",
         tags$p(p, style = paste0(
@@ -5282,7 +5284,7 @@ server <- function(input, output, session) {
             "cursor: pointer; color: #555;"
           ),
           onclick = paste0(
-            "Shiny.setInputValue('copy_past_prompt', '", p_escaped, "',",
+            "Shiny.setInputValue('copy_past_prompt', ", p_js, ",",
             "{priority: 'event'});"
           )
         )
