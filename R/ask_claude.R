@@ -54,9 +54,18 @@ talk <- function() {
     stop("Could not locate the classmate app directory. Try reinstalling the package.")
   }
 
-  suppressWarnings(suppressMessages(
-    shiny::runApp(app_dir, launch.browser = TRUE)
-  ))
+  # A paused session remembers the port it ran on. Starting on the same port lets the old (disconnected) browser
+  # tab reconnect by itself and carry on; a new tab is opened only if no tab has connected a few seconds later.
+  port <- classmate_paused_port()
+  options(classmate.session_connected = FALSE)
+  launch <- if (is.null(port)) TRUE else function(url) {
+    later::later(function() {
+      if (!isTRUE(getOption("classmate.session_connected"))) utils::browseURL(url)
+    }, 6)
+  }
+  run_args <- list(appDir = app_dir, launch.browser = launch)
+  if (!is.null(port)) run_args$port <- port
+  suppressWarnings(suppressMessages(do.call(shiny::runApp, run_args)))
 
   # runApp() restores the working directory it found. If the user changed it
   # inside Classmate (Change Working Directory, or setwd() in the Quick Console),
@@ -70,6 +79,17 @@ talk <- function() {
     }
   }
   invisible(NULL)
+}
+
+# The port a paused session was running on (stored in its pause file), if it is still free
+classmate_paused_port <- function() {
+  f <- file.path(getwd(), "claude_assistant_pause.rds")
+  if (!file.exists(f)) return(NULL)
+  port <- tryCatch(as.integer(readRDS(f)$port), error = function(e) NA_integer_)
+  if (length(port) != 1L || is.na(port) || port < 1024L) return(NULL)
+  free <- tryCatch({ srv <- httpuv::startServer("127.0.0.1", port, list()); httpuv::stopServer(srv); TRUE },
+                   error = function(e) FALSE)
+  if (free) port else NULL
 }
 
 # ---------------------------------------------------------------------------

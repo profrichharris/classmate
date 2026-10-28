@@ -3075,6 +3075,22 @@ ui <- fluidPage(
         var n = 0, iv = setInterval(function() { cmFixSwitchPos(); if (++n > 40) clearInterval(iv); }, 500);
       })();
     ")),
+    tags$script(HTML("
+      // When Classmate stops (Pause, Quit or a crash) this tab is left disconnected. If it was a Pause, running talk()
+      // again starts the app at the same address, so the tab watches for that and reloads itself.
+      $(document).on('shiny:disconnected', function() {
+        if (window.cmWatching) return; window.cmWatching = true;
+        var box = document.createElement('div');
+        box.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:2147483000;background:#fff3cd;color:#664d03;' +
+                            'border-bottom:1px solid #e0c060;padding:10px 16px;font-size:14px;text-align:center;';
+        box.textContent = 'Classmate has stopped. If you paused it, run talk() in R and this tab will reconnect by itself; otherwise you can close this tab.';
+        document.body.appendChild(box);
+        var n = 0, iv = setInterval(function() {
+          if (++n > 1800) { clearInterval(iv); return; }
+          fetch(location.href, {cache: 'no-store'}).then(function(r) { if (r.ok) { clearInterval(iv); location.reload(); } }).catch(function() {});
+        }, 1000);
+      });
+    ")),
     tags$style(HTML("
       #main_tabs { position: relative; }
       #main_tabs .cm-undo-li, #main_tabs .cm-switch-li { position: absolute; top: 0; }
@@ -4068,6 +4084,7 @@ HELP_ID_PATTERNS <- list(
 )
 
 server <- function(input, output, session) {
+  options(classmate.session_connected = TRUE)   # talk() opens a new browser tab only if no tab has connected (resuming a pause)
 
   # Show a clean "session ended" page, then stop after 400 ms so the JS has
   # time to render before the WebSocket drops.
@@ -5992,14 +6009,47 @@ server <- function(input, output, session) {
   })
 
   # Add: copy the ticked datasets into the workspace (replace check first) and add them to the context
-  observeEvent(input$pkgdata_add, {
-    keys <- pkgdata_sel(); req(length(keys) > 0)
+  #
+  # Spatial data are read with the sf package: sf_ready() checks that it can be used first. If it is not installed
+  # the usual "Install extra packages?" step is offered, and the add is repeated once it has been installed; if it is
+  # installed but cannot be loaded, the reason is shown. Loading spatial data also attaches sf (library(sf)) and the
+  # code log records that line.
+  sf_ready <- function(retry) {
+    if (requireNamespace("sf", quietly = TRUE)) {
+      tryCatch(suppressPackageStartupMessages(library("sf", character.only = TRUE)), error = function(e) NULL)
+      return(TRUE)
+    }
+    why <- tryCatch({ loadNamespace("sf"); "" }, error = function(e) conditionMessage(e))
+    if (!nzchar(system.file(package = "sf"))) {
+      info <- list(list(pkg = "sf", github = NA_character_))
+      install_confirm(list(info = info, on_success = retry))
+      showModal(install_confirm_modal(info, "Loading spatial data needs a package that is not installed on this computer yet:"))
+    } else {
+      showModal(modalDialog(
+        title = "The sf package could not be loaded",
+        tags$p("Spatial data need the ", tags$strong("sf"), " package. It is installed on this computer, but R could not load it:"),
+        tags$pre(style = "white-space: pre-wrap;", if (nzchar(why)) why else "(no reason was given)"),
+        tags$p("Restarting R and running ", tags$code("talk()"), " again sometimes fixes this; if not, reinstalling it with ",
+               tags$code('install.packages("sf")'), " in the main R console usually does."),
+        easyClose = TRUE, footer = modalButton("Close")))
+    }
+    FALSE
+  }
+  do_pkgdata_add <- function(keys) {
+    req(length(keys) > 0)
     plan <- list(); failed <- character(0); used <- character(0)
+    sf_ok <- NA
+    ensure_sf <- function() {
+      if (is.na(sf_ok)) sf_ok <<- sf_ready(function() isolate(do_pkgdata_add(keys)))
+      sf_ok
+    }
     for (k in keys) {
       pk   <- sub("::.*$", "", k)
       if (identical(pk, PKGDATA_ONLINE)) {                # one of Classmate's online datasets: download it
         man <- attr(pkgdata_load_pkg(PKGDATA_ONLINE), "manifest")
         mr  <- if (is.null(man)) NULL else man[match(sub("^.*::", "", k), man$id), ]
+        spatial_online <- !is.null(mr) && tolower(mr$format) %in% c("gpkg", "geojson", "shp")
+        if (spatial_online && !ensure_sf()) return(invisible(NULL))
         val <- if (is.null(mr)) NULL else tryCatch(
           withProgress(message = paste0("Downloading ", mr$object, " (", fmt_bytes(mr$bytes), ")..."), value = 0.5,
                        online_dataset_load(mr)),
@@ -6014,6 +6064,7 @@ server <- function(input, output, session) {
         final <- if (mr$object %in% used) make.names(paste0(mr$object, "_classmate")) else mr$object
         used  <- c(used, final)
         plan[[length(plan) + 1L]] <- list(name = final, package = "Classmate", key = k, value = val,
+                                          uses_sf = spatial_online,
                                           code = online_dataset_code(mr, final),
                                           credit = paste(c(mr$attribution, if (nzchar(mr$notice)) mr$notice), collapse = " "))
         next
@@ -6022,8 +6073,8 @@ server <- function(input, output, session) {
       row  <- info[match(k, info$key), ]
       nm   <- row$object
       if (identical(row$kind, "file")) {                  # a spatial file: read it with sf
+        if (!ensure_sf()) return(invisible(NULL))
         val <- tryCatch({
-          if (!requireNamespace("sf", quietly = TRUE)) stop("sf is not installed")
           suppressWarnings(sf::st_read(row$path, quiet = TRUE))
         }, error = function(err) NULL)
         if (is.null(val)) { failed <- c(failed, k); next }
@@ -6046,7 +6097,8 @@ server <- function(input, output, session) {
       else
         sprintf('%s <- local({ e <- new.env(); data("%s", package = "%s", envir = e); e[["%s"]] })',
                 final, row$loadname, pk, nm)
-      plan[[length(plan) + 1L]] <- list(name = final, package = pk, key = k, value = val, code = code)
+      plan[[length(plan) + 1L]] <- list(name = final, package = pk, key = k, value = val, code = code,
+                                        uses_sf = identical(row$kind, "file"))
     }
     if (length(failed) > 0)
       showNotification(paste("Could not load:", paste(failed, collapse = ", ")), type = "error", duration = 8)
@@ -6070,7 +6122,8 @@ server <- function(input, output, session) {
       return(invisible(NULL))
     }
     commit_pkg_plan(plan, reopen = FALSE)
-  })
+  }
+  observeEvent(input$pkgdata_add, do_pkgdata_add(pkgdata_sel()))
   observeEvent(input$pkgdata_replace, { pkgdata_hold(FALSE); commit_pkg_plan(pkgdata_plan(), reopen = TRUE) })
   observeEvent(input$pkgdata_replace_cancel, { pkgdata_release(); show_pkgdata_modal() })
   # Copy the chosen datasets into the workspace and add them to the context. The dialog stays open (the
@@ -6085,7 +6138,9 @@ server <- function(input, output, session) {
     nms <- vapply(plan, `[[`, "", "name")
     selected_objects(union(selected_objects(), nms))
     # Record the loading in the code log, so the log is a complete, reproducible pipeline
+    uses_sf  <- any(vapply(plan, function(it) isTRUE(it$uses_sf), logical(1)))
     log_code <- paste(c("# Data loaded from packages (Load Package Data)",
+                        if (uses_sf) "library(sf)",
                         unique(vapply(plan, `[[`, "", "code"))), collapse = "\n")
     entry <- list(prompt = paste0("Loaded package data: ", paste(nms, collapse = ", ")), code = log_code,
                   description = "", source = "data")
@@ -6540,13 +6595,13 @@ server <- function(input, output, session) {
 
   install_confirm <- reactiveVal(NULL)
 
-  install_confirm_modal <- function(missing_info) {
+  install_confirm_modal <- function(missing_info, intro = "This code needs packages that are not installed on this computer yet:") {
     nms   <- vapply(missing_info, `[[`, character(1), "pkg")
     gh    <- vapply(missing_info, function(x) !is.na(x[["github"]]), logical(1))
     heavy <- intersect(nms, c("brms", "rstanarm", "tidymodels", "mlr3", "terra", "sf"))
     modalDialog(
       title = "Install extra packages?",
-      tags$p("This code needs packages that are not installed on this computer yet:"),
+      tags$p(intro),
       tags$ul(lapply(seq_along(nms), function(i)
         tags$li(tags$strong(nms[i]), if (gh[i]) paste0(" (from GitHub: ", missing_info[[i]][["github"]], ")")))),
       tags$p("They will be downloaded and installed now. This needs an internet connection and may take a few minutes;",
@@ -8916,9 +8971,6 @@ server <- function(input, output, session) {
         "conversation history, and preferences — will be saved and restored",
         "automatically when you next start the app."
       )),
-      tags$p(em(
-        "The API key is not saved; it will be picked up from the R environment automatically."
-      )),
       footer = tagList(
         actionButton("confirm_pause_app", "Pause", class = "btn-primary"),
         modalButton("Cancel")
@@ -8931,6 +8983,7 @@ server <- function(input, output, session) {
     removeModal()
     capture_active_code()
     pause_state <- list(
+      port                 = suppressWarnings(as.integer(isolate(session$clientData$url_port))),   # talk() reuses it when resuming
       prompt               = isolate(input$prompt),
       code_editor          = isolate(input$code_editor),
       selected_files       = selected_files(),

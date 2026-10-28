@@ -1,6 +1,6 @@
 Package: classmate
 Title: AI Assistant for Teaching R
-Version: 0.5.138
+Version: 0.5.139
 Authors@R:
     person("Richard", "Harris", email = "profrichharris@gmail.com",
            role = c("aut", "cre"))
@@ -20,7 +20,9 @@ Imports:
     rstudioapi,
     httr2,
     jsonlite,
-    openssl
+    openssl,
+    httpuv,
+    later
 Suggests:
     remotes
 Depends:
