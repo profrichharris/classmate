@@ -92,6 +92,41 @@ classmate_paused_port <- function() {
   if (free) port else NULL
 }
 
+# The newest release: list(version =, url =) or NULL if GitHub cannot be reached.
+# The GitHub API is tried first; it only allows 60 anonymous requests an hour per network address, so a class
+# sharing one connection can be refused (HTTP 403). The fallback reads the version from DESCRIPTION on GitHub
+# (no such limit) and builds the release download address from it.
+classmate_latest_release <- function() {
+  repo <- CLASSMATE_GITHUB_REPO
+  from_api <- tryCatch({
+    resp <- httr2::request(paste0("https://api.github.com/repos/", repo, "/releases/latest")) |>
+      httr2::req_headers("Accept" = "application/vnd.github+json", "X-GitHub-Api-Version" = "2022-11-28") |>
+      httr2::req_timeout(6) |>
+      httr2::req_error(is_error = \(r) FALSE) |>
+      httr2::req_perform()
+    if (httr2::resp_status(resp) != 200L) NULL else {
+      rel <- httr2::resp_body_json(resp)
+      tarball <- Filter(\(a) grepl("\\.tar\\.gz$", a$name), rel$assets)
+      if (length(tarball) == 0) NULL
+      else list(version = gsub("^v", "", rel$tag_name %||% ""), url = tarball[[1]]$browser_download_url)
+    }
+  }, error = function(e) NULL)
+  if (!is.null(from_api)) return(from_api)
+
+  tryCatch({
+    resp <- httr2::request(paste0("https://raw.githubusercontent.com/", repo, "/main/DESCRIPTION")) |>
+      httr2::req_timeout(6) |>
+      httr2::req_error(is_error = \(r) FALSE) |>
+      httr2::req_perform()
+    if (httr2::resp_status(resp) != 200L) return(NULL)
+    m <- regmatches(httr2::resp_body_string(resp), regexec("(?m)^Version:\\s*([0-9.]+)", httr2::resp_body_string(resp), perl = TRUE))[[1]]
+    if (length(m) < 2) return(NULL)
+    ver <- m[2]
+    list(version = ver,
+         url = sprintf("https://github.com/%s/releases/download/v%s/classmate_%s.tar.gz", repo, ver, ver))
+  }, error = function(e) NULL)
+}
+
 # ---------------------------------------------------------------------------
 # Preflight update check
 # Returns TRUE if a new version was installed and a fresh talk() was launched.
@@ -103,25 +138,10 @@ classmate_preflight <- function(relaunch = "talk", args = list()) {
   if (isTRUE(getOption("classmate.update_checked"))) return(FALSE)
   options(classmate.update_checked = TRUE)
 
-  repo    <- CLASSMATE_GITHUB_REPO
-  api_url <- paste0("https://api.github.com/repos/", repo, "/releases/latest")
+  release <- classmate_latest_release()
+  if (is.null(release)) return(FALSE)   # offline, or GitHub could not be reached: carry on silently
 
-  release <- tryCatch({
-    req  <- httr2::request(api_url) |>
-      httr2::req_headers(
-        "Accept"               = "application/vnd.github+json",
-        "X-GitHub-Api-Version" = "2022-11-28"
-      ) |>
-      httr2::req_timeout(6) |>
-      httr2::req_error(is_error = \(r) FALSE)
-    resp <- httr2::req_perform(req)
-    if (httr2::resp_status(resp) != 200L) return(NULL)
-    httr2::resp_body_json(resp)
-  }, error = function(e) NULL)
-
-  if (is.null(release)) return(FALSE)   # network error — continue as-is
-
-  latest_version  <- gsub("^v", "", release$tag_name %||% "")
+  latest_version  <- release$version
   current_version <- as.character(utils::packageVersion("classmate"))
 
   if (!nzchar(latest_version)) return(FALSE)
@@ -131,11 +151,7 @@ classmate_preflight <- function(relaunch = "talk", args = list()) {
   if (identical(getOption("classmate.failed_update_version"), latest_version))
     return(FALSE)
 
-  # Find the source tarball asset
-  tarball <- Filter(\(a) grepl("\\.tar\\.gz$", a$name), release$assets)
-  if (length(tarball) == 0) return(FALSE)
-  download_url <- tarball[[1]]$browser_download_url
-
+  download_url <- release$url
   classmate_do_update(latest_version, download_url, relaunch, args)
 }
 
@@ -155,29 +171,36 @@ classmate_do_update <- function(latest_version, download_url, relaunch = "talk",
   # it needs to be read from the package files once the new version has overwritten them.
   classmate_force_lazy_objects()
 
+  problems <- character(0)
   success <- tryCatch({
     tmp <- tempfile(fileext = ".tar.gz")
-    suppressWarnings(utils::download.file(download_url, tmp, quiet = TRUE, mode = "wb"))
-    suppressMessages(suppressWarnings(
-      utils::install.packages(tmp, repos = NULL, type = "source", quiet = TRUE)
-    ))
+    withCallingHandlers(
+      {
+        utils::download.file(download_url, tmp, quiet = TRUE, mode = "wb")
+        suppressMessages(utils::install.packages(tmp, repos = NULL, type = "source", quiet = TRUE))
+      },
+      warning = function(w) { problems <<- c(problems, conditionMessage(w)); invokeRestart("muffleWarning") })
     TRUE
-  }, error = function(e) FALSE)
+  }, error = function(e) { problems <<- c(problems, conditionMessage(e)); FALSE })
 
-  if (!success) {
+  # Say so (once) if the update could not be installed: the student should not be left on an old version without
+  # knowing. Running out of rate limit or being offline is not reported (see classmate_preflight()).
+  say_failed <- function() {
     options(classmate.failed_update_version = latest_version)
-    return(FALSE)
+    message("Classmate: version ", latest_version, " is available but could not be installed automatically",
+            if (length(problems)) paste0(" (", substr(paste(unique(problems), collapse = "; "), 1, 300), ")"), ".\n",
+            "To update, restart R and, before loading classmate, run:\n",
+            "  remotes::install_github(\"", CLASSMATE_GITHUB_REPO, "\")")
+    FALSE
   }
+  if (!success) return(say_failed())
 
   new_version <- tryCatch(
     as.character(utils::packageVersion("classmate")),
     error = function(e) ""
   )
 
-  if (!identical(new_version, latest_version)) {
-    options(classmate.failed_update_version = latest_version)
-    return(FALSE)
-  }
+  if (!identical(new_version, latest_version)) return(say_failed())
 
   # Swap the new version in and carry on, with no restart of R needed
   if (classmate_reload_and_relaunch(relaunch, args)) return(TRUE)
