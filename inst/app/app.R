@@ -1067,6 +1067,28 @@ format_prompt_as_comment <- function(prompt_text) {
   paste0("# ", lines, collapse = "\n")
 }
 
+# What an explanation was asked for, as it is written in the log
+explanation_label <- function(e) {
+  what <- switch(e$kind %||% "code",
+    selection = "the selected code", code = "the code in the Code window",
+    changes = "the changes made to the code", output = "the R output", error = "the error message",
+    "the code")
+  paste0("Explanation requested for ", what,
+         if (nzchar(e$level %||% "")) paste0(" (", e$level, " level)") else "")
+}
+# An explanation (and any "Tell me more" detail) in the notebook: what was asked in italics, the selected code in a
+# chunk that is not run, and the explanation as a quotation, so the notebook still runs top to bottom.
+format_explanation_entry <- function(e, i) {
+  quote_lines <- function(txt) paste0("> ", strsplit(trimws(txt), "\n", fixed = TRUE)[[1]], collapse = "\n")
+  parts <- paste0("*", explanation_label(e), "*")
+  if (nzchar(trimws(e$subject %||% "")))
+    parts <- c(parts, paste0("```{r explained_", i, ", eval=FALSE}\n", trimws(e$subject), "\n```"))
+  parts <- c(parts, quote_lines(e$text %||% ""))
+  for (m in e$more %||% list())
+    parts <- c(parts, paste0("*More detail on: \u201c", gsub("\\s+", " ", trimws(m$passage)), "\u201d*"), quote_lines(m$text))
+  paste(parts, collapse = "\n\n")
+}
+
 format_log_entries <- function(entries) {
   header <- paste0(
     "---\ntitle: \"Classmate Code Log\"\ndate: \"",
@@ -1076,6 +1098,7 @@ format_log_entries <- function(entries) {
   )
   chunks <- lapply(seq_along(entries), function(i) {
     e <- entries[[i]]
+    if (identical(e$source, "explanation")) return(format_explanation_entry(e, i))
     prompt_text <- if (is.null(e$prompt) || !nzchar(trimws(e$prompt)))
       "_No prompt recorded — code entered or edited manually._"
     else
@@ -3915,7 +3938,8 @@ HELP_TEXTS <- list(
   ),
   view_log = paste(
     "View Code Log — Opens a read-only window listing the code that has been run successfully in",
-    "this conversation, each piece with the prompt that produced it. Press Save in that window to",
+    "this conversation, each piece with the prompt that produced it, together with any explanations you",
+    "asked for (Explain, and Tell me more), shown as quoted text so the notebook still runs. Press Save in that window to",
     "save the log as an R Notebook (.Rmd) in your project folder and open it in RStudio, as",
     "happens with Pause, Quit with Code Log and New conversation, but part-way through. You can",
     "carry on in Classmate afterwards; a later save contains everything so far."
@@ -8291,6 +8315,38 @@ server <- function(input, output, session) {
   # until the user actually picks a different level.
   explain_level_at_last_gen <- reactiveVal(NULL)
   explain_result             <- reactiveVal(NULL)   # list(explanation, help_pages)
+  # What the explanation on show is about, so that it can be added to the code log: list(id, kind, subject)
+  explain_ctx   <- reactiveVal(NULL)
+  explain_n     <- 0L
+  new_explain_ctx <- function(kind, subject = "") {
+    explain_n <<- explain_n + 1L
+    explain_ctx(list(id = explain_n, kind = kind, subject = subject))
+  }
+  explain_failed <- function(x) !nzchar(trimws(x %||% "")) ||
+    grepl("^(Could not generate|Classmate could not|Your key was not accepted|Claude is busy|Claude did not reply|The code is too long)", trimws(x))
+  # Add (or, for a regenerated explanation at another level, replace) the explanation in the code log
+  update_explanation_log <- function(change) {
+    ctx <- isolate(explain_ctx()); if (is.null(ctx)) return(invisible(NULL))
+    swap <- function(entries) {
+      idx <- which(vapply(entries, function(e) identical(e$source, "explanation") && identical(e$explain_id, ctx$id), logical(1)))
+      new <- change(if (length(idx)) entries[[idx[1]]] else NULL)
+      if (is.null(new)) return(entries)
+      if (length(idx)) entries[[idx[1]]] <- new else entries <- c(entries, list(new))
+      entries
+    }
+    all_log_entries(swap(isolate(all_log_entries())))
+    pending_log_entries(swap(isolate(pending_log_entries())))
+  }
+  observeEvent(explain_result(), {
+    r <- explain_result()
+    if (is.null(r) || isTRUE(r$loading) || explain_failed(r$explanation)) return()
+    ctx   <- isolate(explain_ctx()); req(!is.null(ctx))
+    level <- isolate(explain_level_at_last_gen()) %||% ""
+    update_explanation_log(function(old)
+      list(prompt = "", code = "", description = "", source = "explanation", explain_id = ctx$id, kind = ctx$kind,
+           subject = ctx$subject, level = if (ctx$kind %in% c("selection", "code", "output")) level else "",
+           text = trimws(r$explanation), more = old$more %||% list(), ts = Sys.time()))
+  }, ignoreNULL = TRUE)
   last_explain_level         <- reactiveVal("Intermediate")  # persists across modal opens
   tell_more_result           <- reactiveVal(NULL)
 
@@ -8356,6 +8412,11 @@ server <- function(input, output, session) {
       if (nzchar(trimws(api_result$text %||% ""))) {
         record_usage(api_result$cost_usd)
         tell_more_result(list(text = api_result$text))
+        update_explanation_log(function(old) {
+          if (is.null(old)) return(NULL)
+          old$more <- c(old$more %||% list(), list(list(passage = sel_text, text = trimws(api_result$text))))
+          old
+        })
       } else {
         tell_more_result(list(text = "Could not generate additional detail. Please try again."))
       }
@@ -8374,6 +8435,7 @@ server <- function(input, output, session) {
     if (last_run_failed()) {
       error_text <- paste(console_output_rv(), collapse = "\n")
       code_text  <- isolate(input$code_editor) %||% ""
+      new_explain_ctx("error")
       explain_result(list(loading = TRUE))
       showModal(modalDialog(
         title     = "What went wrong?",
@@ -8418,6 +8480,7 @@ server <- function(input, output, session) {
       level <- last_explain_level()
       explain_level_at_last_gen(level)
       disable("explain_regenerate")
+      new_explain_ctx("output")
       explain_result(list(loading = TRUE))
       showModal(modalDialog(
         title     = "Output explanation",
@@ -8501,6 +8564,7 @@ server <- function(input, output, session) {
         "```r\n", new_annotated, "\n```\n\n",
         "Please explain what was changed and why."
       )
+      new_explain_ctx("changes")
       explain_result(list(loading = TRUE))
       showModal(modalDialog(
         title     = "What changed?",
@@ -8545,6 +8609,7 @@ server <- function(input, output, session) {
     # "Generating explanation..." message as soon as the modal opens.
     explain_level_at_last_gen(level)
     disable("explain_regenerate")
+    new_explain_ctx(if (nzchar(sel)) "selection" else "code", if (nzchar(sel)) sel else "")
     explain_result(list(loading = TRUE))
 
     showModal(modalDialog(
@@ -8973,6 +9038,19 @@ server <- function(input, output, session) {
       div(style = "height: 380px; overflow-y: auto; padding-right: 6px;",
         lapply(seq_along(entries), function(i) {
           e <- entries[[i]]
+          if (identical(e$source, "explanation"))
+            return(div(style = "margin-bottom: 14px;",
+              tags$p(style = "margin: 0 0 4px 0; font-size: 0.85em; color: #666;",
+                     tags$strong(paste0("Chunk ", i, ": ")), em(explanation_label(e))),
+              if (nzchar(trimws(e$subject %||% "")))
+                tags$pre(style = "margin: 0 0 4px 0; font-size: 0.82em; white-space: pre-wrap; background: #f8f8f8;",
+                         trimws(e$subject)),
+              div(style = "border-left: 3px solid #ccd; padding: 2px 10px; font-size: 0.88em; color: #333;",
+                  HTML(explanation_to_html(e$text %||% "")),
+                  lapply(e$more %||% list(), function(m)
+                    tagList(tags$p(em(paste0("More detail on: \u201c", gsub("\\s+", " ", trimws(m$passage)), "\u201d")),
+                                   style = "margin: 6px 0 0 0; color: #666;"),
+                            HTML(explanation_to_html(m$text)))))))
           div(style = "margin-bottom: 14px;",
             tags$p(style = "margin: 0 0 4px 0; font-size: 0.85em; color: #666;",
               tags$strong(paste0("Chunk ", i, ": ")),
@@ -8986,8 +9064,8 @@ server <- function(input, output, session) {
       title = "Code Log",
       size  = "l",
       tags$p(style = "font-size: 0.85em; color: #888;",
-        "The code run successfully in this conversation. Press Save to save it as an R Notebook",
-        "and open it in RStudio."),
+        "The code run successfully in this conversation, with any explanations you asked for. Press Save to save it as an",
+        "R Notebook and open it in RStudio."),
       body,
       footer = tagList(
         if (length(entries) > 0) actionButton("view_log_save", "Save", class = "btn-primary"),
