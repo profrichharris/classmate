@@ -1104,6 +1104,8 @@ format_log_entries <- function(entries) {
       "_No prompt recorded — code entered or edited manually._"
     else
       paste0("*", trimws(e$prompt), "*")
+    if (identical(e$source, "unrun"))
+      return(paste0(prompt_text, "\n\n*This code was not run.*\n\n```{r chunk_", i, ", eval=FALSE}\n", trimws(e$code), "\n```"))
     paste0(prompt_text, "\n\n```{r chunk_", i, "}\n", trimws(e$code), "\n```")
   })
   paste(c(header, chunks), collapse = "\n\n")
@@ -4749,7 +4751,7 @@ server <- function(input, output, session) {
       prompts     = ph,
       codes       = rh,
       unconf      = unconf_code(),
-      log_entries = all_log_entries(),
+      log_entries = full_log(),
       files       = unique(selected_files()),
       objects     = unique(selected_objects()),
       answer_latest = answer_latest(),
@@ -5602,6 +5604,7 @@ server <- function(input, output, session) {
     selected_objects(recalled$objects %||% character(0))
     # Restore log entries so the notebook continues from where this conversation left off
     all_log_entries(recalled$log_entries %||% list())
+    held_explain(NULL)
     # Clear transient state
     hide_changes_tab()
     pending_log_entries(list())
@@ -5663,8 +5666,7 @@ server <- function(input, output, session) {
         entry <- list(prompt = "Loaded a workspace file",
                       code = paste0("# Workspace loaded with Load Workspace\nload(", deparse(path), ")"),
                       description = "", source = "data")
-        pending_log_entries(c(pending_log_entries(), list(entry)))
-        all_log_entries(c(all_log_entries(), list(entry)))
+        add_log_entry(entry)
       }
     }
   })
@@ -6213,8 +6215,7 @@ server <- function(input, output, session) {
                         unique(vapply(plan, `[[`, "", "code"))), collapse = "\n")
     entry <- list(prompt = paste0("Loaded package data: ", paste(nms, collapse = ", ")), code = log_code,
                   description = "", source = "data")
-    pending_log_entries(c(pending_log_entries(), list(entry)))
-    all_log_entries(c(all_log_entries(), list(entry)))
+    add_log_entry(entry)
     pkgdata_sel(character(0))
     if (reopen) show_pkgdata_modal()
     else updateCheckboxGroupInput(session, "pkgdata_choice", selected = character(0))
@@ -6594,8 +6595,39 @@ server <- function(input, output, session) {
     unconf_code(Filter(function(e) !identical(trimws(e$code), trimws(code)), isolate(unconf_code())))
   pending_log_entries  <- reactiveVal(if (!is.null(ps)) ps$pending_log_entries  else list())
   all_log_entries      <- reactiveVal(if (!is.null(ps)) ps$all_log_entries      else list())
+  # Code that has been explained but not yet run, with its explanations: list(code, prompt, entries). It joins the
+  # log when the code is run (code first, explanations below it) or, if the user moves on without running it, just
+  # before whatever is logged next, as code that was not run.
+  held_explain         <- reactiveVal(if (!is.null(ps)) ps$held_explain         else NULL)
   last_logged_code     <- reactiveVal(if (!is.null(ps)) ps$last_logged_code     else "")
   prompt_history       <- reactiveVal(if (!is.null(ps)) ps$prompt_history       else character(0))
+  # --- Writing to the code log ----------------------------------------------------
+  append_log <- function(entries) {
+    pending_log_entries(c(isolate(pending_log_entries()), entries))
+    all_log_entries(c(isolate(all_log_entries()), entries))
+  }
+  held_block <- function(h)
+    c(list(list(prompt = h$prompt %||% "", code = h$code, description = "", source = "unrun", ts = Sys.time())), h$entries)
+  flush_held <- function() {
+    h <- isolate(held_explain()); if (is.null(h)) return(invisible(NULL))
+    held_explain(NULL); append_log(held_block(h))
+  }
+  # Add a run (or other logged) entry. Explained code that has not been run goes in first, unless this is that
+  # very code being run, in which case its explanations follow the entry.
+  add_log_entry <- function(entry) {
+    h <- isolate(held_explain()); extra <- list()
+    if (!is.null(h)) {
+      held_explain(NULL)
+      if (identical(trimws(h$code), trimws(entry$code %||% ""))) extra <- h$entries else append_log(held_block(h))
+    }
+    append_log(c(list(entry), extra))
+  }
+  # Everything that belongs in the log now: the log itself plus any held code with its explanations
+  full_log <- function() {
+    h <- held_explain()
+    if (is.null(h)) all_log_entries() else c(all_log_entries(), held_block(h))
+  }
+
   conv_count_rv        <- reactiveVal(if (!is.null(ps)) ps$conv_count_rv        else 1L)
 
   # log_path is generated fresh each time Save Code Log is pressed (date-time stamped)
@@ -7264,7 +7296,7 @@ server <- function(input, output, session) {
   do_new_conversation_reset <- function() {
     save_current_conversation_if_nonempty()
     # Auto-save code log for this conversation before clearing
-    if (length(all_log_entries()) > 0) do_save_log()
+    if (length(full_log()) > 0) do_save_log()
     conv_count_rv(conv_count_rv() + 1L)
     hide_changes_tab()
     conversation_history(list())
@@ -7279,6 +7311,7 @@ server <- function(input, output, session) {
     set_ask_mode("code")
     pending_log_entries(list())
     all_log_entries(list())
+    held_explain(NULL)
     loaded_packages(character(0))
     last_extracted_code("")
     last_prompt_for_code("")
@@ -7600,8 +7633,7 @@ server <- function(input, output, session) {
     if (!isTRUE(result$is_error) && !isTRUE(result$timed_out) && !code_installs_packages(code) &&
         !grepl("(^|[;\n])[[:space:]]*(q|quit)[[:space:]]*\\(", code)) {
       entry <- list(prompt = "Run in the Quick Console", code = trimws(code), description = "", source = "quick_console")
-      pending_log_entries(c(pending_log_entries(), list(entry)))
-      all_log_entries(c(all_log_entries(), list(entry)))
+      add_log_entry(entry)
     }
     qc_history(c(qc_history(), list(list(
       input     = code,
@@ -8319,24 +8351,52 @@ server <- function(input, output, session) {
   # What the explanation on show is about, so that it can be added to the code log: list(id, kind, subject)
   explain_ctx   <- reactiveVal(NULL)
   explain_n     <- 0L
-  new_explain_ctx <- function(kind, subject = "") {
+  # `code` is the code in the editor when it is what is being explained (a selection, the whole code or the changes):
+  # if it is not in the log yet, the explanation is held with it until it is.
+  new_explain_ctx <- function(kind, subject = "", code = "") {
     explain_n <<- explain_n + 1L
-    explain_ctx(list(id = explain_n, kind = kind, subject = subject))
+    code <- trimws(code %||% "")
+    explain_ctx(list(id = explain_n, kind = kind, subject = subject, code = code,
+                     held = nzchar(code) && !code_is_logged(code)))
+  }
+  # Is this code already in the log (because it was run)? If not, an explanation of it has to carry the code
+  # with it, or the log would explain code that it never shows.
+  code_is_logged <- function(code) {
+    code <- trimws(code %||% "")
+    any(vapply(isolate(all_log_entries()), function(e)
+      !(e$source %in% c("explanation", "unrun")) && identical(trimws(e$code %||% ""), code), logical(1)))
   }
   explain_failed <- function(x) !nzchar(trimws(x %||% "")) ||
     grepl("^(Could not generate|Klausmate could not|Your key was not accepted|Claude is busy|Claude did not reply|The code is too long)", trimws(x))
   # Add (or, for a regenerated explanation at another level, replace) the explanation in the code log
   update_explanation_log <- function(change) {
     ctx <- isolate(explain_ctx()); if (is.null(ctx)) return(invisible(NULL))
-    swap <- function(entries) {
-      idx <- which(vapply(entries, function(e) identical(e$source, "explanation") && identical(e$explain_id, ctx$id), logical(1)))
+    is_it <- function(e) identical(e$source, "explanation") && identical(e$explain_id, ctx$id)
+    find  <- function(entries) which(vapply(entries, is_it, logical(1)))
+    h <- isolate(held_explain())
+    if (!is.null(h) && length(find(h$entries))) {              # still held: replace it there
+      idx <- find(h$entries)[1]; new <- change(h$entries[[idx]])
+      if (!is.null(new)) { h$entries[[idx]] <- new; held_explain(h) }
+      return(invisible(NULL))
+    }
+    swap <- function(entries) {                                 # already in the log: replace it there
+      idx <- find(entries)
       new <- change(if (length(idx)) entries[[idx[1]]] else NULL)
       if (is.null(new)) return(entries)
       if (length(idx)) entries[[idx[1]]] <- new else entries <- c(entries, list(new))
       entries
     }
-    all_log_entries(swap(isolate(all_log_entries())))
-    pending_log_entries(swap(isolate(pending_log_entries())))
+    if (length(find(isolate(all_log_entries())))) {
+      all_log_entries(swap(isolate(all_log_entries())))
+      pending_log_entries(swap(isolate(pending_log_entries())))
+      return(invisible(NULL))
+    }
+    new <- change(NULL); if (is.null(new)) return(invisible(NULL))   # a new explanation
+    if (isTRUE(ctx$held)) {
+      if (!is.null(h) && !identical(trimws(h$code), ctx$code)) { flush_held(); h <- NULL }   # the code has changed since
+      if (is.null(h)) h <- list(code = ctx$code, prompt = isolate(last_prompt_for_code()), entries = list())
+      h$entries <- c(h$entries, list(new)); held_explain(h)
+    } else append_log(list(new))
   }
   observeEvent(explain_result(), {
     r <- explain_result()
@@ -8565,7 +8625,7 @@ server <- function(input, output, session) {
         "```r\n", new_annotated, "\n```\n\n",
         "Please explain what was changed and why."
       )
-      new_explain_ctx("changes")
+      new_explain_ctx("changes", "", isolate(input$code_editor))
       explain_result(list(loading = TRUE))
       showModal(modalDialog(
         title     = "What changed?",
@@ -8610,7 +8670,8 @@ server <- function(input, output, session) {
     # "Generating explanation..." message as soon as the modal opens.
     explain_level_at_last_gen(level)
     disable("explain_regenerate")
-    new_explain_ctx(if (nzchar(sel)) "selection" else "code", if (nzchar(sel)) sel else "")
+    new_explain_ctx(if (nzchar(sel)) "selection" else "code", if (nzchar(sel)) sel else "",
+                    isolate(input$code_editor))
     explain_result(list(loading = TRUE))
 
     showModal(modalDialog(
@@ -8779,8 +8840,7 @@ server <- function(input, output, session) {
             entry <- list(prompt = last_prompt_for_code(), code = code_text,
                           description = desc, source = "ask_code", ts = Sys.time())
             run_history(c(run_history(), list(entry)))
-            pending_log_entries(c(pending_log_entries(), list(entry)))
-            all_log_entries(c(all_log_entries(), list(entry)))
+            add_log_entry(entry)
             last_logged_code(code_text)
             loaded_script_name(NULL)
           }
@@ -8802,8 +8862,7 @@ server <- function(input, output, session) {
       pending_export(NULL)
       last_run_code(full); last_run_failed(FALSE); last_error_msg("")
       entry <- list(prompt = "Save the plot to a file", code = block, description = "", source = "export")
-      pending_log_entries(c(pending_log_entries(), list(entry)))
-      all_log_entries(c(all_log_entries(), list(entry)))
+      add_log_entry(entry)
       last_logged_code(full)
       output$run_status <- renderUI(tags$span(
         paste0("Saved ", file, " in ", project_root()),
@@ -8930,8 +8989,7 @@ server <- function(input, output, session) {
                       description = last_code_description(), source = "ask_code", ts = Sys.time())
         unconf_remove_code(captured_fixed_code)
         run_history(c(run_history(), list(entry)))
-        pending_log_entries(c(pending_log_entries(), list(entry)))
-        all_log_entries(c(all_log_entries(), list(entry)))
+        add_log_entry(entry)
         last_logged_code(captured_fixed_code)
         new_pkgs <- vapply(extract_pkg_info(captured_fixed_code), `[[`, character(1), "pkg")
         loaded_packages(unique(c(loaded_packages(), new_pkgs)))
@@ -9031,7 +9089,7 @@ server <- function(input, output, session) {
 
   # --- View Code Log -----------------------------------------------------------
   observeEvent(input$view_log, {
-    entries <- all_log_entries()
+    entries <- full_log()
     body <- if (length(entries) == 0)
       tags$p(em("No code has been run successfully in this conversation yet."),
              style = "color: #888; margin: 4px 0;")
@@ -9057,7 +9115,8 @@ server <- function(input, output, session) {
               tags$strong(paste0("Chunk ", i, ": ")),
               if (is.null(e$prompt) || !nzchar(trimws(e$prompt)))
                 em("no prompt recorded (code entered or loaded manually)")
-              else em(trimws(e$prompt))),
+              else em(trimws(e$prompt)),
+              if (identical(e$source, "unrun")) em(" \u2014 this code was not run")),
             tags$pre(style = "margin: 0; font-size: 0.82em; white-space: pre-wrap; background: #f8f8f8;",
                      trimws(e$code)))
         }))
@@ -9083,7 +9142,7 @@ server <- function(input, output, session) {
 
   # --- Save Code Log ---------------------------------------------------------
   do_save_log <- function() {
-    entries <- all_log_entries()
+    entries <- full_log()
     if (length(entries) == 0) return(invisible(NULL))
     p <- make_log_path()
     log_path(p)
@@ -9163,6 +9222,7 @@ server <- function(input, output, session) {
       unconf_code          = unconf_code(),
       pending_log_entries  = pending_log_entries(),
       all_log_entries      = all_log_entries(),
+      held_explain         = held_explain(),
       last_extracted_code  = last_extracted_code(),
       last_prompt_for_code = last_prompt_for_code(),
       last_logged_code     = last_logged_code(),
@@ -9175,7 +9235,7 @@ server <- function(input, output, session) {
       placeholder_map      = placeholder_map(),
       ask_mode             = ask_mode()
     )
-    if (length(all_log_entries()) > 0) do_save_log()
+    if (length(full_log()) > 0) do_save_log()
     tryCatch(
       saveRDS(pause_state, pause_file()),
       error = function(e)
@@ -9192,12 +9252,12 @@ server <- function(input, output, session) {
 
   # --- Quit ------------------------------------------------------------------
   do_quit_with_autosave <- function() {
-    if (length(all_log_entries()) > 0) do_save_log()
+    if (length(full_log()) > 0) do_save_log()
     do_quit()
   }
 
   show_quit_confirm_modal <- function() {
-    save_note <- if (length(all_log_entries()) > 0)
+    save_note <- if (length(full_log()) > 0)
       "Your code notebook will be saved automatically and opened in RStudio."
     else
       "There is nothing to save."
@@ -9233,9 +9293,9 @@ server <- function(input, output, session) {
   # --- Auto-save on unexpected close (browser tab closed, Escape in console) --
   session$onSessionEnded(function() {
     # pending_log_entries is cleared by do_save_log; non-empty means unsaved runs exist
-    entries <- isolate(all_log_entries())
+    entries <- isolate(full_log())
     pending <- isolate(pending_log_entries())
-    if (length(entries) > 0 && length(pending) > 0) {
+    if (length(entries) > 0 && (length(pending) > 0 || !is.null(isolate(held_explain())))) {
       tryCatch({
         p <- make_log_path()
         cat(format_log_entries(entries), "\n\n", file = p, append = FALSE, sep = "")
