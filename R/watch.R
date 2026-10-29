@@ -5,7 +5,7 @@
 # history, then explains them in plain English via Claude when the student
 # calls raisehand().  No Shiny UI — works entirely in the R console.
 #
-# Key sharing: uses the same saved key settings and usage log (klausmate_state_path()) as talk(),
+# Key sharing: uses the same saved key settings and usage log (klausmate_state_path()) as klaus(),
 # so a key loaded in either place is immediately available in the other.
 # ---------------------------------------------------------------------------
 
@@ -443,7 +443,7 @@
 #'
 #' @param key Path to a \code{.key} file supplied by your instructor, OR a
 #'   raw Anthropic API key string (\code{"sk-ant-..."}). If a key was already
-#'   loaded (in this session, a previous session, or via \code{talk()}), you can
+#'   loaded (in this session, a previous session, or via \code{klaus()}), you can
 #'   omit this argument.
 #' @return Invisible NULL (called for side effects).
 #' @export
@@ -485,14 +485,14 @@ whisper <- function(key = NULL) {
     }
   }
 
-  # 2. Saved student key settings (written by talk() or a prior whisper())
+  # 2. Saved student key settings (written by klaus() or a prior whisper())
   if (is.null(api_key)) {
     cfg <- .watch_load_cfg()
     if (!is.null(cfg) && nzchar(cfg$api_key %||% ""))
       api_key <- cfg$api_key
   }
 
-  # 3. Environment variable (set by talk() for personal/non-student use)
+  # 3. Environment variable (set by klaus() for personal/non-student use)
   if (is.null(api_key)) {
     ev <- Sys.getenv("ANTHROPIC_API_KEY")
     if (nzchar(ev)) api_key <- ev
@@ -862,9 +862,9 @@ ssshh <- function() {
 
 #' Clear the saved klausmate key
 #'
-#' Removes the key file saved by \code{whisper()} or \code{talk()} and unsets
+#' Removes the key file saved by \code{whisper()} or \code{klaus()} and unsets
 #' the \code{ANTHROPIC_API_KEY} environment variable. The next call to
-#' \code{whisper()} or \code{talk()} will prompt for a new key.
+#' \code{whisper()} or \code{klaus()} will prompt for a new key.
 #'
 #' @return Invisible NULL (called for side effects).
 #' @export
@@ -903,7 +903,7 @@ reset_key <- function() {
 #' language to English.
 #'
 #' This function will refuse to run while \code{whisper()} is active or while
-#' a paused \code{talk()} session exists. Stop \code{whisper()} with
+#' a paused \code{klaus()} session exists. Stop \code{whisper()} with
 #' \code{ssshh()} first, or resume the app and use \emph{Quit with Code Log}
 #' before resetting.
 #'
@@ -920,7 +920,7 @@ klausmate_reset <- function() {
     return(invisible(NULL))
   }
 
-  # --- Refuse if a paused talk() session exists ------------------------------
+  # --- Refuse if a paused klaus() session exists ------------------------------
   pause_file <- file.path(
     getOption(".klausmate_project_root", getwd()),
     "claude_assistant_pause.rds"
@@ -965,6 +965,6 @@ klausmate_reset <- function() {
     message("Response language reset to English.")
   }
 
-  message("klausmate has been reset. You can now call talk() or whisper() to start fresh.")
+  message("klausmate has been reset. You can now call klaus() or whisper() to start fresh.")
   invisible(NULL)
 }

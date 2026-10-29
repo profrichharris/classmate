@@ -1,6 +1,6 @@
 Package: klausmate
 Title: AI Assistant for Teaching R
-Version: 0.6.0
+Version: 0.6.1
 Authors@R:
     person("Richard", "Harris", email = "profrichharris@gmail.com",
            role = c("aut", "cre"))

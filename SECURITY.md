@@ -6,7 +6,7 @@ This document describes the security and data-handling arrangements for the klau
 
 ## What klausmate does
 
-klausmate is an R package for university students learning data analysis and GIS. It provides a teaching interface that connects to Anthropic's Claude AI API to help students write and understand R code. It operates in two modes: a full Shiny application (`talk()`) and a lightweight console mode (`whisper()`).
+klausmate is an R package for university students learning data analysis and GIS. It provides a teaching interface that connects to Anthropic's Claude AI API to help students write and understand R code. It operates in two modes: a full Shiny application (`klaus()`) and a lightweight console mode (`whisper()`).
 
 The API connection is the only external communication the package makes. There is no telemetry, no analytics, no phone-home behaviour of any kind beyond the API calls that the student explicitly initiates by submitting a prompt.
 

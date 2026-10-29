@@ -15,7 +15,7 @@ Invisible canonical language name, or invisible NULL on failure.
 }
 \description{
 Saves a language preference that is applied to all AI responses in both
-\code{talk()} and \code{whisper()}. R code is always written in English;
+\code{klaus()} and \code{whisper()}. R code is always written in English;
 only explanatory text (and optionally code comments) changes language.
 Call \code{klausmate_speaks("English")} to revert to British English.
 }

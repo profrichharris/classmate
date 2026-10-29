@@ -31,11 +31,11 @@ CM_NEEDS <- c(
   error = function(e) FALSE)
 
 # --- Project root (= the R working directory) and output paths --------------
-# talk() stores the user's working directory in this option before calling
+# klaus() stores the user's working directory in this option before calling
 # runApp(), which would otherwise change the wd to this inst/app/ folder.
 # Fall back to getwd() when the app is run directly for development.
 # The root can change during a session (Change Working Directory button, or
-# setwd() typed in the Quick Console); talk() applies the final value to the R
+# setwd() typed in the Quick Console); klaus() applies the final value to the R
 # session when the app closes.
 .cm <- new.env()
 .cm$root <- normalizePath(getOption(".klausmate_project_root", getwd()),
@@ -3100,14 +3100,14 @@ ui <- fluidPage(
       })();
     ")),
     tags$script(HTML("
-      // When Klausmate stops (Pause, Quit or a crash) this tab is left disconnected. If it was a Pause, running talk()
+      // When Klausmate stops (Pause, Quit or a crash) this tab is left disconnected. If it was a Pause, running klaus()
       // again starts the app at the same address, so the tab watches for that and reloads itself.
       $(document).on('shiny:disconnected', function() {
         if (window.cmWatching) return; window.cmWatching = true;
         var box = document.createElement('div');
         box.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:2147483000;background:#fff3cd;color:#664d03;' +
                             'border-bottom:1px solid #e0c060;padding:10px 16px;font-size:14px;text-align:center;';
-        box.textContent = 'Klausmate has stopped. If you paused it, run talk() in R and this tab will reconnect by itself; otherwise you can close this tab.';
+        box.textContent = 'Klausmate has stopped. If you paused it, run klaus() in R and this tab will reconnect by itself; otherwise you can close this tab.';
         document.body.appendChild(box);
         var n = 0, iv = setInterval(function() {
           if (++n > 1800) { clearInterval(iv); return; }
@@ -3951,7 +3951,7 @@ HELP_TEXTS <- list(
     "same workspace and project folder as the main app. The rest of the app is",
     "frozen while the Quick Console is open. Close it when you are done to return",
     "to the app. Typing q() or quit() will just close the Quick Console, not end",
-    "your R session, and Klausmate's own functions (talk(), whisper() and so on)",
+    "your R session, and Klausmate's own functions (klaus(), whisper() and so on)",
     "are not available there — run those from your main R console.",
     "Along the bottom of the Quick Console, Clear output wipes the displayed history;",
     "Clear Workspace removes every object from your R workspace — the equivalent of",
@@ -3964,7 +3964,7 @@ HELP_TEXTS <- list(
   pause_app = paste(
     "Pause — Saves your entire session — conversation history, code, context, and",
     "preferences — and closes Klausmate. Your code log is saved too. Reopen the app",
-    "with talk() to pick up exactly where you left off.",
+    "with klaus() to pick up exactly where you left off.",
     "Use this if you want to take a longer break and return to the same conversation later.",
     "For a quick step out to run some R code, use Quick Console instead."
   ),
@@ -4109,7 +4109,7 @@ HELP_ID_PATTERNS <- list(
 )
 
 server <- function(input, output, session) {
-  options(klausmate.session_connected = TRUE)   # talk() opens a new browser tab only if no tab has connected (resuming a pause)
+  options(klausmate.session_connected = TRUE)   # klaus() opens a new browser tab only if no tab has connected (resuming a pause)
 
   # Show a clean "session ended" page, then stop after 400 ms so the JS has
   # time to render before the WebSocket drops.
@@ -4119,15 +4119,15 @@ server <- function(input, output, session) {
   }
 
   # Drop the student's API key when the session ends (covers Quit button, Pause, browser-tab close
-  # and network drop; talk() also drops it if R is interrupted). A personal ANTHROPIC_API_KEY set
+  # and network drop; klaus() also drops it if R is interrupted). A personal ANTHROPIC_API_KEY set
   # by the user is left alone.
   session$onEnded(function() {
     klausmate:::cm_clear_key()
     # Remove any package-bound symbols the app may have left in .GlobalEnv
-    # (e.g. q/quit/stopApp/talk shadowed during Quick Console if R was restarted
+    # (e.g. q/quit/stopApp/klaus shadowed during Quick Console if R was restarted
     # while the modal was open). Prevents "package:X may not be available" warning
     # when R auto-saves .RData on exit.
-    for (nm in c("q", "quit", "stopApp", "ask", "talk")) {
+    for (nm in c("q", "quit", "stopApp", "ask", "klaus")) {
       tryCatch({
         if (exists(nm, envir = .GlobalEnv, inherits = FALSE)) {
           fn <- get(nm, envir = .GlobalEnv, inherits = FALSE)
@@ -6073,7 +6073,7 @@ server <- function(input, output, session) {
         title = paste0("The ", p, " package could not be loaded"),
         tags$p(what, " needs the ", tags$strong(p), " package. It is installed on this computer, but R could not load it:"),
         tags$pre(style = "white-space: pre-wrap;", if (nzchar(why)) why else "(no reason was given)"),
-        tags$p("Restarting R and running ", tags$code("talk()"), " again sometimes fixes this; if not, reinstalling it with ",
+        tags$p("Restarting R and running ", tags$code("klaus()"), " again sometimes fixes this; if not, reinstalling it with ",
                tags$code(sprintf('install.packages("%s")', p)), " in the main R console usually does."),
         easyClose = TRUE, footer = modalButton("Close")))
       return(FALSE)
@@ -6814,7 +6814,7 @@ server <- function(input, output, session) {
           if (needs_restart)
             paste0(paste(still_missing, collapse = ", "), " installed, but this R session cannot use it until R is ",
                    "restarted (installing it updated packages that are already in use). Use Pause to keep your work, ",
-                   "restart R and run talk() again to carry on where you left off. See R output tab for details.")
+                   "restart R and run klaus() again to carry on where you left off. See R output tab for details.")
           else
             paste0("Installation failed for: ", paste(still_missing, collapse = ", "), ". ",
                    if (any(grepl("resolve host|could not connect|cannot open URL|timed out|internet", combined, ignore.case = TRUE)))
@@ -6837,7 +6837,7 @@ server <- function(input, output, session) {
           tags$p(tags$strong(paste(still_missing, collapse = ", ")), " installed successfully, but installing it updated",
                  "packages that this R session is already using, so R has to be restarted before it can be used."),
           tags$p("Press ", tags$strong("Pause and close"), " to save your session (your conversation, code and context are kept).",
-                 "Then restart R (Session > Restart R in RStudio) and run talk() again to carry on where you left off."),
+                 "Then restart R (Session > Restart R in RStudio) and run klaus() again to carry on where you left off."),
           easyClose = FALSE,
           footer = tagList(
             actionButton("install_restart_pause", "Pause and close", class = "btn-primary"),
@@ -7457,7 +7457,7 @@ server <- function(input, output, session) {
                                  "Use Change Working Directory to choose a folder."),
                   is_error = TRUE, plot_path = NULL))
     # Temporarily shadow q/quit/stopApp/ask in globalenv to intercept them
-    .qc_klausmate_fns <- c("talk", "whisper", "raisehand", "rh", "ssshh",
+    .qc_klausmate_fns <- c("klaus", "whisper", "raisehand", "rh", "ssshh",
                            "reset_key", "klausmate_reset", "klausmate_speaks",
                            "klausmate_make_key", "klausmate_config_show")
     shadow <- c(
@@ -9133,7 +9133,7 @@ server <- function(input, output, session) {
     removeModal()
     capture_active_code()
     pause_state <- list(
-      port                 = suppressWarnings(as.integer(isolate(session$clientData$url_port))),   # talk() reuses it when resuming
+      port                 = suppressWarnings(as.integer(isolate(session$clientData$url_port))),   # klaus() reuses it when resuming
       prompt               = isolate(input$prompt),
       code_editor          = isolate(input$code_editor),
       selected_files       = selected_files(),
@@ -9247,7 +9247,7 @@ server <- function(input, output, session) {
 
 if (.cm_stale) {
   .cm_stale_msg <- paste("Klausmate was updated while R was running. Please restart R",
-                         "(Session > Restart R in RStudio) and then run talk() again.")
+                         "(Session > Restart R in RStudio) and then run klaus() again.")
   message(.cm_stale_msg)
   shinyApp(
     fluidPage(style = "max-width: 560px; margin-top: 60px;",

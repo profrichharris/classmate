@@ -9,7 +9,7 @@ whisper(key = NULL)
 \arguments{
 \item{key}{Path to a \code{.key} file supplied by your instructor, OR a
 raw Anthropic API key string (\code{"sk-ant-..."}). If a key was already
-loaded (in this session, a previous session, or via \code{talk()}), you can
+loaded (in this session, a previous session, or via \code{klaus()}), you can
 omit this argument.}
 }
 \value{

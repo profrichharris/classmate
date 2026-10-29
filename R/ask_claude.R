@@ -16,9 +16,9 @@ KLAUSMATE_GITHUB_REPO <- "profrichharris/klausmate"
 #' @export
 #' @examples
 #' \dontrun{
-#' talk()
+#' klaus()
 #' }
-talk <- function() {
+klaus <- function() {
 
   # --- Stop whisper() if running — avoid conflicts with the app -------------
   if (.watch_env$active) {
@@ -36,11 +36,11 @@ talk <- function() {
   }
 
   # --- The package may have been reinstalled while this R session was running ---
-  if (klausmate_session_is_stale("talk")) return(invisible(NULL))
+  if (klausmate_session_is_stale("klaus")) return(invisible(NULL))
 
   # --- Preflight: check for updates (once per R session, not after a Pause) -
   updated <- klausmate_preflight()
-  if (isTRUE(updated)) return(invisible(NULL))   # new talk() launched inside preflight
+  if (isTRUE(updated)) return(invisible(NULL))   # new klaus() launched inside preflight
 
   # Drop the private copy of the student's API key however the app ends (Pause, Quit, Escape in
   # the console, an error)
@@ -129,10 +129,10 @@ klausmate_latest_release <- function() {
 
 # ---------------------------------------------------------------------------
 # Preflight update check
-# Returns TRUE if a new version was installed and a fresh talk() was launched.
+# Returns TRUE if a new version was installed and a fresh klaus() was launched.
 # Returns FALSE (silently) in every other case, including all error paths.
 # ---------------------------------------------------------------------------
-klausmate_preflight <- function(relaunch = "talk", args = list()) {
+klausmate_preflight <- function(relaunch = "klaus", args = list()) {
 
   # Already checked this session, or this is a post-update re-entry
   if (isTRUE(getOption("klausmate.update_checked"))) return(FALSE)
@@ -165,7 +165,7 @@ klausmate_preflight <- function(relaunch = "talk", args = list()) {
 # Returns TRUE on success, FALSE if anything goes wrong (caller continues
 # with the existing version in that case).
 # ---------------------------------------------------------------------------
-klausmate_do_update <- function(latest_version, download_url, relaunch = "talk", args = list()) {
+klausmate_do_update <- function(latest_version, download_url, relaunch = "klaus", args = list()) {
 
   # Pull every lazy-loaded object of the running copy into memory first, so that nothing in
   # it needs to be read from the package files once the new version has overwritten them.
@@ -205,7 +205,7 @@ klausmate_do_update <- function(latest_version, download_url, relaunch = "talk",
   # Swap the new version in and carry on, with no restart of R needed
   if (klausmate_reload_and_relaunch(relaunch, args)) return(TRUE)
 
-  relaunch_call <- if (relaunch == "whisper") "whisper()" else "talk()"
+  relaunch_call <- if (relaunch == "whisper") "whisper()" else "klaus()"
   message(
     "Klausmate has been updated to v", latest_version, ".\n",
     "Please restart R and then run ", relaunch_call, " to continue."
@@ -225,13 +225,13 @@ klausmate_force_lazy_objects <- function() {
 }
 
 # After a successful in-session update: unload the old copy, load the new one (re-attaching it if
-# it was attached) and start talk()/whisper() again from it. TRUE if that worked; FALSE means the
+# it was attached) and start klaus()/whisper() again from it. TRUE if that worked; FALSE means the
 # caller should ask for a restart of R instead.
 # TRUE if the files of the installed package are newer than the copy loaded in this R session (the
 # package was reinstalled or updated while R was running, so the loaded R code may not match the
 # installed app). Then the new copy is loaded and `relaunch` is started again from it, or, if that is
 # not possible, the user is asked to restart R. Returns TRUE when the caller should stop.
-klausmate_session_is_stale <- function(relaunch = "talk", args = list()) {
+klausmate_session_is_stale <- function(relaunch = "klaus", args = list()) {
   loaded    <- tryCatch(as.character(getNamespaceVersion("klausmate")), error = function(e) NA_character_)
   installed <- tryCatch(as.character(utils::packageVersion("klausmate")), error = function(e) loaded)
   if (is.na(loaded) || identical(loaded, installed)) return(FALSE)
@@ -241,7 +241,7 @@ klausmate_session_is_stale <- function(relaunch = "talk", args = list()) {
   TRUE
 }
 
-klausmate_reload_and_relaunch <- function(relaunch = "talk", args = list()) {
+klausmate_reload_and_relaunch <- function(relaunch = "klaus", args = list()) {
   attached <- "package:klausmate" %in% search()
   ok <- tryCatch({
     unloadNamespace("klausmate")
@@ -282,7 +282,7 @@ klausmate_reload_and_relaunch <- function(relaunch = "talk", args = list()) {
 #' Set the language klausmate responds in
 #'
 #' Saves a language preference that is applied to all AI responses in both
-#' \code{talk()} and \code{whisper()}. R code is always written in English;
+#' \code{klaus()} and \code{whisper()}. R code is always written in English;
 #' only explanatory text (and optionally code comments) changes language.
 #' Call \code{klausmate_speaks("English")} to revert to British English.
 #'
@@ -314,10 +314,10 @@ klausmate_speaks <- function(language) {
   saveRDS(canonical, .klausmate_lang_path())
   if (tolower(canonical) == "english") {
     message("klausmate will respond in British English.",
-            " Restart talk() or whisper() to apply.")
+            " Restart klaus() or whisper() to apply.")
   } else {
     message("klausmate will respond in ", canonical, ".",
-            " Restart talk() or whisper() to apply.")
+            " Restart klaus() or whisper() to apply.")
   }
   invisible(canonical)
 }

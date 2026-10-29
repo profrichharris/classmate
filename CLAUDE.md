@@ -8,7 +8,7 @@ This file is auto-loaded by Claude Code at session start. It captures the design
 
 ## What klausmate is
 
-`klausmate` is an R Shiny application that acts as an AI teaching assistant for students learning R. It wraps the Claude API (Anthropic) in a UI that runs inside RStudio. Students launch it with `talk()` from their R console.
+`klausmate` is an R Shiny application that acts as an AI teaching assistant for students learning R. It wraps the Claude API (Anthropic) in a UI that runs inside RStudio. Students launch it with `klaus()` from their R console.
 
 The package is authored by Richard Harris (profrichharris@gmail.com) and is intended for use in university teaching. It is **not** a general-purpose AI chat tool — it is specifically scoped to helping students write and understand R code.
 
@@ -40,7 +40,7 @@ Help mode is toggled by the `?` button and overlays black help labels on every U
 ```
 klausmate/
   R/
-    ask_claude.R        # talk() entry point, preflight update check, %||%
+    ask_claude.R        # klaus() entry point, preflight update check, %||%
     instructor.R        # klausmate_make_key(), klausmate_config_show()
     watch.R             # whisper() / raisehand() / ssshh() / reset_key()
   inst/app/
@@ -86,7 +86,7 @@ Everything interesting is in `inst/app/app.R`. It is a single-file Shiny app.
 - The main app is frozen (modal open, `shinyjs` disables buttons) while Quick Console is active.
 - `setTimeLimit(elapsed = 30, transient = TRUE)` enforces a 30-second timeout.
 - Footer buttons: Run, Clear output, Clear Workspace (confirm pop-up), Change Working Directory (folder-browser pop-up), Close. Both pop-ups return to the Quick Console on Cancel/Done. The current working directory is shown above the footer.
-- `q()`, `quit()`, `stopApp()`, and `talk()` are temporarily shadowed in globalenv with informative messages (no harmful side effects).
+- `q()`, `quit()`, `stopApp()`, and `klaus()` are temporarily shadowed in globalenv with informative messages (no harmful side effects).
 - History displayed as blue prompts / coloured output (red for errors).
 - Ctrl+Enter / Cmd+Enter submits from the Ace editor.
 
@@ -204,7 +204,7 @@ All buttons are also disabled during the busy state via the central `observe()` 
 
 - `?` — toggles help mode
 - `Quick Console` — opens REPL modal (white fill normally, black in help mode)
-- `Pause` — save session + close (previously labelled "Save", "Save & Pause" and "Pause App"); the session can be resumed with `talk()`
+- `Pause` — save session + close (previously labelled "Save", "Save & Pause" and "Pause App"); the session can be resumed with `klaus()`
 - `Quit with Code Log` — close and save the code log as an R Notebook (formerly "Quit"); the session is not kept for resuming
 
 ---
@@ -236,8 +236,11 @@ cd .. && gh release create vX.Y.Z klausmate_X.Y.Z.tar.gz \
 
 ## Current version and recent unreleased changes
 
-**Last released:** 0.6.0 (2026-10-29)  
-**Current version:** 0.6.0
+**Last released:** 0.6.1 (2026-10-29)  
+**Current version:** 0.6.1
+
+Released in 0.6.1 (no unreleased changes):
+- **`talk()` renamed `klaus()`** (user request, 2026-10-29). The function that starts the app is now `klaus()` (R/ask_claude.R, `man/klaus.Rd`, NAMESPACE); every message, help text, the update/relaunch code (`relaunch = "klaus"`), the Quick Console's shadow list (`.qc_klausmate_fns`, the `for (nm in c("q", "quit", "stopApp", "ask", "klaus"))` clean-up) and the README/DESIGN were updated. No `talk()` alias is kept. A PC that already has 0.6.0 will, when it auto-updates, fail to relaunch (the running 0.6.0 code calls `talk`, which no longer exists) and needs `library(klausmate); klaus()` once; later updates are fine. Older entries below still say `talk()`.
 
 Released in 0.6.0 (no unreleased changes):
 - **The package was renamed from classmate to klausmate** (user request, 2026-10-29; "classmate" is a common word and an existing product name, "klausmate" was free on CRAN, Bioconductor and GitHub). Everything was renamed: the package, the exported functions (`klausmate_make_key()`, `klausmate_reset()`, `klausmate_speaks()`, `klausmate_config_show()`), internal functions and constants, the `klausmate.*` options, the on-screen name "Klausmate", the default key file name `klausmate.key`, the GitHub repository (`profrichharris/klausmate`; GitHub redirects the old address) and the release asset `klausmate_X.Y.Z.tar.gz`. The local package folder is `/Users/ggrjh/Dropbox/Claude/classmate/klausmate` (the parent folder and the old tarballs keep the old name). **Compatibility:** `klausmate_user_dir()` (R/state_files.R) copies the saved key, language and usage log from the old `classmate` R user folders the first time the new ones are wanted, so students need not load their key again; `klausmate_key_kind()` still accepts key files made by classmate (the `classmate_key` field), whose encryption is unchanged. Version 0.6.0 is the first under the new name. **Installs of the old `classmate` package cannot auto-update to it** (the updater looks for `classmate_X.tar.gz` and a package of that name): each PC needs `remotes::install_github("profrichharris/klausmate")` once, then `library(klausmate); talk()`. The old package can be removed with `remove.packages("classmate")`.

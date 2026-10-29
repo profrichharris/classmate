@@ -5,7 +5,7 @@ for students learning R. One function launches the full interface:
 
 ```r
 library(klausmate)
-talk()
+klaus()
 ```
 
 > **Renamed.** klausmate was called *classmate* up to version 0.5.143. If you have the old package,
@@ -24,13 +24,13 @@ remotes::install_github("profrichharris/klausmate")
 ```
 
 Other packages the app needs are installed automatically the first time it is launched.
-After that, `talk()` checks GitHub for a newer release each session and installs it silently.
+After that, `klaus()` checks GitHub for a newer release each session and installs it silently.
 
 ## Quick start
 
 ```r
 library(klausmate)
-talk()
+klaus()
 ```
 
 The app opens in your browser (or the RStudio Viewer). The first time:
@@ -61,7 +61,7 @@ instructor (spending, number of conversations, length of code, expiry date).
 | **Auto-install** | Offers to install any missing packages before running code |
 | **Quick Console** | A small R console running in the same workspace |
 | **Code log** | **View Code Log** shows everything that has run, with a **Save** button; **Quit with Code Log** also saves it. It is written as an R Notebook (`.Rmd`) in `outputs/` that reproduces your analysis, including where data came from |
-| **Pause** | Saves the whole session and closes the app; the next `talk()` resumes it |
+| **Pause** | Saves the whole session and closes the app; the next `klaus()` resumes it |
 | **Preferences** | Coding, plotting, mapping, pipe and other preferred approaches, comment density, response language, image export defaults, time limit for runs |
 | **Help (?)** | Overlays a short explanation on every button and tab |
 
