@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Where Classmate keeps the saved key settings and the usage log
+# Where Klausmate keeps the saved key settings and the usage log
 #
 # The unlocked key (including the API key) and the running usage total are saved in the user's R
 # configuration / data folders under neutral names starting with a dot, which most file
@@ -7,8 +7,8 @@
 # given the "hidden" attribute). This only makes the files less visible, it does not protect them.
 # ---------------------------------------------------------------------------
 
-CLASSMATE_CFG_FILE   <- ".cm_state"
-CLASSMATE_USAGE_FILE <- ".cm_usage"
+KLAUSMATE_CFG_FILE   <- ".cm_state"
+KLAUSMATE_USAGE_FILE <- ".cm_usage"
 
 .cm_win_hidden <- function(path, hide) {
   if (.Platform$OS.type == "windows" && file.exists(path))
@@ -17,13 +17,30 @@ CLASSMATE_USAGE_FILE <- ".cm_usage"
   invisible(NULL)
 }
 
+# The user's Klausmate folder for "config", "data" or "cache". The package was called classmate until
+# version 0.6.0; the first time the new folder is wanted, the saved key, language and usage log are
+# copied across from the old one (which is left in place) so that nobody has to load their key again.
+klausmate_user_dir <- function(which = c("config", "data", "cache")) {
+  which <- match.arg(which)
+  d <- tools::R_user_dir("klausmate", which)
+  if (which != "cache" && !dir.exists(d)) {
+    old <- tools::R_user_dir("classmate", which)
+    if (dir.exists(old)) {
+      dir.create(d, showWarnings = FALSE, recursive = TRUE)
+      for (f in list.files(old, all.files = TRUE, no.. = TRUE, full.names = TRUE))
+        file.copy(f, d, recursive = TRUE)
+    }
+  }
+  d
+}
+
 # Path of the saved key settings ("config") or of the usage log ("usage"). Files left by earlier
 # versions under their old, visible names are moved to the new name.
-classmate_state_path <- function(which = c("config", "usage")) {
+klausmate_state_path <- function(which = c("config", "usage")) {
   which <- match.arg(which)
-  d <- tools::R_user_dir("classmate", if (which == "config") "config" else "data")
+  d <- klausmate_user_dir(if (which == "config") "config" else "data")
   dir.create(d, showWarnings = FALSE, recursive = TRUE)
-  new <- file.path(d, if (which == "config") CLASSMATE_CFG_FILE else CLASSMATE_USAGE_FILE)
+  new <- file.path(d, if (which == "config") KLAUSMATE_CFG_FILE else KLAUSMATE_USAGE_FILE)
   old <- file.path(d, if (which == "config") "active_config.rds" else "usage_log.rds")
   if (file.exists(old)) {
     if (!file.exists(new)) {
@@ -34,7 +51,7 @@ classmate_state_path <- function(which = c("config", "usage")) {
 }
 
 # saveRDS() that copes with the Windows hidden attribute (a hidden file cannot be overwritten)
-classmate_save_state <- function(object, path) {
+klausmate_save_state <- function(object, path) {
   .cm_win_hidden(path, FALSE)
   saveRDS(object, path)
   .cm_win_hidden(path, TRUE)
@@ -42,13 +59,13 @@ classmate_save_state <- function(object, path) {
 }
 
 # ---------------------------------------------------------------------------
-# The student's API key while Classmate is running
+# The student's API key while Klausmate is running
 #
 # The key from a student key file is held in a private object inside the package and passed to each
 # request directly; it is NOT put in the ANTHROPIC_API_KEY environment variable, so
-# Sys.getenv("ANTHROPIC_API_KEY") shows nothing, including in the Quick Console and after Classmate
+# Sys.getenv("ANTHROPIC_API_KEY") shows nothing, including in the Quick Console and after Klausmate
 # stops. (A user's own ANTHROPIC_API_KEY is still used when there is no student key.) The copy is
-# dropped when Classmate closes, however it closes. This only removes the obvious way to read the
+# dropped when Klausmate closes, however it closes. This only removes the obvious way to read the
 # key: code in the same R session can still reach package internals or the saved file.
 # ---------------------------------------------------------------------------
 

@@ -7,26 +7,27 @@ library(httr2)
 # --- Stale-session guard ------------------------------------------------------------
 # If the package was updated while R was running, the old version can still be loaded and may lack
 # functions this app.R needs. Rather than failing with a traceback, the app then shows a short notice,
-# prints the same advice to the console and closes. Keep CM_NEEDS in step with every classmate::: used
+# prints the same advice to the console and closes. Keep CM_NEEDS in step with every klausmate::: used
 # below (tools/check_help.R checks this).
 CM_NEEDS <- c(
-  "CLASSMATE_PIN_LOCKED_MSG",
-  "classmate_date_order",
-  "classmate_format_date",
-  "classmate_is_expired",
-  "classmate_key_kind",
-  "classmate_not_yet_valid",
-  "classmate_open_key",
-  "classmate_pin_fail",
-  "classmate_pin_locked",
-  "classmate_pin_tries_left",
-  "classmate_save_state",
-  "classmate_state_path",
+  "KLAUSMATE_PIN_LOCKED_MSG",
+  "klausmate_date_order",
+  "klausmate_format_date",
+  "klausmate_is_expired",
+  "klausmate_key_kind",
+  "klausmate_not_yet_valid",
+  "klausmate_open_key",
+  "klausmate_pin_fail",
+  "klausmate_pin_locked",
+  "klausmate_pin_tries_left",
+  "klausmate_save_state",
+  "klausmate_state_path",
+  "klausmate_user_dir",
   "cm_clear_key",
   "cm_get_key",
   "cm_set_key")
 .cm_stale <- tryCatch(
-  !all(vapply(CM_NEEDS, exists, logical(1), envir = asNamespace("classmate"), inherits = FALSE)),
+  !all(vapply(CM_NEEDS, exists, logical(1), envir = asNamespace("klausmate"), inherits = FALSE)),
   error = function(e) FALSE)
 
 # --- Project root (= the R working directory) and output paths --------------
@@ -37,7 +38,7 @@ CM_NEEDS <- c(
 # setwd() typed in the Quick Console); talk() applies the final value to the R
 # session when the app closes.
 .cm <- new.env()
-.cm$root <- normalizePath(getOption(".classmate_project_root", getwd()),
+.cm$root <- normalizePath(getOption(".klausmate_project_root", getwd()),
                           winslash = "/", mustWork = FALSE)
 project_root <- function() {
   if (!dir.exists(.cm$root)) cm_ensure_root()
@@ -62,7 +63,7 @@ cm_ensure_root <- function() {
   for (d in unique(c(if (dir.exists(parent)) parent, path.expand("~"), tempdir()))) {
     if (!dir.exists(d)) next
     .cm$root <- normalizePath(d, winslash = "/")
-    options(.classmate_project_root = .cm$root)
+    options(.klausmate_project_root = .cm$root)
     suppressWarnings(dir.create(file.path(.cm$root, "outputs"), showWarnings = FALSE, recursive = TRUE))
     .cm$fallback <- list(from = lost, to = .cm$root)
     return(invisible(.cm$root))
@@ -71,7 +72,7 @@ cm_ensure_root <- function() {
 }
 
 # Switches to the project folder for the duration of a run and returns a restore() that never
-# errors (the folder Classmate itself runs from may have been replaced, e.g. by a reinstall).
+# errors (the folder Klausmate itself runs from may have been replaced, e.g. by a reinstall).
 cm_enter_root <- function() {
   root <- project_root()
   old  <- tryCatch(getwd(), error = function(e) NULL)
@@ -92,14 +93,14 @@ cm_set_root <- function(new_dir) {
     dir.create(file.path(p, "outputs"), showWarnings = FALSE, recursive = TRUE) ||
       dir.exists(file.path(p, "outputs")))
   .cm$root <- p
-  options(.classmate_project_root = p)
+  options(.klausmate_project_root = p)
   if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable())
     try(rstudioapi::filesPaneNavigate(p), silent = TRUE)
   list(ok = TRUE, changed = TRUE, path = p, outputs_ok = outputs_ok)
 }
 
 # Serve temp plot files captured during code runs
-addResourcePath("classmate_plots", tempdir())
+addResourcePath("klausmate_plots", tempdir())
 
 # --- Constants ---------------------------------------------------------------
 MAX_HISTORY_TURNS     <- 8
@@ -127,7 +128,7 @@ first_text_block <- function(content) {
   ""
 }
 
-CLASSMATE_LANGUAGES <- c(
+KLAUSMATE_LANGUAGES <- c(
   "Afrikaans", "Albanian", "Amharic", "Arabic", "Armenian", "Azerbaijani",
   "Basque", "Belarusian", "Bengali", "Bosnian", "Bulgarian", "Catalan",
   "Chinese", "Croatian", "Czech", "Danish", "Dutch", "English",
@@ -1091,9 +1092,9 @@ format_explanation_entry <- function(e, i) {
 
 format_log_entries <- function(entries) {
   header <- paste0(
-    "---\ntitle: \"Classmate Code Log\"\ndate: \"",
+    "---\ntitle: \"Klausmate Code Log\"\ndate: \"",
     format(Sys.time(), "%Y-%m-%d %H:%M"), "\"\noutput: html_notebook\n---\n\n",
-    "> **Note:** Please close Classmate (using Pause or Quit with Code Log) before running code in this notebook.",
+    "> **Note:** Please close Klausmate (using Pause or Quit with Code Log) before running code in this notebook.",
     " Running code here while the app is active may cause conflicts."
   )
   chunks <- lapply(seq_along(entries), function(i) {
@@ -1111,7 +1112,7 @@ format_log_entries <- function(entries) {
 # "ok" (the API accepted the request), "invalid" (authentication/permission refused: 401/403) or
 # "unknown" (network trouble, overload, rate limit...). Success is the API accepting the request,
 # not any particular reply text: with a tiny max_tokens the 5.x models return an empty reply.
-claude_key_status <- function(key = classmate:::cm_get_key()) {
+claude_key_status <- function(key = klausmate:::cm_get_key()) {
   tryCatch({
     call_claude(
       messages     = list(list(role = "user", content = "Hi")),
@@ -1129,7 +1130,7 @@ claude_key_status <- function(key = classmate:::cm_get_key()) {
 
 validate_api_key <- function(key) {
   ok <- identical(claude_key_status(key), "ok")
-  if (ok) classmate:::cm_set_key(key)    # held privately, not in the ANTHROPIC_API_KEY variable
+  if (ok) klausmate:::cm_set_key(key)    # held privately, not in the ANTHROPIC_API_KEY variable
   ok
 }
 
@@ -1368,8 +1369,8 @@ build_plot_export_code <- function(snippet, file, format, quality, size) {
           trimws(snippet, which = "right"), "invisible(dev.off())"), collapse = "\n")
 }
 
-# How long code may run before it is stopped (2 minutes; `options(classmate.run_time_limit = secs)` is for testing)
-run_time_limit_secs <- function() as.numeric(getOption("classmate.run_time_limit", 120))
+# How long code may run before it is stopped (2 minutes; `options(klausmate.run_time_limit = secs)` is for testing)
+run_time_limit_secs <- function() as.numeric(getOption("klausmate.run_time_limit", 120))
 RUN_LIMIT_CHOICES <- c("1 minute" = 60, "2 minutes" = 120, "5 minutes" = 300, "10 minutes" = 600,
                        "15 minutes" = 900, "30 minutes" = 1800, "1 hour" = 3600, "Never" = Inf)
 RUN_LIMIT_DEFAULT <- "2 minutes"
@@ -1411,11 +1412,11 @@ run_code <- function(code_text) {
   if (!.enter$ok)
     return(list(success = FALSE, warnings = character(0), output = character(0),
                 plot_files = character(0), wd_changed = NULL,
-                message = paste("Classmate could not open your working directory.",
+                message = paste("Klausmate could not open your working directory.",
                                 "Use Change Working Directory in the Quick Console to choose a folder.")))
 
   # Open a numbered PNG device to capture any plots generated
-  tmp_base    <- tempfile("classmate_plot_")
+  tmp_base    <- tempfile("klausmate_plot_")
   tmp_pattern <- paste0(tmp_base, "%03d.png")
   grDevices::png(tmp_pattern, width = 900, height = 675, res = 120, bg = "white")
   plot_dev <- grDevices::dev.cur()
@@ -1726,7 +1727,7 @@ net_error_kind <- function(e) {
 claude_failure_text <- function(prefix = NULL) {
   kind <- .cm$last_api_error %||% "none"
   txt <- switch(kind,
-    network = "Classmate could not reach Claude. Please check your internet connection and try again.",
+    network = "Klausmate could not reach Claude. Please check your internet connection and try again.",
     auth    = paste("Your key was not accepted. Check that your key file is current (Preferences > Load new key file),",
                     "or ask your instructor."),
     busy    = "Claude is busy at the moment. Please wait a minute and try again.",
@@ -1734,16 +1735,16 @@ claude_failure_text <- function(prefix = NULL) {
   paste(c(prefix, txt), collapse = " ")
 }
 
-# --- Classmate's own online datasets (Load Package Data > "Classmate (online datasets)") ---------------------
-# The datasets are kept, in their original formats, in the datasets/ folder of the Classmate repository on GitHub,
+# --- Klausmate's own online datasets (Load Package Data > "Klausmate (online datasets)") ---------------------
+# The datasets are kept, in their original formats, in the datasets/ folder of the Klausmate repository on GitHub,
 # described by datasets/datasets.json (title, size, source, licence, the attribution wording required, checksum).
 # They are fetched on request, never bundled with the package. tools/check_datasets.R checks the paperwork.
-classmate_data_url <- function()
-  sub("/+$", "", getOption("classmate.data_url", "https://raw.githubusercontent.com/profrichharris/classmate/main/datasets"))
+klausmate_data_url <- function()
+  sub("/+$", "", getOption("klausmate.data_url", "https://raw.githubusercontent.com/profrichharris/klausmate/main/datasets"))
 
 # The list of datasets, as a data frame (an error if GitHub cannot be reached)
 fetch_dataset_manifest <- function() {
-  resp <- httr2::request(paste0(classmate_data_url(), "/datasets.json")) |>
+  resp <- httr2::request(paste0(klausmate_data_url(), "/datasets.json")) |>
     httr2::req_timeout(15) |> httr2::req_perform()
   m  <- jsonlite::fromJSON(httr2::resp_body_string(resp), simplifyVector = FALSE)
   ds <- m$datasets
@@ -1761,14 +1762,14 @@ fmt_bytes <- function(b) if (is.na(b) || b <= 0) "" else if (b < 1e6) sprintf("%
 
 # Download one dataset (once; kept in a cache folder), check it against its checksum and read it
 online_dataset_load <- function(row) {
-  dir <- file.path(tools::R_user_dir("classmate", "cache"), "datasets")
+  dir <- file.path(klausmate:::klausmate_user_dir("cache"), "datasets")
   dir.create(dir, showWarnings = FALSE, recursive = TRUE)
   dest <- file.path(dir, row$file)
   sum_of <- function(f) unclass(as.character(openssl::sha256(file(f))))
   if (!file.exists(dest) || !identical(sum_of(dest), row$sha256)) {
     tmp <- paste0(dest, ".part")
     on.exit(unlink(tmp), add = TRUE)
-    httr2::request(paste0(classmate_data_url(), "/", utils::URLencode(row$file))) |>
+    httr2::request(paste0(klausmate_data_url(), "/", utils::URLencode(row$file))) |>
       httr2::req_timeout(180) |> httr2::req_perform(path = tmp)
     if (!identical(sum_of(tmp), row$sha256))
       stop("the downloaded file did not match its checksum, so it was not used")
@@ -1786,10 +1787,10 @@ online_dataset_code <- function(row, name) {
   wrap <- function(txt, lead) if (nzchar(txt)) paste0("# ", strwrap(paste0(lead, txt), width = 100, exdent = 2)) else character(0)
   read <- switch(tolower(row$format),
     csv = "utils::read.csv(f, check.names = FALSE)", "sf::st_read(f, quiet = TRUE)")
-  paste(c(wrap(row$title, "Classmate dataset: "), wrap(row$attribution, ""), wrap(row$licence, "Licence: "),
+  paste(c(wrap(row$title, "Klausmate dataset: "), wrap(row$attribution, ""), wrap(row$licence, "Licence: "),
           wrap(row$notice, ""),
           sprintf('%s <- local({ f <- tempfile(fileext = ".%s"); utils::download.file("%s/%s", f, mode = "wb", quiet = TRUE); %s })',
-                  name, tolower(row$format), classmate_data_url(), row$file, read)), collapse = "\n")
+                  name, tolower(row$format), klausmate_data_url(), row$file, read)), collapse = "\n")
 }
 
 build_fix_system_prompt <- function(language = "English") {
@@ -2060,16 +2061,16 @@ calc_cost <- function(usage, model = MODEL_SONNET) {
 }
 
 usage_data_dir <- function() {
-  d <- tools::R_user_dir("classmate", "data")
+  d <- klausmate:::klausmate_user_dir("data")
   dir.create(d, showWarnings = FALSE, recursive = TRUE)
   d
 }
 
-usage_log_path   <- function() classmate:::classmate_state_path("usage")
-active_cfg_path  <- function() classmate:::classmate_state_path("config")
+usage_log_path   <- function() klausmate:::klausmate_state_path("usage")
+active_cfg_path  <- function() klausmate:::klausmate_state_path("config")
 
 prefs_path <- function() {
-  d <- tools::R_user_dir("classmate", "config")
+  d <- klausmate:::klausmate_user_dir("config")
   dir.create(d, showWarnings = FALSE, recursive = TRUE)
   file.path(d, "user_prefs.rds")
 }
@@ -2099,7 +2100,7 @@ append_usage_entry <- function(cost_usd) {
   attr(log, "key_id") <- tryCatch(readRDS(active_cfg_path())$key_id, error = function(e) NULL) %||%
     attr(old_log, "key_id")
   attr(log, "spend_reset") <- attr(old_log, "spend_reset")
-  tryCatch(classmate:::classmate_save_state(log, usage_log_path()), error = function(e) invisible(NULL))
+  tryCatch(klausmate:::klausmate_save_state(log, usage_log_path()), error = function(e) invisible(NULL))
   log
 }
 
@@ -2164,7 +2165,7 @@ next_reset_time <- function(log, reset_period) {
 # --- Direct Anthropic API call with prompt caching ---------------------------
 
 call_claude <- function(messages, model, max_tokens, system_prompt = NULL,
-                         api_key = classmate:::cm_get_key(),
+                         api_key = klausmate:::cm_get_key(),
                          cache_system = TRUE) {
   # system_prompt may be one string or several blocks (a shared part first, then a varying part); each block
   # is marked for caching, so a prefix that is identical across requests is read from the cache
@@ -2317,8 +2318,8 @@ ui <- fluidPage(
     body.help-mode .tab-content,
     body.help-mode .shiny-input-container { background-color: #d8d8d8 !important; }
     /* All buttons — enabled or disabled — go black in help mode */
-    body.help-mode button:not(#help_toggle):not(#about_classmate):not(#usage_help),
-    body.help-mode a.action-button:not(#help_toggle):not(#about_classmate):not(#usage_help) {
+    body.help-mode button:not(#help_toggle):not(#about_klausmate):not(#usage_help),
+    body.help-mode a.action-button:not(#help_toggle):not(#about_klausmate):not(#usage_help) {
       background-color: #111 !important;
       color: #fff !important;
       border-color: #111 !important;
@@ -2347,8 +2348,8 @@ ui <- fluidPage(
       color: #111 !important;
       border-color: #111 !important;
     }
-    /* About Classmate button: hidden normally, shown in help mode, above overlay */
-    #about_classmate {
+    /* About Klausmate button: hidden normally, shown in help mode, above overlay */
+    #about_klausmate {
       display: none;
       position: relative;
       background-color: #fff;
@@ -2356,7 +2357,7 @@ ui <- fluidPage(
       border-color: #111;
       margin-right: 8px;
     }
-    body.help-mode #about_classmate {
+    body.help-mode #about_klausmate {
       display: inline-block !important;
     }
     /* Usage text: shown normally, hidden in help mode */
@@ -2382,11 +2383,11 @@ ui <- fluidPage(
     /* In help mode these sit above the click-catching overlay; never above a pop-up window (a z-index
        larger than the pop-up's made the ? button float over every dialog, even outside help mode) */
     body.help-mode:not(.modal-open) #help_toggle,
-    body.help-mode:not(.modal-open) #about_classmate,
+    body.help-mode:not(.modal-open) #about_klausmate,
     body.help-mode:not(.modal-open) .usage-text-help { z-index: 9991; }
 
     /* Full-page overlay that intercepts all clicks in help mode */
-    #classmate-help-overlay {
+    #klausmate-help-overlay {
       display: none;
       position: fixed;
       top: 0; left: 0;
@@ -2394,8 +2395,8 @@ ui <- fluidPage(
       z-index: 9990;
       cursor: help;
     }
-    body.help-mode #classmate-help-overlay { display: block; }
-    body.help-mode.modal-open #classmate-help-overlay { display: none; }
+    body.help-mode #klausmate-help-overlay { display: block; }
+    body.help-mode.modal-open #klausmate-help-overlay { display: none; }
   ")),
   # Screenshots (for writing tutorials): Cmd/Ctrl+Alt+S saves a picture of what is showing, the open pop-up
   # window alone (cropped to its own size) or else the whole app, to screenshots/<date>_<time>.png in the
@@ -2474,7 +2475,7 @@ ui <- fluidPage(
       }, true);
     })();
   ")),
-  # Hover cards (the About / Licence links beside Classmate's online datasets): the card shows while the pointer is
+  # Hover cards (the About / Licence links beside Klausmate's online datasets): the card shows while the pointer is
   # over the link or the card, and closes shortly after it leaves both. A click also opens it (for touch screens).
   tags$style(HTML("
     #cm-hover-card { position: fixed; z-index: 99999; display: none; max-width: 430px; max-height: 70vh; overflow: auto;
@@ -2637,10 +2638,10 @@ ui <- fluidPage(
       }, true);
     })();
   ")),
-  tags$div(id = "classmate-help-overlay"),
+  tags$div(id = "klausmate-help-overlay"),
   tags$script(HTML("
     (function() {
-      var overlay = document.getElementById('classmate-help-overlay');
+      var overlay = document.getElementById('klausmate-help-overlay');
       overlay.addEventListener('click', function(e) {
         // Briefly suppress the overlay so we can find the element underneath
         overlay.style.pointerEvents = 'none';
@@ -2702,7 +2703,7 @@ ui <- fluidPage(
 
   # Splash screen — shown on fresh open only (hidden on pause-resume via server)
   tags$style(HTML("
-    #classmate-splash {
+    #klausmate-splash {
       position: fixed; top: 0; left: 0; width: 100%; height: 100%;
       background: #fff; z-index: 9999;
       display: flex; align-items: center; justify-content: center;
@@ -2710,24 +2711,24 @@ ui <- fluidPage(
       opacity: 1;
       transition: opacity 0.8s ease;
     }
-    #classmate-splash.fade-out { opacity: 0; }
-    #classmate-splash.hidden   { display: none; }
-    #classmate-splash h2 {
+    #klausmate-splash.fade-out { opacity: 0; }
+    #klausmate-splash.hidden   { display: none; }
+    #klausmate-splash h2 {
       font-size: 2em; margin-bottom: 18px; color: #333; font-weight: 600;
     }
-    #classmate-splash p {
+    #klausmate-splash p {
       margin-top: 18px; font-size: 1em; color: #888; font-style: italic;
     }
   ")),
-  tags$div(id = "classmate-splash",
-    tags$h2("Welcome to Classmate"),
+  tags$div(id = "klausmate-splash",
+    tags$h2("Welcome to Klausmate"),
     tags$img(src = "logo.png", height = "220px",
       style = "mix-blend-mode: multiply;"),
     tags$p("Programmed by Claude. Guided by Richard.")
   ),
   tags$script(HTML("
     (function() {
-      var splash = document.getElementById('classmate-splash');
+      var splash = document.getElementById('klausmate-splash');
       if (!splash) return;
       setTimeout(function() {
         splash.classList.add('fade-out');
@@ -2772,11 +2773,11 @@ ui <- fluidPage(
         });
       }
       function addFilter(modal) {
-        if (modal.querySelector('.classmate-name-filter')) return;
+        if (modal.querySelector('.klausmate-name-filter')) return;
         var footer = modal.querySelector('.sF-responseButtons');
         if (!footer) return;
         var wrap = document.createElement('div');
-        wrap.className = 'classmate-name-filter';
+        wrap.className = 'klausmate-name-filter';
         wrap.style.cssText = 'padding: 8px 15px 0 15px;';
         var input = document.createElement('input');
         input.type = 'text';
@@ -2837,10 +2838,10 @@ ui <- fluidPage(
         style = "mix-blend-mode: multiply; flex-shrink: 0;"),
     div(style = "display: flex; flex-direction: column; gap: 1px;",
       div(style = "display: flex; align-items: baseline; gap: 8px;",
-        tags$h3("Classmate", style = "margin: 0;"),
+        tags$h3("Klausmate", style = "margin: 0;"),
         tags$span(
           style = "color: #888; font-size: 0.75em; white-space: nowrap;",
-          paste0("v", utils::packageVersion("classmate"))
+          paste0("v", utils::packageVersion("klausmate"))
         )
       )
     )
@@ -2855,11 +2856,11 @@ ui <- fluidPage(
     wellPanel(
       uiOutput("key_status_message"),
       tags$h5("Load a key file"),
-      tags$p(em("Load the classmate.key file provided by your instructor,",
+      tags$p(em("Load the klausmate.key file provided by your instructor,",
                 "or enter the web address where it is stored. You will be asked for the PIN",
                 "your instructor gave you.")),
       fileInput("key_file", NULL, accept = ".key", width = "100%",
-                buttonLabel = "Browse...", placeholder = "classmate.key"),
+                buttonLabel = "Browse...", placeholder = "klausmate.key"),
       web_key_ui("key_web_url", "load_key_web_btn"),
       hr(),
       div(style = "display: flex; justify-content: flex-end; align-items: center;",
@@ -3099,14 +3100,14 @@ ui <- fluidPage(
       })();
     ")),
     tags$script(HTML("
-      // When Classmate stops (Pause, Quit or a crash) this tab is left disconnected. If it was a Pause, running talk()
+      // When Klausmate stops (Pause, Quit or a crash) this tab is left disconnected. If it was a Pause, running talk()
       // again starts the app at the same address, so the tab watches for that and reloads itself.
       $(document).on('shiny:disconnected', function() {
         if (window.cmWatching) return; window.cmWatching = true;
         var box = document.createElement('div');
         box.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:2147483000;background:#fff3cd;color:#664d03;' +
                             'border-bottom:1px solid #e0c060;padding:10px 16px;font-size:14px;text-align:center;';
-        box.textContent = 'Classmate has stopped. If you paused it, run talk() in R and this tab will reconnect by itself; otherwise you can close this tab.';
+        box.textContent = 'Klausmate has stopped. If you paused it, run talk() in R and this tab will reconnect by itself; otherwise you can close this tab.';
         document.body.appendChild(box);
         var n = 0, iv = setInterval(function() {
           if (++n > 1800) { clearInterval(iv); return; }
@@ -3170,7 +3171,7 @@ ui <- fluidPage(
       )),
       column(6,
         div(style = "display: flex; justify-content: flex-end; align-items: flex-start; white-space: nowrap;",
-          actionButton("about_classmate", "About Classmate",
+          actionButton("about_klausmate", "About Klausmate",
             style = "margin-right: 8px;"),
           actionButton("help_toggle", "?",
             style = "margin-right: 8px;"),
@@ -3196,7 +3197,7 @@ ui <- fluidPage(
 
 # --- Server ------------------------------------------------------------------
 
-# Fetches a classmate key from a web address. The address may point directly
+# Fetches a klausmate key from a web address. The address may point directly
 # at a .key file, or at a page/folder listing that links to one or more .key
 # files, in which case the most recently created key is used.
 # Returns list(payload = <key list>) on success or list(error = <message>).
@@ -3216,7 +3217,7 @@ fetch_key_from_web <- function(url) {
   get_raw <- function(u) {
     resp <- httr2::request(u) |>
       httr2::req_timeout(15) |>
-      httr2::req_user_agent("classmate") |>
+      httr2::req_user_agent("klausmate") |>
       httr2::req_error(is_error = \(r) FALSE) |>
       httr2::req_perform()
     list(status = httr2::resp_status(resp), body = httr2::resp_body_raw(resp))
@@ -3227,7 +3228,7 @@ fetch_key_from_web <- function(url) {
     on.exit(unlink(tmp), add = TRUE)
     writeBin(raw_body, tmp)
     p <- tryCatch(readRDS(tmp), error = function(e) NULL, warning = function(w) NULL)
-    if (!identical(classmate:::classmate_key_kind(p), "invalid")) p else NULL
+    if (!identical(klausmate:::klausmate_key_kind(p), "invalid")) p else NULL
   }
 
   first <- tryCatch(get_raw(url), error = function(e) NULL)
@@ -3249,7 +3250,7 @@ fetch_key_from_web <- function(url) {
                    page, perl = TRUE))))
   links <- sub("^href=[\"']", "", links)
   if (length(links) == 0)
-    return(list(error = paste("No classmate key was found at that address. It should",
+    return(list(error = paste("No klausmate key was found at that address. It should",
                               "point to a .key file, or to a page that links to one.")))
   parts <- regmatches(url, regexec("^(https://[^/]+)(/.*)?$", url))[[1]]
   origin <- parts[2]
@@ -3272,7 +3273,7 @@ fetch_key_from_web <- function(url) {
   }
   if (length(keys) == 0)
     return(list(error = paste("Found .key links at that address, but none could be",
-                              "read as a valid classmate key.")))
+                              "read as a valid klausmate key.")))
   created <- vapply(keys, function(k)
     tryCatch(as.numeric(as.POSIXct(k$created)), error = function(e) NA_real_),
     numeric(1))
@@ -3490,7 +3491,7 @@ run_answer_code <- function(code, timeout = 60, objects = list()) {
   .enter <- cm_enter_root()
   on.exit(.enter$restore(), add = TRUE)
   if (!.enter$ok)
-    return(list(success = FALSE, message = "Classmate could not open your working directory.",
+    return(list(success = FALSE, message = "Klausmate could not open your working directory.",
                 output = character(0), warnings = character(0), env = env))
   for (nm in names(objects)) assign(nm, objects[[nm]], envir = env)   # masked copies shadow the real objects
   warnings_seen <- character(0)
@@ -3540,7 +3541,7 @@ scrub_results_for_answer <- function(output, warnings = character(0),
 # Printed single values (e.g. cat(top_row$NAME)) slip past the row filter. So, before
 # results go to Claude, text values from columns that look like names/identifiers
 # (by column name, or many distinct values) are replaced with placeholders such as
-# [[NAME_1]]. Claude writes the answer around the placeholders and Classmate fills
+# [[NAME_1]]. Claude writes the answer around the placeholders and Klausmate fills
 # the real values back in locally, so they never leave the student's computer.
 .NAMEY_COLUMN <- "(^|[^a-z])(name|names|id|ids|ref|address|postcode|zip|surname|forename|email|phone|geoid|code|label)([^a-z]|$)"
 
@@ -3786,7 +3787,7 @@ HELP_TEXTS <- list(
   ),
   ask_plain = paste(
     "Answer — Ask a question and get a plain-English answer rather than code.",
-    "Classmate answers from what it knows about your objects and files where it can; for",
+    "Klausmate answers from what it knows about your objects and files where it can; for",
     "questions that need a calculation it runs one behind the scenes, reads the summary",
     "results and explains them to you. The answer appears in the Answer tab, and \"Show my",
     "working\" under it reveals the code and output used. The Code, R output and Past code",
@@ -3838,19 +3839,19 @@ HELP_TEXTS <- list(
     "figure shown is reset. The figure also starts again from zero each day at midnight."
   ),
   usage_help = paste(
-    "Usage — How much of your Classmate allowance is left: the bar counts down as you use Classmate, with",
+    "Usage — How much of your Klausmate allowance is left: the bar counts down as you use Klausmate, with",
     "when it resets and when your key expires. A key with no spending limit shows today's spend instead,",
     "starting again from zero each day."
   ),
   clear_prompt = paste(
-    "Clear — Erases all text in the prompt box. When Classmate first opens it is",
+    "Clear — Erases all text in the prompt box. When Klausmate first opens it is",
     "highlighted yellow: press it to clear the data-protection reminder, which",
     "unlocks the other buttons."
   ),
   preferences = paste(
     "Preferences — Opens the preferences panel, where you can load a new key file from your",
     "instructor (from your computer or a web address), delete the saved key file (after a",
-    "confirmation; Classmate then asks for a key again), and set your preferred",
+    "confirmation; Klausmate then asks for a key again), and set your preferred",
     "response language, coding style (base R, tidyverse, data.table), pipeline style (|>, %>% or avoided), plotting",
     "library, mapping package, image export format, quality and size, and comment",
     "density, and how long code may run before it is stopped (1 minute to 1 hour, or never; the",
@@ -3942,7 +3943,7 @@ HELP_TEXTS <- list(
     "asked for (Explain, and Tell me more), shown as quoted text so the notebook still runs. Press Save in that window to",
     "save the log as an R Notebook (.Rmd) in your project folder and open it in RStudio, as",
     "happens with Pause, Quit with Code Log and New conversation, but part-way through. You can",
-    "carry on in Classmate afterwards; a later save contains everything so far."
+    "carry on in Klausmate afterwards; a later save contains everything so far."
   ),
   quick_console = paste(
     "Quick Console — Opens a small R console inside the app where you can run",
@@ -3950,7 +3951,7 @@ HELP_TEXTS <- list(
     "same workspace and project folder as the main app. The rest of the app is",
     "frozen while the Quick Console is open. Close it when you are done to return",
     "to the app. Typing q() or quit() will just close the Quick Console, not end",
-    "your R session, and Classmate's own functions (talk(), whisper() and so on)",
+    "your R session, and Klausmate's own functions (talk(), whisper() and so on)",
     "are not available there — run those from your main R console.",
     "Along the bottom of the Quick Console, Clear output wipes the displayed history;",
     "Clear Workspace removes every object from your R workspace — the equivalent of",
@@ -3958,11 +3959,11 @@ HELP_TEXTS <- list(
     "pick a new working directory in a point-and-click folder browser. Typing",
     "setwd() in the console does the same. The folder you choose is used for running",
     "code and saving files, and your R session (for example RStudio) is switched to it",
-    "when you leave Classmate."
+    "when you leave Klausmate."
   ),
   pause_app = paste(
     "Pause — Saves your entire session — conversation history, code, context, and",
-    "preferences — and closes Classmate. Your code log is saved too. Reopen the app",
+    "preferences — and closes Klausmate. Your code log is saved too. Reopen the app",
     "with talk() to pick up exactly where you left off.",
     "Use this if you want to take a longer break and return to the same conversation later.",
     "For a quick step out to run some R code, use Quick Console instead."
@@ -3975,7 +3976,7 @@ HELP_TEXTS <- list(
     "remaining is shown beneath this button."
   ),
   quit = paste(
-    "Quit with Code Log — Closes Classmate and saves your code log as an R Notebook",
+    "Quit with Code Log — Closes Klausmate and saves your code log as an R Notebook",
     "(.Rmd), which opens in your editor. Your session is not kept for resuming (use",
     "Save for that), and your R workspace is not affected."
   ),
@@ -4039,7 +4040,7 @@ HELP_TAB_TEXTS <- list(
   ),
   "Answer" = paste(
     "Answer tab — Shows the plain-English answer to your last question asked with the Answer button.",
-    "Open \"Show my working\" under the answer to see the code Classmate ran and what it",
+    "Open \"Show my working\" under the answer to see the code Klausmate ran and what it",
     "produced. This tab replaces Code, R output and Past code until you use Ask for Code.",
     "Keyboard: Command+< and Command+> (Ctrl+< and Ctrl+> on Windows) move between Answer and Past answers."
   ),
@@ -4075,7 +4076,7 @@ HELP_TAB_TEXTS <- list(
 # "tell_more_ok" is the OK button of the "More detail" popup, which sits above
 # the help overlay and so behaves normally in Help mode.
 # (pkgdata_*: buttons that live only inside the Load Package Data pop-up, where Help mode is off)
-HELP_EXEMPT <- c("usage_help", "about_classmate", "tell_more_ok",
+HELP_EXEMPT <- c("usage_help", "about_klausmate", "tell_more_ok",
                  "pkgdata_tick_all", "pkgdata_untick_all", "pkgdata_add")
 
 # Generated ids that follow a pattern (e.g. one Recall button per past code block).
@@ -4108,7 +4109,7 @@ HELP_ID_PATTERNS <- list(
 )
 
 server <- function(input, output, session) {
-  options(classmate.session_connected = TRUE)   # talk() opens a new browser tab only if no tab has connected (resuming a pause)
+  options(klausmate.session_connected = TRUE)   # talk() opens a new browser tab only if no tab has connected (resuming a pause)
 
   # Show a clean "session ended" page, then stop after 400 ms so the JS has
   # time to render before the WebSocket drops.
@@ -4121,7 +4122,7 @@ server <- function(input, output, session) {
   # and network drop; talk() also drops it if R is interrupted). A personal ANTHROPIC_API_KEY set
   # by the user is left alone.
   session$onEnded(function() {
-    classmate:::cm_clear_key()
+    klausmate:::cm_clear_key()
     # Remove any package-bound symbols the app may have left in .GlobalEnv
     # (e.g. q/quit/stopApp/talk shadowed during Quick Console if R was restarted
     # while the modal was open). Prevents "package:X may not be available" warning
@@ -4142,16 +4143,16 @@ server <- function(input, output, session) {
     showModal(modalDialog(
       title = "Before you begin",
       tags$p(
-        "classmate uses Anthropic's Claude AI (operated by Anthropic, Inc., USA)",
+        "klausmate uses Anthropic's Claude AI (operated by Anthropic, Inc., USA)",
         "to help you with your R code. Before continuing, please note:"
       ),
       tags$ul(
         tags$li(
           "Your prompts and any R code you write are sent to Anthropic's servers",
-          "for processing. classmate is designed to minimise what is shared —",
+          "for processing. klausmate is designed to minimise what is shared —",
           "only your questions, code, and variable names are transmitted;",
           "your actual data values are not. The one exception is the Answer button:",
-          "to write its answer, Classmate may run a short calculation on your data",
+          "to write its answer, Klausmate may run a short calculation on your data",
           "and send the summary results (such as counts or averages, never individual",
           "records) to Claude."
         ),
@@ -4161,10 +4162,10 @@ server <- function(input, output, session) {
         ),
         tags$li(
           tags$strong(style = "color: #8b0000;",
-            "Do not use classmate with datasets that contain identifiable personal data.")
+            "Do not use klausmate with datasets that contain identifiable personal data.")
         ),
         tags$li(
-          "Use of classmate must comply with your university's policies on the",
+          "Use of klausmate must comply with your university's policies on the",
           "use of AI tools in academic work. If you are unsure whether AI",
           "assistance is permitted for a particular assessment, check with your",
           "module leader before proceeding."
@@ -4193,7 +4194,7 @@ server <- function(input, output, session) {
   if (.resuming_pause) {
     session$onFlushed(function() {
       shinyjs::runjs("
-        var s = document.getElementById('classmate-splash');
+        var s = document.getElementById('klausmate-splash');
         if (s) s.classList.add('hidden');
       ")
     }, once = TRUE)
@@ -4208,10 +4209,10 @@ server <- function(input, output, session) {
   date_order <- reactive({
     o <- input$cm_date_order
     if (is.character(o) && length(o) == 1L && o %in% c("dmy", "mdy", "ymd")) o
-    else classmate:::classmate_date_order()
+    else klausmate:::klausmate_date_order()
   })
   fmt_date <- function(x, with_time = inherits(x, "POSIXt"))
-    classmate:::classmate_format_date(x, date_order(), with_time)
+    klausmate:::klausmate_format_date(x, date_order(), with_time)
   # Code length is set by the key (Inf = unlimited) and is not a user choice.
   # Keys made before this field existed fall back to 50 lines.
   max_lines_cap_val     <- reactiveVal(if (!is.null(.saved_cfg)) (.saved_cfg$max_lines %||% 50) else 50)
@@ -4221,11 +4222,11 @@ server <- function(input, output, session) {
   # The option resets automatically when R is restarted.
   .disclaimer_needed <- !is.null(.saved_cfg) &&
                         !.resuming_pause &&
-                        !isTRUE(getOption(".classmate_disclaimer_shown"))
+                        !isTRUE(getOption(".klausmate_disclaimer_shown"))
   if (.disclaimer_needed) {
     session$onFlushed(function() {
       show_student_disclaimer()
-      options(.classmate_disclaimer_shown = TRUE)
+      options(.klausmate_disclaimer_shown = TRUE)
     }, once = TRUE)
   }
 
@@ -4245,18 +4246,18 @@ server <- function(input, output, session) {
   observeEvent(input$spend_reset, {
     log <- usage_log_rv()
     attr(log, "spend_reset") <- Sys.time()
-    tryCatch(classmate:::classmate_save_state(log, usage_log_path()), error = function(e) invisible(NULL))
+    tryCatch(klausmate:::klausmate_save_state(log, usage_log_path()), error = function(e) invisible(NULL))
     usage_log_rv(log)
   })
 
   key_expired <- reactive({
     invalidateLater(60000)
-    classmate:::classmate_is_expired(final_expiry_val())
+    klausmate:::klausmate_is_expired(final_expiry_val())
   })
 
   key_not_started <- reactive({
     invalidateLater(60000)
-    classmate:::classmate_not_yet_valid(valid_from_val())
+    klausmate:::klausmate_not_yet_valid(valid_from_val())
   })
 
   quota_exceeded <- reactive({
@@ -4270,7 +4271,7 @@ server <- function(input, output, session) {
     if (isTRUE(key_not_started())) {
       showModal(modalDialog(
         title     = "Key not yet valid",
-        tags$p("Your Classmate key is not valid until ",
+        tags$p("Your Klausmate key is not valid until ",
                tags$strong(fmt_date(valid_from_val(), with_time = TRUE)), "."),
         tags$p("Please try again then, or contact your instructor if you think this is wrong."),
         easyClose = FALSE,
@@ -4285,7 +4286,7 @@ server <- function(input, output, session) {
       expiry <- final_expiry_val()
       showModal(modalDialog(
         title     = "Key expired",
-        tags$p("Your Classmate key expired on ",
+        tags$p("Your Klausmate key expired on ",
                tags$strong(fmt_date(expiry)), "."),
         tags$p("Please contact your instructor for a new key. If you have been given a new key file,",
                "you can load it under Preferences."),
@@ -4344,7 +4345,7 @@ server <- function(input, output, session) {
   # If a student key was saved from a prior session, restore it into the
   # environment so the app starts ready without requiring re-upload.
   if (!is.null(.saved_cfg) && nzchar(.saved_cfg$api_key %||% "")) {
-    classmate:::cm_set_key(.saved_cfg$api_key)
+    klausmate:::cm_set_key(.saved_cfg$api_key)
   }
   key_is_set   <- reactiveVal(!is.null(.saved_cfg) && nzchar(.saved_cfg$api_key %||% ""))
 
@@ -4363,11 +4364,11 @@ server <- function(input, output, session) {
   show_load_key_file_modal <- function() {
     showModal(modalDialog(
       title = "Load key file",
-      tags$p("Select the classmate.key file provided by your instructor (you will be asked for its PIN).",
+      tags$p("Select the klausmate.key file provided by your instructor (you will be asked for its PIN).",
              "If it differs from the currently loaded key, your usage quota",
              "will be reset in line with the new key's settings."),
       fileInput("mid_session_key_file", NULL, accept = ".key", width = "100%",
-                buttonLabel = "Browse...", placeholder = "classmate.key"),
+                buttonLabel = "Browse...", placeholder = "klausmate.key"),
       web_key_ui("web_key_url", "load_web_key_btn"),
       footer = actionButton("load_key_cancel", "Cancel")
     ))
@@ -4399,7 +4400,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$pref_load_key, show_load_key_file_modal())
 
-  # Delete the saved key: Classmate goes back to the "load a key file" screen, as if no key had been
+  # Delete the saved key: Klausmate goes back to the "load a key file" screen, as if no key had been
   # set (usage so far is kept, so deleting and re-loading the same key does not reset the allowance)
   observeEvent(input$pref_delete_key, {
     if (!file.exists(active_cfg_path())) {
@@ -4408,7 +4409,7 @@ server <- function(input, output, session) {
     }
     showModal(modalDialog(
       title = "Delete the key file?",
-      tags$p("Are you sure? The key saved on this computer will be deleted and Classmate will ask for a key file",
+      tags$p("Are you sure? The key saved on this computer will be deleted and Klausmate will ask for a key file",
              "again (and for its PIN), as if no key had been set."),
       tags$p(em("Your usage so far is kept.")),
       footer = tagList(actionButton("delete_key_confirm", "Delete", class = "btn-danger"),
@@ -4419,7 +4420,7 @@ server <- function(input, output, session) {
   observeEvent(input$delete_key_cancel, show_preferences_modal())
   observeEvent(input$delete_key_confirm, {
     tryCatch(unlink(active_cfg_path()), error = function(e) NULL)
-    classmate:::cm_clear_key()
+    klausmate:::cm_clear_key()
     cost_limit_val(NULL); reset_period_val("weekly"); final_expiry_val(NULL); valid_from_val(NULL)
     max_conversations_val(NULL); max_lines_cap_val(50)
     key_status_msg("The key file has been deleted. Load a key file to continue.")
@@ -4458,18 +4459,18 @@ server <- function(input, output, session) {
   }
   load_key_file <- function(path, on_success = function() invisible(NULL)) {
     x    <- tryCatch(readRDS(path), error = function(e) NULL)
-    kind <- classmate:::classmate_key_kind(x)
+    kind <- klausmate:::klausmate_key_kind(x)
     if (identical(kind, "legacy")) {
       showModal(modalDialog(
         title = "Key file no longer supported",
-        "This key file is from an older version of Classmate. Please ask your instructor for a new one.",
+        "This key file is from an older version of Klausmate. Please ask your instructor for a new one.",
         footer = modalButton("OK")))
       return(invisible(NULL))
     }
     if (identical(kind, "invalid")) {
       showModal(modalDialog(
         title = "Invalid key file",
-        "This file does not appear to be a valid classmate key file.",
+        "This file does not appear to be a valid klausmate key file.",
         footer = modalButton("OK")
       ))
       return(invisible(NULL))
@@ -4477,9 +4478,9 @@ server <- function(input, output, session) {
     cfg <- tryCatch(readRDS(active_cfg_path()), error = function(e) NULL)
     if (!is.null(cfg) && !is.null(x$key_id) && identical(cfg$key_id, x$key_id))
       return(activate_key(cfg, on_success))       # already unlocked on this computer
-    if (classmate:::classmate_pin_locked()) {
+    if (klausmate:::klausmate_pin_locked()) {
       showModal(modalDialog(title = "Too many incorrect PINs",
-                            classmate:::CLASSMATE_PIN_LOCKED_MSG, footer = modalButton("OK")))
+                            klausmate:::KLAUSMATE_PIN_LOCKED_MSG, footer = modalButton("OK")))
       return(invisible(NULL))
     }
     pending_key(list(x = x, on_success = on_success))
@@ -4489,14 +4490,14 @@ server <- function(input, output, session) {
   }
   observeEvent(input$key_pin_ok, {
     pk <- pending_key(); req(pk)
-    if (classmate:::classmate_pin_locked()) {
-      pin_msg(classmate:::CLASSMATE_PIN_LOCKED_MSG); return(invisible(NULL))
+    if (klausmate:::klausmate_pin_locked()) {
+      pin_msg(klausmate:::KLAUSMATE_PIN_LOCKED_MSG); return(invisible(NULL))
     }
-    payload <- classmate:::classmate_open_key(pk$x, trimws(input$key_pin %||% ""))
+    payload <- klausmate:::klausmate_open_key(pk$x, trimws(input$key_pin %||% ""))
     if (is.null(payload)) {
-      classmate:::classmate_pin_fail()
-      pin_msg(if (classmate:::classmate_pin_locked()) classmate:::CLASSMATE_PIN_LOCKED_MSG
-              else paste0("That PIN is not correct. ", classmate:::classmate_pin_tries_left(),
+      klausmate:::klausmate_pin_fail()
+      pin_msg(if (klausmate:::klausmate_pin_locked()) klausmate:::KLAUSMATE_PIN_LOCKED_MSG
+              else paste0("That PIN is not correct. ", klausmate:::klausmate_pin_tries_left(),
                           " attempt(s) left."))
       shinyjs::reset("key_pin")
       return(invisible(NULL))
@@ -4514,12 +4515,12 @@ server <- function(input, output, session) {
     if (identical(st, "unknown")) {          # no reply at all: not the key's fault
       showModal(modalDialog(
         title = "Could not check the key",
-        "Classmate could not reach Claude to check your key. Please check your internet connection and try again.",
+        "Klausmate could not reach Claude to check your key. Please check your internet connection and try again.",
         footer = actionButton("key_error_ok", "OK", class = "btn-primary")))
       return(invisible(NULL))
     }
     if (!identical(st, "ok")) { show_key_error(); return(invisible(NULL)) }
-    classmate:::cm_set_key(payload$api_key)    # held privately, not in the ANTHROPIC_API_KEY variable
+    klausmate:::cm_set_key(payload$api_key)    # held privately, not in the ANTHROPIC_API_KEY variable
 
     # If the key_id differs from the active config, this is a newly issued key
     # from the instructor — reset the usage log so the student gets a fresh quota.
@@ -4532,8 +4533,8 @@ server <- function(input, output, session) {
       usage_log_rv(list())
     }
 
-    # Save active config for classmate_config_show()
-    tryCatch(classmate:::classmate_save_state(payload, active_cfg_path()), error = function(e) invisible(NULL))
+    # Save active config for klausmate_config_show()
+    tryCatch(klausmate:::klausmate_save_state(payload, active_cfg_path()), error = function(e) invisible(NULL))
     cost_limit_val(       payload$cost_limit)
     reset_period_val(     payload$reset_period)
     final_expiry_val(     payload$final_expiry)
@@ -4543,9 +4544,9 @@ server <- function(input, output, session) {
     max_lines_cap_val(new_cap)
     prefs$max_lines <- new_cap
     on_success()
-    if (!isTRUE(getOption(".classmate_disclaimer_shown"))) {
+    if (!isTRUE(getOption(".klausmate_disclaimer_shown"))) {
       show_student_disclaimer()
-      options(.classmate_disclaimer_shown = TRUE)
+      options(.klausmate_disclaimer_shown = TRUE)
     }
   }
 
@@ -4802,7 +4803,7 @@ server <- function(input, output, session) {
       title = "Plot",
       size  = "l",
       tags$div(style = "text-align: center; max-height: 45vh; overflow: auto;",
-        tags$img(src = paste0("/classmate_plots/", basename(f)),
+        tags$img(src = paste0("/klausmate_plots/", basename(f)),
                  style = "max-width: 100%; height: auto; border: 1px solid #ddd;")),
       tags$hr(),
       if (has_code) tagList(
@@ -4828,10 +4829,10 @@ server <- function(input, output, session) {
       ) else tags$p(em(
         if (identical(get0(f, envir = plot_code_why, inherits = FALSE), "several"))
           paste("This plot is one of several drawn by the same line of code (for example plot(model) on a",
-                "regression model draws four separate plots), so Classmate cannot write saving code for just this one.",
+                "regression model draws four separate plots), so Klausmate cannot write saving code for just this one.",
                 "To save them together, put par(mfrow = c(2, 2)) before that line so they are drawn on one page.")
         else
-          paste("Classmate could not match this plot to particular lines of code (for instance, the code may draw plots",
+          paste("Klausmate could not match this plot to particular lines of code (for instance, the code may draw plots",
                 "inside a function or loop), so it cannot write the saving code for it.")),
                     style = "font-size: 0.85em; color: #888;"),
       footer = tagList(
@@ -4915,7 +4916,7 @@ server <- function(input, output, session) {
     rel <- input$widget_expand
     req(nzchar(rel), file.exists(file.path(tempdir(), rel)))
     expanded_widget(rel)
-    src      <- paste0("/classmate_plots/", rel)
+    src      <- paste0("/klausmate_plots/", rel)
     has_code <- exists(rel, envir = widget_code_cache, inherits = FALSE)
     n        <- match(rel, widget_files_rv())
     showModal(modalDialog(
@@ -4932,7 +4933,7 @@ server <- function(input, output, session) {
         tags$p(em("Add to code appends the R code that saves it, in your working directory, as a single .html file (the plot",
                   "stays interactive in it) to the end of the Code window."),
                style = "font-size: 0.85em; color: #888;")
-      ) else tags$p(em("Classmate could not work out which lines of code drew this, so it cannot write the saving code for it."),
+      ) else tags$p(em("Klausmate could not work out which lines of code drew this, so it cannot write the saving code for it."),
                     style = "font-size: 0.85em; color: #888;"),
       footer = tagList(
         if (has_code) actionButton("widget_exp_add", "Add to code", class = "btn-primary"),
@@ -5032,11 +5033,11 @@ server <- function(input, output, session) {
         tags$div(class = "cm-wthumb", title = paste("Interactive plot", i, "— click to expand"),
           onclick = sprintf("Shiny.setInputValue('widget_expand', '%s', {priority: 'event'});",
                             gsub("[^A-Za-z0-9_./-]", "", rel)),
-          tags$iframe(src = paste0("/classmate_plots/", rel), tabindex = "-1", scrolling = "no"),
+          tags$iframe(src = paste0("/klausmate_plots/", rel), tabindex = "-1", scrolling = "no"),
           tags$span(class = "cm-wbadge", "interactive"))
       })
       thumb_items <- lapply(seq_along(plots), function(i) {
-        src <- paste0("/classmate_plots/", basename(plots[[i]]))
+        src <- paste0("/klausmate_plots/", basename(plots[[i]]))
         tags$div(
           style = "display: inline-block; margin: 4px; vertical-align: top; cursor: pointer;",
           tags$img(
@@ -5235,12 +5236,12 @@ server <- function(input, output, session) {
       footer = modalButton("OK"), easyClose = TRUE))
   })
 
-  observeEvent(input$about_classmate, {
+  observeEvent(input$about_klausmate, {
     showModal(modalDialog(
-      title = "About Classmate",
-      tags$p("Classmate is an AI-powered learning assistant that works alongside RStudio (or R) and opens in your web browser. It acts as an interface between R and Claude — Anthropic’s AI — so instead of switching between RStudio and a separate chat tool, you can ask questions, request code, and get explanations all in one place, with direct access to what’s currently in your R script and workspace."),
-      tags$p("When you ask Classmate to write or modify code, it runs the code and displays the output. If the code fails, Classmate can diagnose the error and fix it. If it succeeds, you can ask for an explanation of what the code does and why, pitched at whatever level suits you. Classmate also keeps track of what has changed between versions, so you can see exactly what was added or altered and why."),
-      tags$p("Classmate is designed to support your learning, not replace it — to encourage you to engage with the answers, not just the output."),
+      title = "About Klausmate",
+      tags$p("Klausmate is an AI-powered learning assistant that works alongside RStudio (or R) and opens in your web browser. It acts as an interface between R and Claude — Anthropic’s AI — so instead of switching between RStudio and a separate chat tool, you can ask questions, request code, and get explanations all in one place, with direct access to what’s currently in your R script and workspace."),
+      tags$p("When you ask Klausmate to write or modify code, it runs the code and displays the output. If the code fails, Klausmate can diagnose the error and fix it. If it succeeds, you can ask for an explanation of what the code does and why, pitched at whatever level suits you. Klausmate also keeps track of what has changed between versions, so you can see exactly what was added or altered and why."),
+      tags$p("Klausmate is designed to support your learning, not replace it — to encourage you to engage with the answers, not just the output."),
       tags$br(),
       tags$p("To find out more, please press any of the buttons shaded black."),
       footer = modalButton("Close"),
@@ -5701,7 +5702,7 @@ server <- function(input, output, session) {
         title = "Script too long to load",
         tags$p(
           tags$strong(fname), " contains ", n_code_lines, " lines of code. ",
-          "Classmate is designed to work with short, focused code chunks — ideally ",
+          "Klausmate is designed to work with short, focused code chunks — ideally ",
           "no more than ", max_l, " lines at a time. Extended scripts are better ",
           "broken into smaller steps, each prompted and run in turn."
         ),
@@ -5725,7 +5726,7 @@ server <- function(input, output, session) {
   # needs no data to be loaded), in two stages: (1) tick datasets, in one or several packages, and Load
   # them into the workspace; (2) choose, by type, which of the loaded objects to add to the context.
   # The list is built when the dialog opens (about 0.1-0.3 s for a few hundred packages) and cached
-  # until the library folders change, so packages installed, updated or removed while Classmate was
+  # until the library folders change, so packages installed, updated or removed while Klausmate was
   # paused, or from the Quick Console, are always picked up.
   pkgdata_cache <- new.env()
   PKG_SKIP_DIRS <- c("R", "help", "html", "Meta", "libs", "doc", "demo", "tests", "www", "data")
@@ -5790,7 +5791,7 @@ server <- function(input, output, session) {
     sum(file.size(list.files(d, full.names = TRUE, recursive = TRUE)), na.rm = TRUE) / 1e6
   }
   # Load a whole package's datasets into the scratch store (once); returns its info data frame
-  PKGDATA_ONLINE <- ".online"       # the drop-down value for Classmate's own online datasets
+  PKGDATA_ONLINE <- ".online"       # the drop-down value for Klausmate's own online datasets
   pkgdata_load_pkg <- function(pkg) {
     if (!is.null(pkgdata_store[[pkg]])) return(pkgdata_store[[pkg]])
     if (identical(pkg, PKGDATA_ONLINE)) {
@@ -5864,7 +5865,7 @@ server <- function(input, output, session) {
     pkgs <- sort(unique(idx$package))
     counts <- vapply(pkgs, function(p) sum(idx$package == p), integer(1))
     # The package chosen (or last added from) is chosen again, if it is still there; otherwise, and the first time,
-    # Classmate's own datasets are shown
+    # Klausmate's own datasets are shown
     last <- isolate(pkgdata_last())
     if (!(last %in% c(PKGDATA_ONLINE, pkgs)) || !nzchar(last)) last <- PKGDATA_ONLINE
     pkgdata_last(last)
@@ -5873,12 +5874,12 @@ server <- function(input, output, session) {
       title = "Load package data",
       tags$p("Pick a package to see its datasets and any spatial files (shapefiles, GeoPackages, GeoJSON) it comes",
              "with, tick the ones you want (in one or several packages) and press Add: they are put in your R",
-             "workspace and added to the context for your prompt. \"Classmate (online datasets)\" lists data that",
-             "Classmate keeps on GitHub, with its source and licence: Add downloads them first."),
+             "workspace and added to the context for your prompt. \"Klausmate (online datasets)\" lists data that",
+             "Klausmate keeps on GitHub, with its source and licence: Add downloads them first."),
       tags$label("Package:", `for` = "pkgdata_pkgfilter"),
       textInput("pkgdata_pkgfilter", NULL, placeholder = "Filter the package list (e.g. sp) (optional)", width = "100%"),
       selectInput("pkgdata_pkg", NULL,
-                  choices = c("Choose a package..." = "", "Classmate (online datasets)" = PKGDATA_ONLINE,
+                  choices = c("Choose a package..." = "", "Klausmate (online datasets)" = PKGDATA_ONLINE,
                               setNames(pkgs, paste0(pkgs, " (", counts, ")"))),
                   selected = last, width = "100%"),
       uiOutput("pkgdata_filters"),
@@ -5898,10 +5899,10 @@ server <- function(input, output, session) {
     if (nzchar(q)) pkgs <- pkgs[grepl(tolower(q), tolower(pkgs), fixed = TRUE)]
     counts <- vapply(pkgs, function(p) sum(idx$package == p), integer(1))
     cur <- isolate(input$pkgdata_pkg %||% "")
-    online <- !nzchar(q) || grepl(tolower(q), "classmate online datasets", fixed = TRUE)
+    online <- !nzchar(q) || grepl(tolower(q), "klausmate online datasets", fixed = TRUE)
     updateSelectInput(session, "pkgdata_pkg",
       choices  = c(if (length(pkgs) == 0 && !online) c("No package matches" = "") else c("Choose a package..." = ""),
-                   if (online) c("Classmate (online datasets)" = PKGDATA_ONLINE),
+                   if (online) c("Klausmate (online datasets)" = PKGDATA_ONLINE),
                    if (length(pkgs) > 0) setNames(pkgs, paste0(pkgs, " (", counts, ")"))),
       selected = if (cur %in% c(pkgs, if (online) PKGDATA_ONLINE)) cur else "")
   })
@@ -5947,13 +5948,13 @@ server <- function(input, output, session) {
     if (!is.null(err))
       return(tags$p(style = "color: #b22222; margin-top: 8px;", title = err,
         if (identical(attr(pkgdata_info(), "error_kind"), "missing"))
-          paste("Classmate's online datasets are not available yet: the list was not found on GitHub.",
+          paste("Klausmate's online datasets are not available yet: the list was not found on GitHub.",
                 "Please try again later, or ask your instructor.")
         else if (identical(attr(pkgdata_info(), "error_kind"), "network"))
-          paste("Classmate could not reach its online datasets on GitHub. Check your internet connection, then",
-                "choose \"Classmate (online datasets)\" again to retry.")
+          paste("Klausmate could not reach its online datasets on GitHub. Check your internet connection, then",
+                "choose \"Klausmate (online datasets)\" again to retry.")
         else
-          paste("Classmate could not read its online datasets from GitHub. Please try again in a little while,",
+          paste("Klausmate could not read its online datasets from GitHub. Please try again in a little while,",
                 "or ask your instructor.")))
     man <- attr(pkgdata_info(), "manifest")
     tagList(
@@ -6023,7 +6024,7 @@ server <- function(input, output, session) {
     tags$p(style = "margin-top: 8px; font-size: 0.9em;",
            if (length(k) == 0) em("No data selected yet.") else
              tagList(tags$strong(paste0(length(k), " ticked: ")),
-                     paste(sub("^\\.online ::", "Classmate ::",
+                     paste(sub("^\\.online ::", "Klausmate ::",
                                sub("#[0-9]+$", "", sub("::", " :: ", sub("::file:", "::", k, fixed = TRUE), fixed = TRUE))), collapse = ", ")))
   })
   output$pkgdata_add_btn <- renderUI({
@@ -6113,7 +6114,7 @@ server <- function(input, output, session) {
     }
     for (k in keys) {
       pk   <- sub("::.*$", "", k)
-      if (identical(pk, PKGDATA_ONLINE)) {                # one of Classmate's online datasets: download it
+      if (identical(pk, PKGDATA_ONLINE)) {                # one of Klausmate's online datasets: download it
         man <- attr(pkgdata_load_pkg(PKGDATA_ONLINE), "manifest")
         mr  <- if (is.null(man)) NULL else man[match(sub("^.*::", "", k), man$id), ]
         spatial_online <- !is.null(mr) && tolower(mr$format) %in% c("gpkg", "geojson", "shp")
@@ -6124,14 +6125,14 @@ server <- function(input, output, session) {
           error = function(err) {
             why <- if (inherits(err, "httr2_http_404")) "That file is not available on GitHub yet."
                    else if (identical(net_error_kind(err), "network"))
-                     "Classmate could not reach GitHub. Please check your internet connection and try again."
+                     "Klausmate could not reach GitHub. Please check your internet connection and try again."
                    else conditionMessage(err)
             showNotification(paste0("Could not download ", mr$object, ". ", why), type = "error", duration = 10)
             NULL })
         if (is.null(val)) { failed <- c(failed, k); next }
-        final <- if (mr$object %in% used) make.names(paste0(mr$object, "_classmate")) else mr$object
+        final <- if (mr$object %in% used) make.names(paste0(mr$object, "_klausmate")) else mr$object
         used  <- c(used, final)
-        plan[[length(plan) + 1L]] <- list(name = final, package = "Classmate", key = k, value = val,
+        plan[[length(plan) + 1L]] <- list(name = final, package = "Klausmate", key = k, value = val,
                                           uses_sf = spatial_online,
                                           code = online_dataset_code(mr, final),
                                           credit = paste(c(mr$attribution, if (nzchar(mr$notice)) mr$notice), collapse = " "))
@@ -6219,7 +6220,7 @@ server <- function(input, output, session) {
     else updateCheckboxGroupInput(session, "pkgdata_choice", selected = character(0))
     showNotification(paste0("Added ", paste(nms, collapse = ", "), " to your workspace and the context."),
                      type = "message", duration = 6)
-    # Data from Classmate's online list comes with credit wording that should travel with it
+    # Data from Klausmate's online list comes with credit wording that should travel with it
     credits <- unique(Filter(function(x) !is.null(x) && nzchar(x), lapply(plan, function(it) it$credit)))
     if (length(credits) > 0)
       showNotification(tagList(tags$strong("Please credit the data: "), paste(unlist(credits), collapse = " ")),
@@ -6245,7 +6246,7 @@ server <- function(input, output, session) {
     if (length(m$matched) == 0) {
       if (length(m$unrecognised) > 0)
         return(tags$p(em(paste0(
-          "Classmate does not recognise '", paste(m$unrecognised, collapse = "', '"),
+          "Klausmate does not recognise '", paste(m$unrecognised, collapse = "', '"),
           "' as an object type. Try, for example: sf, raster, data table, mappable, ",
           "model, text, number, function."))))
       return(tags$p(em("No objects match the filters.")))
@@ -6347,7 +6348,7 @@ server <- function(input, output, session) {
     label <- if (kind == "file") basename(nm) else nm
     cannot <- function(why) showModal(modalDialog(
       title = paste0("Look at: ", label),
-      tags$p("Classmate cannot show this one."), tags$p(em(why), style = "color: #888;"),
+      tags$p("Klausmate cannot show this one."), tags$p(em(why), style = "color: #888;"),
       footer = modalButton("Close"), easyClose = TRUE))
     if (kind == "file") {                             # a package needed to read it may have to be installed first
       need <- file_needs(nm, preview = TRUE)
@@ -6600,8 +6601,8 @@ server <- function(input, output, session) {
   # log_path is generated fresh each time Save Code Log is pressed (date-time stamped)
   make_log_path <- function()
     file.path(project_root(),
-      paste0("classmate_log_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".Rmd"))
-  log_path <- reactiveVal(file.path(project_root(), "classmate_log.Rmd"))  # placeholder
+      paste0("klausmate_log_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".Rmd"))
+  log_path <- reactiveVal(file.path(project_root(), "klausmate_log.Rmd"))  # placeholder
 
   clarify_restore_prompt <- reactiveVal("")
 
@@ -6627,7 +6628,7 @@ server <- function(input, output, session) {
         ensure_packages(unique(unlist(needs[wait])),
                         paste0("Reading the column names of ", paste(basename(wait), collapse = ", ")),
                         retry = function() schema_retry(isolate(schema_retry()) + 1L),
-                        cancel_msg = "Installation cancelled, so Classmate cannot see the column names of the file you added.",
+                        cancel_msg = "Installation cancelled, so Klausmate cannot see the column names of the file you added.",
                         on_cancel = function() schema_skipped(c(isolate(schema_skipped()), wait)))
       }
     }
@@ -6699,7 +6700,7 @@ server <- function(input, output, session) {
         tags$li(tags$strong(nms[i]), if (gh[i]) paste0(" (from GitHub: ", missing_info[[i]][["github"]], ")")))),
       tags$p("They will be downloaded and installed now. This needs an internet connection and may take a few minutes;",
              "the app is paused until it finishes."),
-      tags$p(em("Installing can also update packages that Classmate is already using. If that happens you will be",
+      tags$p(em("Installing can also update packages that Klausmate is already using. If that happens you will be",
                 "asked to restart R, and your work is saved first.")),
       if (any(c("brms", "rstanarm") %in% nms))
         tags$p(em("Bayesian packages (brms, rstanarm) also need a C++ compiler (Rtools on Windows, Xcode command line",
@@ -6874,7 +6875,7 @@ server <- function(input, output, session) {
     consistency     = {cn <- suppressWarnings(as.integer(pref_val("consistency", CONSISTENCY_DEFAULT)))
                        if (is.na(cn) || cn < 1L || cn > 10L) CONSISTENCY_DEFAULT else cn},
     language        = {
-      .lp <- file.path(tools::R_user_dir("classmate", "config"), "language.rds")
+      .lp <- file.path(klausmate:::klausmate_user_dir("config"), "language.rds")
       if (file.exists(.lp)) tryCatch(readRDS(.lp), error = function(e) "English") else "English"
     }
   )
@@ -6900,7 +6901,7 @@ server <- function(input, output, session) {
   output$pref_pkg_note <- renderUI({
     miss <- Filter(function(x) !requireNamespace(x, quietly = TRUE), pref_packages())
     tags$p(style = "font-size: 0.85em; color: #666;",
-      "Some choices need extra R packages. Classmate asks before installing anything, the first time code needs it. ",
+      "Some choices need extra R packages. Klausmate asks before installing anything, the first time code needs it. ",
       if (length(miss) > 0)
         tagList("Not installed on this computer yet for your current choices: ",
                 tags$strong(paste0(paste(miss, collapse = ", "), ".")), " "),
@@ -6955,7 +6956,7 @@ server <- function(input, output, session) {
         tags$div(style = "align-self: end; margin-bottom: 15px;",
           actionButton("pref_lang_change", "Change", class = "btn-default btn-sm"))),
       tags$p(em(
-        "The language classmate uses for explanations. R code is always written in English."
+        "The language klausmate uses for explanations. R code is always written in English."
       )),
       hr(),
       tags$h5("Preferred approach for..."),
@@ -7083,7 +7084,7 @@ server <- function(input, output, session) {
   observeEvent(input$pref_language, {
     lang <- input$pref_language
     prefs$language <- lang
-    config_dir <- tools::R_user_dir("classmate", "config")
+    config_dir <- klausmate:::klausmate_user_dir("config")
     dir.create(config_dir, recursive = TRUE, showWarnings = FALSE)
     tryCatch(saveRDS(lang, file.path(config_dir, "language.rds")),
              error = function(e) invisible(NULL))
@@ -7097,8 +7098,8 @@ server <- function(input, output, session) {
                 width = "100%"),
       div(style = "height: 260px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px;",
         selectInput("lang_picker_select", NULL,
-          choices   = CLASSMATE_LANGUAGES,
-          selected  = if (prefs$language %in% CLASSMATE_LANGUAGES) prefs$language else "English",
+          choices   = KLAUSMATE_LANGUAGES,
+          selected  = if (prefs$language %in% KLAUSMATE_LANGUAGES) prefs$language else "English",
           size      = 15,
           selectize = FALSE,
           width     = "100%")
@@ -7118,9 +7119,9 @@ server <- function(input, output, session) {
   observeEvent(input$lang_filter, {
     filter <- trimws(input$lang_filter %||% "")
     langs  <- if (nzchar(filter))
-      CLASSMATE_LANGUAGES[grepl(filter, CLASSMATE_LANGUAGES, ignore.case = TRUE)]
+      KLAUSMATE_LANGUAGES[grepl(filter, KLAUSMATE_LANGUAGES, ignore.case = TRUE)]
     else
-      CLASSMATE_LANGUAGES
+      KLAUSMATE_LANGUAGES
     current <- prefs$language
     updateSelectInput(session, "lang_picker_select",
       choices  = langs,
@@ -7132,7 +7133,7 @@ server <- function(input, output, session) {
     lang <- input$lang_picker_select
     if (!is.null(lang) && nzchar(lang)) {
       prefs$language <- lang
-      config_dir <- tools::R_user_dir("classmate", "config")
+      config_dir <- klausmate:::klausmate_user_dir("config")
       dir.create(config_dir, recursive = TRUE, showWarnings = FALSE)
       tryCatch(saveRDS(lang, file.path(config_dir, "language.rds")),
                error = function(e) invisible(NULL))
@@ -7156,7 +7157,7 @@ server <- function(input, output, session) {
   observeEvent(input$pref_img_quality,     { prefs$img_quality     <- input$pref_img_quality })
   observeEvent(input$pref_img_size,        { prefs$img_size        <- input$pref_img_size })
   # How long code may run before it is stopped (Preferences); run_code() reads it from the option
-  observe(options(classmate.run_time_limit = unname(RUN_LIMIT_CHOICES[[prefs$run_limit]])))
+  observe(options(klausmate.run_time_limit = unname(RUN_LIMIT_CHOICES[[prefs$run_limit]])))
   observeEvent(input$pref_consistency, {
     v <- suppressWarnings(as.integer(input$pref_consistency))
     if (!is.na(v) && v >= 1L && v <= 10L) prefs$consistency <- v
@@ -7319,7 +7320,7 @@ server <- function(input, output, session) {
           if (max_c != 1) "s" else "",
           " permitted in this session."
         )),
-        tags$p("Please quit and restart Classmate, or ask your instructor for guidance."),
+        tags$p("Please quit and restart Klausmate, or ask your instructor for guidance."),
         footer = modalButton("OK"),
         easyClose = TRUE
       ))
@@ -7361,7 +7362,7 @@ server <- function(input, output, session) {
     if (!is.null(fb)) {
       .cm$fallback <- NULL
       wd_rv(fb$to)
-      showNotification(paste0("The folder ", fb$from, " no longer exists, so Classmate has switched to ",
+      showNotification(paste0("The folder ", fb$from, " no longer exists, so Klausmate has switched to ",
                               fb$to, ". Use Change Working Directory (in the Quick Console) to choose another."),
                        type = "warning", duration = 15)
     }
@@ -7452,33 +7453,33 @@ server <- function(input, output, session) {
     .enter <- cm_enter_root()
     on.exit(.enter$restore(), add = TRUE)
     if (!.enter$ok)
-      return(list(output = paste("Classmate could not open your working directory.",
+      return(list(output = paste("Klausmate could not open your working directory.",
                                  "Use Change Working Directory to choose a folder."),
                   is_error = TRUE, plot_path = NULL))
     # Temporarily shadow q/quit/stopApp/ask in globalenv to intercept them
-    .qc_classmate_fns <- c("talk", "whisper", "raisehand", "rh", "ssshh",
-                           "reset_key", "classmate_reset", "classmate_speaks",
-                           "classmate_make_key", "classmate_config_show")
+    .qc_klausmate_fns <- c("talk", "whisper", "raisehand", "rh", "ssshh",
+                           "reset_key", "klausmate_reset", "klausmate_speaks",
+                           "klausmate_make_key", "klausmate_config_show")
     shadow <- c(
       list(
         q       = if (exists("q",       .GlobalEnv, inherits = FALSE)) get("q",       .GlobalEnv) else NULL,
         quit    = if (exists("quit",    .GlobalEnv, inherits = FALSE)) get("quit",    .GlobalEnv) else NULL,
         stopApp = if (exists("stopApp", .GlobalEnv, inherits = FALSE)) get("stopApp", .GlobalEnv) else NULL
       ),
-      setNames(lapply(.qc_classmate_fns, function(nm)
+      setNames(lapply(.qc_klausmate_fns, function(nm)
         if (exists(nm, .GlobalEnv, inherits = FALSE)) get(nm, .GlobalEnv) else NULL
-      ), .qc_classmate_fns)
+      ), .qc_klausmate_fns)
     )
     assign("q",       function(...) stop("__QC_QUIT__"),    envir = .GlobalEnv)
     assign("quit",    function(...) stop("__QC_QUIT__"),    envir = .GlobalEnv)
     assign("stopApp", function(...) stop("__QC_STOPAPP__"), envir = .GlobalEnv)
     .qc_not_here_msg <- paste0(
-      "This function is not available inside Classmate's Quick Console.\n",
-      "Please leave Classmate (using Pause or Quit with Code Log) and run it from your main R console."
+      "This function is not available inside Klausmate's Quick Console.\n",
+      "Please leave Klausmate (using Pause or Quit with Code Log) and run it from your main R console."
     )
-    for (.qc_fn in .qc_classmate_fns)
+    for (.qc_fn in .qc_klausmate_fns)
       assign(.qc_fn, local({ msg <- .qc_not_here_msg; function(...) message(msg) }), envir = .GlobalEnv)
-    rm(.qc_classmate_fns, .qc_fn, .qc_not_here_msg)
+    rm(.qc_klausmate_fns, .qc_fn, .qc_not_here_msg)
     on.exit({
       for (nm in names(shadow)) {
         if (is.null(shadow[[nm]])) {
@@ -7519,7 +7520,7 @@ server <- function(input, output, session) {
       if (dev.cur() == dev_qc) tryCatch(dev.off(), error = function(e) NULL)
       msg <- conditionMessage(e)
       if (grepl("__QC_QUIT__", msg))
-        return(list(output = "(q() / quit() is not available here — close the Quick Console to return to Classmate)", is_error = FALSE, plot_path = NULL))
+        return(list(output = "(q() / quit() is not available here — close the Quick Console to return to Klausmate)", is_error = FALSE, plot_path = NULL))
       if (grepl("__QC_STOPAPP__", msg))
         return(list(output = "(stopApp() is not available inside the Quick Console)", is_error = FALSE, plot_path = NULL))
       if (grepl("reached elapsed time limit", msg))
@@ -7537,7 +7538,7 @@ server <- function(input, output, session) {
         result$wd_changed <- r$path
         result$output <- paste0(
           if (nzchar(trimws(result$output))) paste0(result$output, "\n") else "",
-          "[Classmate] Working directory is now ", r$path)
+          "[Klausmate] Working directory is now ", r$path)
       }
     }
     result
@@ -7580,11 +7581,11 @@ server <- function(input, output, session) {
       qc_pending_code(code)
       showModal(modalDialog(
         title = "Installing packages? Better done in RStudio",
-        tags$p("The Quick Console is designed for quick operations. Installing packages can take several minutes and cannot be interrupted, so Classmate may seem frozen while it runs."),
-        tags$p("We recommend that you Pause Classmate (your session is saved), install the package in the main RStudio console, and then restart Classmate to carry on where you left off."),
-        tags$p(em("You can still install it here if you prefer: Classmate will wait for it to finish.")),
+        tags$p("The Quick Console is designed for quick operations. Installing packages can take several minutes and cannot be interrupted, so Klausmate may seem frozen while it runs."),
+        tags$p("We recommend that you Pause Klausmate (your session is saved), install the package in the main RStudio console, and then restart Klausmate to carry on where you left off."),
+        tags$p(em("You can still install it here if you prefer: Klausmate will wait for it to finish.")),
         footer = tagList(
-          actionButton("qc_install_pause", "Pause Classmate", class = "btn-primary"),
+          actionButton("qc_install_pause", "Pause Klausmate", class = "btn-primary"),
           actionButton("qc_install_anyway", "Install here anyway"),
           actionButton("qc_install_close", "Close")
         ),
@@ -7616,15 +7617,15 @@ server <- function(input, output, session) {
       showModal(modalDialog(
         title = "That took too long for the Quick Console",
         tags$p("The Quick Console is designed for quick operations, so it stops any command that runs for more than 30 seconds. Your command was interrupted."),
-        tags$p("For a longer process, we recommend that you Pause Classmate (your session is saved), run the command in the main RStudio console, and then restart Classmate to carry on where you left off."),
+        tags$p("For a longer process, we recommend that you Pause Klausmate (your session is saved), run the command in the main RStudio console, and then restart Klausmate to carry on where you left off."),
         footer = tagList(
-          actionButton("qc_timeout_pause", "Pause Classmate", class = "btn-primary"),
+          actionButton("qc_timeout_pause", "Pause Klausmate", class = "btn-primary"),
           actionButton("qc_timeout_close", "Close")
         ),
         easyClose = FALSE
       ))
     } else if (!is.null(result$plot_path)) {
-      plot_src <- paste0("classmate_plots/", basename(result$plot_path))
+      plot_src <- paste0("klausmate_plots/", basename(result$plot_path))
       showModal(modalDialog(
         title = "Plot",
         size  = "l",
@@ -7683,7 +7684,7 @@ server <- function(input, output, session) {
   observeEvent(input$qc_cw_confirm, {
     rm(list = ls(envir = .GlobalEnv), envir = .GlobalEnv)
     selected_objects(character(0))
-    add_qc_entry("rm(list = ls())", "[Classmate] Workspace cleared.")
+    add_qc_entry("rm(list = ls())", "[Klausmate] Workspace cleared.")
     show_qc_modal()
   })
 
@@ -7763,13 +7764,13 @@ server <- function(input, output, session) {
     if (isTRUE(r$changed)) {
       wd_rv(r$path)
       add_qc_entry(paste0('setwd("', r$path, '")'),
-                   paste0("[Classmate] Working directory is now ", r$path))
+                   paste0("[Klausmate] Working directory is now ", r$path))
       if (!isTRUE(r$outputs_ok))
-        showNotification(paste("Classmate could not create an outputs folder in this",
+        showNotification(paste("Klausmate could not create an outputs folder in this",
                                "directory; it may be read-only."),
                          type = "warning", duration = 8)
     } else {
-      add_qc_entry("# working directory unchanged", paste("[Classmate] Already in", r$path))
+      add_qc_entry("# working directory unchanged", paste("[Klausmate] Already in", r$path))
     }
     show_qc_modal()
   })
@@ -7841,7 +7842,7 @@ server <- function(input, output, session) {
       if (grepl("^OUT_OF_SCOPE", trimws(raw_response), ignore.case = TRUE)) {
         showModal(modalDialog(
           title     = "Out of scope",
-          "Sorry, this request is out of scope. Classmate is here to help with R programming, data analysis, and GIS tasks.",
+          "Sorry, this request is out of scope. Klausmate is here to help with R programming, data analysis, and GIS tasks.",
           easyClose = FALSE,
           footer    = actionButton("oos_ok_code", "OK", class = "btn-primary")
         ))
@@ -8017,7 +8018,7 @@ server <- function(input, output, session) {
       finish()
       showModal(modalDialog(
         title = "Out of scope",
-        "Sorry, this request is out of scope. Classmate is here to help with R programming, data analysis, and GIS tasks.",
+        "Sorry, this request is out of scope. Klausmate is here to help with R programming, data analysis, and GIS tasks.",
         easyClose = FALSE,
         footer = actionButton("oos_ok_plain", "OK", class = "btn-primary")))
       return(invisible(NULL))
@@ -8078,7 +8079,7 @@ server <- function(input, output, session) {
 
     # --- Calculation needed -----------------------------------------------------
     unsafe_msg <- function(bad) paste0(
-      "Classmate could not answer this safely without using: ", paste(bad, collapse = ", "),
+      "Klausmate could not answer this safely without using: ", paste(bad, collapse = ", "),
       ". Try Ask for Code instead.")
     bad <- answer_code_violations(plan$code)
     if (length(bad) > 0) return(fail(unsafe_msg(bad)))
@@ -8104,7 +8105,7 @@ server <- function(input, output, session) {
     # Anything unexpected going wrong while working out the answer gives a plain message and frees the
     # buttons, rather than an error that ends the session
     answer_safely <- function(f) function() tryCatch(f(), error = function(e) {
-      message("Classmate: the Answer step failed: ", conditionMessage(e))
+      message("Klausmate: the Answer step failed: ", conditionMessage(e))
       fail("Something went wrong while working out that answer. Please try again, or use Ask for Code.")
     })
     check_and_install_if_needed(code_cur, answer_safely(function() {
@@ -8112,7 +8113,7 @@ server <- function(input, output, session) {
       for (attempt in 1:2) {
         prep <- prepare_run(code_cur)
         if (length(prep$ps$failed) > 0)
-          return(fail(paste("Classmate could not safely prepare", paste(prep$ps$failed, collapse = ", "),
+          return(fail(paste("Klausmate could not safely prepare", paste(prep$ps$failed, collapse = ", "),
                             "for this question. Try Ask for Code instead.")))
         tok_all <- prep$ps$map
         bad_id  <- answer_identifier_violations(code_cur, prep$ps$id_cols)
@@ -8168,7 +8169,7 @@ server <- function(input, output, session) {
         raw_cur  <- r_fix$text
       }
       if (!usable)
-        return(fail(paste("Classmate could not work this out automatically. Try rephrasing the",
+        return(fail(paste("Klausmate could not work this out automatically. Try rephrasing the",
                           "question, or use Ask for Code to work through it step by step.")))
 
       results_msg <- paste0(
@@ -8250,7 +8251,7 @@ server <- function(input, output, session) {
         tags$details(
           style = "margin-top: 10px;",
           tags$summary(style = "cursor: pointer; color: #2c5f8a;", "Show my working"),
-          tags$p(em("The code Classmate ran to work this out:"), style = "margin: 8px 0 4px 0;"),
+          tags$p(em("The code Klausmate ran to work this out:"), style = "margin: 8px 0 4px 0;"),
           tags$pre(entry$code),
           if (nzchar(entry$results %||% ""))
             tagList(tags$p(em("What it produced:"), style = "margin: 8px 0 4px 0;"),
@@ -8323,7 +8324,7 @@ server <- function(input, output, session) {
     explain_ctx(list(id = explain_n, kind = kind, subject = subject))
   }
   explain_failed <- function(x) !nzchar(trimws(x %||% "")) ||
-    grepl("^(Could not generate|Classmate could not|Your key was not accepted|Claude is busy|Claude did not reply|The code is too long)", trimws(x))
+    grepl("^(Could not generate|Klausmate could not|Your key was not accepted|Claude is busy|Claude did not reply|The code is too long)", trimws(x))
   # Add (or, for a regenerated explanation at another level, replace) the explanation in the code log
   update_explanation_log <- function(change) {
     ctx <- isolate(explain_ctx()); if (is.null(ctx)) return(invisible(NULL))
@@ -9099,7 +9100,7 @@ server <- function(input, output, session) {
     stem <- if (nzchar(desc))
       gsub("[^A-Za-z0-9_]", "_", gsub("\\s+", "_", desc))
     else
-      paste0("classmate_block_", format(Sys.time(), "%Y%m%d_%H%M%S"))
+      paste0("klausmate_block_", format(Sys.time(), "%Y%m%d_%H%M%S"))
     stem <- sub("_+$", "", substr(stem, 1, 60))
     p <- file.path(project_root(), paste0(stem, ".R"))
     writeLines(code_text, p)
@@ -9114,7 +9115,7 @@ server <- function(input, output, session) {
   show_pause_modal <- function()
     showModal(modalDialog(
       title = "Pause",
-      tags$p(tags$strong("Pause Classmate: your session is saved and Classmate closes.")),
+      tags$p(tags$strong("Pause Klausmate: your session is saved and Klausmate closes.")),
       tags$p(paste(
         "The current session — prompt, code, context files and objects,",
         "conversation history, and preferences — will be saved and restored",
@@ -9245,12 +9246,12 @@ server <- function(input, output, session) {
 }
 
 if (.cm_stale) {
-  .cm_stale_msg <- paste("Classmate was updated while R was running. Please restart R",
+  .cm_stale_msg <- paste("Klausmate was updated while R was running. Please restart R",
                          "(Session > Restart R in RStudio) and then run talk() again.")
   message(.cm_stale_msg)
   shinyApp(
     fluidPage(style = "max-width: 560px; margin-top: 60px;",
-      h3("Classmate was updated"),
+      h3("Klausmate was updated"),
       p(.cm_stale_msg),
       p(em("This window will close in a few seconds."))),
     function(input, output, session) {

@@ -5,7 +5,7 @@
 # history, then explains them in plain English via Claude when the student
 # calls raisehand().  No Shiny UI — works entirely in the R console.
 #
-# Key sharing: uses the same saved key settings and usage log (classmate_state_path()) as talk(),
+# Key sharing: uses the same saved key settings and usage log (klausmate_state_path()) as talk(),
 # so a key loaded in either place is immediately available in the other.
 # ---------------------------------------------------------------------------
 
@@ -34,9 +34,9 @@
 # Shared path helpers (identical to those in app.R so files are the same)
 # ---------------------------------------------------------------------------
 
-.watch_cfg_path <- function() classmate_state_path("config")
+.watch_cfg_path <- function() klausmate_state_path("config")
 
-.watch_usage_path <- function() classmate_state_path("usage")
+.watch_usage_path <- function() klausmate_state_path("usage")
 
 .watch_load_cfg <- function() {
   p <- .watch_cfg_path()
@@ -55,7 +55,7 @@
   log <- c(old_log, list(list(timestamp = Sys.time(), cost_usd = cost_usd)))
   attr(log, "key_id") <- (.watch_load_cfg()$key_id) %||% attr(old_log, "key_id")
   attr(log, "spend_reset") <- attr(old_log, "spend_reset")
-  tryCatch(classmate_save_state(log, .watch_usage_path()), error = function(e) NULL)
+  tryCatch(klausmate_save_state(log, .watch_usage_path()), error = function(e) NULL)
   invisible(log)
 }
 
@@ -83,8 +83,8 @@
 .watch_quota <- function(cfg) {
   if (is.null(cfg)) return(NULL)
 
-  expired <- classmate_is_expired(cfg$final_expiry)
-  not_yet <- classmate_not_yet_valid(cfg$valid_from)
+  expired <- klausmate_is_expired(cfg$final_expiry)
+  not_yet <- klausmate_not_yet_valid(cfg$valid_from)
 
   cutoff <- tryCatch(.watch_period_cutoff(cfg$reset_period), error = function(e) NULL)
   log    <- .watch_read_usage()
@@ -128,7 +128,7 @@
 .watch_record_condition <- function(type, cond) {
   if (!isTRUE(.watch_env$active)) return(invisible(NULL))
   txt <- trimws(paste(conditionMessage(cond), collapse = " "))
-  if (!nzchar(txt) || grepl("^\\[classmate\\]|^classmate", txt)) return(invisible(NULL))
+  if (!nzchar(txt) || grepl("^\\[klausmate\\]|^klausmate", txt)) return(invisible(NULL))
   cl <- tryCatch(paste(deparse(conditionCall(cond))[1], collapse = ""), error = function(e) "")
   if (identical(cl, "NULL")) cl <- ""
   entry <- list(type = type, text = substr(txt, 1L, 1000L), call = substr(cl, 1L, 120L))
@@ -261,7 +261,7 @@
 # ---------------------------------------------------------------------------
 
 .watch_call_claude <- function(user_prompt, api_key, mode = "error") {
-  lang     <- classmate_language()
+  lang     <- klausmate_language()
   lang_clause <- if (tolower(trimws(lang)) == "english") {
     paste(
       "LANGUAGE RULE: Write all responses in British English",
@@ -378,11 +378,11 @@
   }, error = function(e) {
     msg <- conditionMessage(e)
     friendly <- if (grepl("timed? ?out|timeout|time.?out", msg, ignore.case = TRUE))
-      "classmate could not reach the AI — the request timed out. Please try again."
+      "klausmate could not reach the AI — the request timed out. Please try again."
     else if (grepl("Could not resolve|network|connection", msg, ignore.case = TRUE))
-      "classmate could not reach the AI — please check your internet connection and try again."
+      "klausmate could not reach the AI — please check your internet connection and try again."
     else
-      "classmate could not reach the AI. Please try again."
+      "klausmate could not reach the AI. Please try again."
     list(text = friendly, cost = 0, failed = TRUE)
   })
   result
@@ -394,7 +394,7 @@
 
 .watch_prompt_for_key <- function() {
   message("")
-  message("No classmate key found. Do you have:")
+  message("No klausmate key found. Do you have:")
   message("  1. A key file (.key) provided by your instructor")
   message("  2. Your own Anthropic API key")
   message("")
@@ -407,9 +407,9 @@
       message("No file selected.")
       return(NULL)
     }
-    payload <- classmate_unlock_key_file(path, .watch_load_cfg())
+    payload <- klausmate_unlock_key_file(path, .watch_load_cfg())
     if (is.null(payload)) return(NULL)
-    tryCatch(classmate_save_state(payload, .watch_cfg_path()), error = function(e) NULL)
+    tryCatch(klausmate_save_state(payload, .watch_cfg_path()), error = function(e) NULL)
     message("Key loaded and saved for future sessions.")
     return(payload$api_key)
 
@@ -436,7 +436,7 @@
 # whisper()
 # ---------------------------------------------------------------------------
 
-#' Start the classmate whisper mode
+#' Start the klausmate whisper mode
 #'
 #' Runs silently in the background. After any error, type \code{raisehand()}
 #' for a plain-English explanation. Use \code{ssshh()} to stop.
@@ -450,15 +450,15 @@
 whisper <- function(key = NULL) {
 
   if (.watch_env$active) {
-    message("classmate whisper is already running. Use ssshh() to stop.")
+    message("klausmate whisper is already running. Use ssshh() to stop.")
     return(invisible(NULL))
   }
 
   # --- The package may have been reinstalled while this R session was running ---
-  if (classmate_session_is_stale("whisper", list(key = key))) return(invisible(NULL))
+  if (klausmate_session_is_stale("whisper", list(key = key))) return(invisible(NULL))
 
   # --- Preflight update check ------------------------------------------------
-  updated <- classmate_preflight(relaunch = "whisper", args = list(key = key))
+  updated <- klausmate_preflight(relaunch = "whisper", args = list(key = key))
   if (isTRUE(updated)) return(invisible(NULL))
 
   # --- Resolve API key -------------------------------------------------------
@@ -467,9 +467,9 @@ whisper <- function(key = NULL) {
   # 1. Explicit argument — could be a .key file path or a raw API key string
   if (!is.null(key) && nzchar(key)) {
     if (file.exists(key)) {
-      payload <- classmate_unlock_key_file(key, .watch_load_cfg())
+      payload <- klausmate_unlock_key_file(key, .watch_load_cfg())
       if (!is.null(payload) && nzchar(payload$api_key %||% "")) {
-        tryCatch(classmate_save_state(payload, .watch_cfg_path()), error = function(e) NULL)
+        tryCatch(klausmate_save_state(payload, .watch_cfg_path()), error = function(e) NULL)
         api_key <- payload$api_key
         message("Key file loaded and saved for future sessions.")
       } else {
@@ -508,12 +508,12 @@ whisper <- function(key = NULL) {
   quota <- .watch_quota(cfg)
   if (!is.null(quota)) {
     if (isTRUE(quota$not_yet)) {
-      message("Your classmate key is not valid until ",
-              classmate_format_date(quota$valid_from, with_time = TRUE), ".")
+      message("Your klausmate key is not valid until ",
+              klausmate_format_date(quota$valid_from, with_time = TRUE), ".")
       return(invisible(NULL))
     }
     if (quota$expired) {
-      message("Your classmate key has expired. Please ask your instructor for a new one.")
+      message("Your klausmate key has expired. Please ask your instructor for a new one.")
       return(invisible(NULL))
     }
     if (quota$over_limit) {
@@ -560,7 +560,7 @@ whisper <- function(key = NULL) {
               call      = wl[[1]]$call,
               notices   = pend[!is_w],
               cmd       = cmd, history = buf, workspace = ws, time = Sys.time())
-            message("  [classmate] Type raisehand() or rh() for help with this warning.")
+            message("  [klausmate] Type raisehand() or rh() for help with this warning.")
           } else {
             .watch_env$last_notice <- list(
               notices = pend, cmd = cmd, history = buf, workspace = ws, time = Sys.time())
@@ -590,12 +590,12 @@ whisper <- function(key = NULL) {
             ),
             time      = Sys.time()
           )
-          message("  [classmate] Type raisehand() or rh() for help with this warning.")
+          message("  [klausmate] Type raisehand() or rh() for help with this warning.")
         }
       }
     }
     TRUE
-  }, name = "classmate_watcher")
+  }, name = "klausmate_watcher")
 
   .watch_env$callback_id <- cb_id
 
@@ -623,7 +623,7 @@ whisper <- function(key = NULL) {
       time      = Sys.time()
     )
 
-    message("  [classmate] Type raisehand() or rh() for help with this error.")
+    message("  [klausmate] Type raisehand() or rh() for help with this error.")
   })
 
   # Hook 3: see every warning and message (not just those kept in .Last.warning)
@@ -647,7 +647,7 @@ whisper <- function(key = NULL) {
   }, onexit = TRUE)
 
   .watch_env$active <- TRUE
-  message("classmate whisper is running. Type raisehand() or rh() to have an error, warning or message explained, or ssshh() to stop.")
+  message("klausmate whisper is running. Type raisehand() or rh() to have an error, warning or message explained, or ssshh() to stop.")
   invisible(NULL)
 }
 
@@ -671,7 +671,7 @@ whisper <- function(key = NULL) {
 raisehand <- function() {
 
   if (!.watch_env$active) {
-    message("classmate whisper is not running. Start with whisper().")
+    message("klausmate whisper is not running. Start with whisper().")
     return(invisible(NULL))
   }
 
@@ -680,12 +680,12 @@ raisehand <- function() {
   quota <- .watch_quota(cfg)
   if (!is.null(quota)) {
     if (isTRUE(quota$not_yet)) {
-      message("Your classmate key is not valid until ",
-              classmate_format_date(quota$valid_from, with_time = TRUE), ".")
+      message("Your klausmate key is not valid until ",
+              klausmate_format_date(quota$valid_from, with_time = TRUE), ".")
       return(invisible(NULL))
     }
     if (quota$expired) {
-      message("Your classmate key has expired. Please ask your instructor for a new one.")
+      message("Your klausmate key has expired. Please ask your instructor for a new one.")
       return(invisible(NULL))
     }
     if (quota$over_limit) {
@@ -733,7 +733,7 @@ raisehand <- function() {
       "\n\nWorkspace:\n",
       .watch_format_workspace(n$workspace)
     )
-    message("classmate is thinking...")
+    message("klausmate is thinking...")
     result <- .watch_call_claude(prompt, .watch_env$api_key, mode = "message")
 
   } else if (use_warning) {
@@ -759,7 +759,7 @@ raisehand <- function() {
       .watch_format_workspace(w$workspace)
     )
 
-    message("classmate is thinking...")
+    message("klausmate is thinking...")
     result <- .watch_call_claude(prompt, .watch_env$api_key, mode = "warning")
 
   } else {
@@ -789,7 +789,7 @@ raisehand <- function() {
       .watch_format_workspace(e$workspace)
     )
 
-    message("classmate is thinking...")
+    message("klausmate is thinking...")
     result <- .watch_call_claude(prompt, .watch_env$api_key, mode = "error")
   }
 
@@ -808,7 +808,7 @@ raisehand <- function() {
         if (!is.null(quota2$limit_usd)) {
           remaining <- max(0, quota2$limit_usd - quota2$used_usd)
           cat(sprintf(
-            "[classmate] $%.4f used this period · $%.4f remaining · resets %s\n\n",
+            "[klausmate] $%.4f used this period · $%.4f remaining · resets %s\n\n",
             quota2$used_usd, remaining, quota2$reset_label
           ))
         }
@@ -832,7 +832,7 @@ raisehand <- function() {
 #' @export
 ssshh <- function() {
   if (!.watch_env$active) {
-    message("classmate whisper is not currently running.")
+    message("klausmate whisper is not currently running.")
     return(invisible(NULL))
   }
   options(error = .watch_env$original_error)
@@ -852,7 +852,7 @@ ssshh <- function() {
   .watch_env$history_buffer   <- list()
   .watch_env$callback_id      <- NULL
   .watch_env$rh_existed       <- FALSE
-  message("classmate has stopped watching.")
+  message("klausmate has stopped watching.")
   invisible(NULL)
 }
 
@@ -860,7 +860,7 @@ ssshh <- function() {
 # reset_key()
 # ---------------------------------------------------------------------------
 
-#' Clear the saved classmate key
+#' Clear the saved klausmate key
 #'
 #' Removes the key file saved by \code{whisper()} or \code{talk()} and unsets
 #' the \code{ANTHROPIC_API_KEY} environment variable. The next call to
@@ -888,16 +888,16 @@ reset_key <- function() {
   if (!removed) message("No saved key found.")
 
   if (.watch_env$active)
-    message("Note: classmate whisper is still running with the previous key until ssshh() is called.")
+    message("Note: klausmate whisper is still running with the previous key until ssshh() is called.")
 
   invisible(NULL)
 }
 
 # ---------------------------------------------------------------------------
-# classmate_reset()
+# klausmate_reset()
 # ---------------------------------------------------------------------------
 
-#' Reset classmate to factory defaults
+#' Reset klausmate to factory defaults
 #'
 #' Deletes the saved key (student key or API key) and resets the response
 #' language to English.
@@ -909,12 +909,12 @@ reset_key <- function() {
 #'
 #' @return Invisible NULL (called for side effects).
 #' @export
-classmate_reset <- function() {
+klausmate_reset <- function() {
 
   # --- Refuse if whisper() is running ----------------------------------------
   if (.watch_env$active) {
     message(
-      "classmate_reset() cannot run while whisper() is active.\n",
+      "klausmate_reset() cannot run while whisper() is active.\n",
       "Please call ssshh() to stop whisper first, then reset."
     )
     return(invisible(NULL))
@@ -922,20 +922,20 @@ classmate_reset <- function() {
 
   # --- Refuse if a paused talk() session exists ------------------------------
   pause_file <- file.path(
-    getOption(".classmate_project_root", getwd()),
+    getOption(".klausmate_project_root", getwd()),
     "claude_assistant_pause.rds"
   )
   if (file.exists(pause_file)) {
     message(
-      "classmate_reset() cannot run while a paused Classmate session exists.\n",
-      "Please open Classmate and close it with Quit with Code Log before resetting."
+      "klausmate_reset() cannot run while a paused Klausmate session exists.\n",
+      "Please open Klausmate and close it with Quit with Code Log before resetting."
     )
     return(invisible(NULL))
   }
 
   # --- Confirm with the user ------------------------------------------------
   message(
-    "classmate_reset() will:\n",
+    "klausmate_reset() will:\n",
     "  • Delete the saved key (student key or API key)\n",
     "  • Reset the response language to English\n"
   )
@@ -959,12 +959,12 @@ classmate_reset <- function() {
   }
 
   # --- Reset language to English --------------------------------------------
-  lang_path <- .classmate_lang_path()
+  lang_path <- .klausmate_lang_path()
   if (file.exists(lang_path)) {
     file.remove(lang_path)
     message("Response language reset to English.")
   }
 
-  message("classmate has been reset. You can now call talk() or whisper() to start fresh.")
+  message("klausmate has been reset. You can now call talk() or whisper() to start fresh.")
   invisible(NULL)
 }

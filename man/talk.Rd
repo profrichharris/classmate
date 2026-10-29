@@ -2,7 +2,7 @@
 % Please edit documentation in R/ask_claude.R
 \name{talk}
 \alias{talk}
-\title{Launch the Classmate AI tutor Shiny app}
+\title{Launch the Klausmate AI tutor Shiny app}
 \usage{
 talk()
 }

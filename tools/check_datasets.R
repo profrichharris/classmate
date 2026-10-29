@@ -1,4 +1,4 @@
-# Checks the datasets offered under "Classmate (online datasets)" in Load Package Data.
+# Checks the datasets offered under "Klausmate (online datasets)" in Load Package Data.
 #
 #   Rscript tools/check_datasets.R            # check (run before every release that touches datasets/)
 #   Rscript tools/check_datasets.R --update   # refresh the sizes and checksums in datasets/datasets.json first

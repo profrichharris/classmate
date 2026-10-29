@@ -1,12 +1,12 @@
-# classmate — Security, Privacy and Ethical Safeguards
+# klausmate — Security, Privacy and Ethical Safeguards
 
-This document describes the security and data-handling arrangements for the classmate R package, intended for IT departments, data protection officers, and institutional compliance teams.
+This document describes the security and data-handling arrangements for the klausmate R package, intended for IT departments, data protection officers, and institutional compliance teams.
 
 ---
 
-## What classmate does
+## What klausmate does
 
-classmate is an R package for university students learning data analysis and GIS. It provides a teaching interface that connects to Anthropic's Claude AI API to help students write and understand R code. It operates in two modes: a full Shiny application (`talk()`) and a lightweight console mode (`whisper()`).
+klausmate is an R package for university students learning data analysis and GIS. It provides a teaching interface that connects to Anthropic's Claude AI API to help students write and understand R code. It operates in two modes: a full Shiny application (`talk()`) and a lightweight console mode (`whisper()`).
 
 The API connection is the only external communication the package makes. There is no telemetry, no analytics, no phone-home behaviour of any kind beyond the API calls that the student explicitly initiates by submitting a prompt.
 
@@ -29,7 +29,7 @@ The API connection is the only external communication the package makes. There i
 
 ### The Answer button
 
-The **Answer** button gives the student a plain-English answer instead of code. For questions that can be answered from the object and file summaries above, nothing further is sent. For questions that need a calculation, Classmate:
+The **Answer** button gives the student a plain-English answer instead of code. For questions that can be answered from the object and file summaries above, nothing further is sent. For questions that need a calculation, Klausmate:
 
 1. asks Claude for a short, **read-only** piece of R code (it may not write files, change objects, install packages, change the working directory, use the network, or draw plots — code that does so is refused before it runs, and it runs in a throw-away environment with a time limit);
 2. runs that code locally;
@@ -37,12 +37,12 @@ The **Answer** button gives the student a plain-English answer instead of code. 
 
 Claude is instructed to print aggregates only and never individual records, identifiers or small groups. Prompt instructions alone are not a guarantee, so there are mechanical safeguards as well:
 
-- **Identifying text never reaches the calculation.** The calculation runs on *copies* of the data in which text columns that look like names or identifiers (by column name — name, id, address, surname, code, geoid, label — or by having many distinct values) have been replaced by opaque codes such as `[[NAME_7]]`. Whatever the code does to those columns (capital letters, substrings, arithmetic), it only ever sees codes. Claude writes its answer around the codes and Classmate fills the real values back in on the student's screen only. The conversation history sent on later turns also carries codes, not real values.
+- **Identifying text never reaches the calculation.** The calculation runs on *copies* of the data in which text columns that look like names or identifiers (by column name — name, id, address, surname, code, geoid, label — or by having many distinct values) have been replaced by opaque codes such as `[[NAME_7]]`. Whatever the code does to those columns (capital letters, substrings, arithmetic), it only ever sees codes. Claude writes its answer around the codes and Klausmate fills the real values back in on the student's screen only. The conversation history sent on later turns also carries codes, not real values.
 - Text and pattern functions, sorting and comparing on those columns are refused (they would give wrong answers on coded values or try to extract pieces of them); Claude gets one chance to revise, and otherwise points the student to Ask for Code.
 - Per-record locations are refused (`st_coordinates`, `st_centroid`, `st_bbox`, `st_as_text` and similar), geometry text is removed from results, and requests to list rows, identifiers, parts of identifiers, or the location of a single record are declined.
 - Values the code reads for itself from files (rather than from selected objects) are caught by a second layer that withholds exact matches of identifying text from the output.
 
-These were tested with the real model using deliberately awkward questions (names in capitals, digits extracted from names, partial IDs, centre coordinates, a "ignore your rules" override, lists disguised as filters): the real names, ID fragments and coordinates did not appear in anything sent. Limits: a numeric-only ID column, an identifier column with an unusual title and few distinct values, or identifying text the code reads straight from a file into a non-table object may not be recognised; treat this as a strong safeguard, not a guarantee, and do not use classmate with identifiable personal data. The student is told about all of this the first time they use the button in an R session, and the startup disclaimer states it. The code and output are shown to the student under "Show my working".
+These were tested with the real model using deliberately awkward questions (names in capitals, digits extracted from names, partial IDs, centre coordinates, a "ignore your rules" override, lists disguised as filters): the real names, ID fragments and coordinates did not appear in anything sent. Limits: a numeric-only ID column, an identifier column with an unusual title and few distinct values, or identifying text the code reads straight from a file into a non-table object may not be recognised; treat this as a strong safeguard, not a guarantee, and do not use klausmate with identifiable personal data. The student is told about all of this the first time they use the button in an R session, and the startup disclaimer states it. The code and output are shown to the student under "Show my working".
 
 ### Never sent
 
@@ -54,7 +54,7 @@ These were tested with the real model using deliberately awkward questions (name
 
 ### Console output filtering
 
-If a student runs code that prints rows of a data frame to the console (for example, `head(df)` or `print(df)`), classmate detects those lines and replaces them with a neutral placeholder before they are sent to the API — for example:
+If a student runs code that prints rows of a data frame to the console (for example, `head(df)` or `print(df)`), klausmate detects those lines and replaces them with a neutral placeholder before they are sent to the API — for example:
 
 > `[12 rows of data — values not shown]`
 
@@ -72,7 +72,7 @@ The same filter is applied within the whisper mode to any error messages that mi
 
 If a data file without column headers is added to the context, R's default behaviour is to treat the first row of actual data as column names. This would cause data values (which might include names, IDs, or other personal identifiers) to be sent as if they were variable names.
 
-classmate detects this situation automatically. When a file's apparent column names look like data values — for example, they are purely numeric, match date formats, or are unusually long strings — the package:
+klausmate detects this situation automatically. When a file's apparent column names look like data values — for example, they are purely numeric, match date formats, or are unusually long strings — the package:
 
 1. Shows a warning notification to the student, advising them to reload the file with `header = FALSE` and add the resulting R object to the context instead.
 2. Annotates the schema sent to the AI with a warning that the column names may be data values.
@@ -81,7 +81,7 @@ classmate detects this situation automatically. When a file's apparent column na
 
 ## Disclosure risk enforcement
 
-classmate instructs the AI not to generate code that would produce a publishable or exportable output — a PDF, saved image, formatted table, or CSV file — that contains named individuals alongside personal attributes such as salary, address, or health information.
+klausmate instructs the AI not to generate code that would produce a publishable or exportable output — a PDF, saved image, formatted table, or CSV file — that contains named individuals alongside personal attributes such as salary, address, or health information.
 
 If the AI determines that a request would produce such output, it returns a structured `DISCLOSURE_RISK` response rather than code. The application intercepts this response before it is shown to the student and before any usage quota is charged, and displays a modal explaining the concern. The student is invited to modify their request.
 
@@ -124,7 +124,7 @@ Institutions should verify current policy terms directly with Anthropic before m
 
 ## The student key system
 
-Students do not hold or use their own Anthropic API keys. The instructor generates a student key file (`.key`) using `classmate_make_key()`. This file encodes:
+Students do not hold or use their own Anthropic API keys. The instructor generates a student key file (`.key`) using `klausmate_make_key()`. This file encodes:
 
 - A rate-limited API key controlled by the instructor
 - A usage quota (maximum spend per reset period, e.g. per week)
@@ -138,15 +138,15 @@ This means:
 - Keys expire automatically at the end of the module period
 - A student whose key expires receives a clear message and cannot make further API calls
 
-The key file is encrypted with a 6-digit PIN chosen by the instructor (AES-256 under a key derived from the PIN with a slow key-derivation function, authenticated so that a wrong PIN is detected). The PIN is not stored in the file and is given to students separately; a student enters it once, when the key is first loaded, after which the key is saved on that computer and the PIN is not asked for again. After 10 wrong PINs Classmate refuses further attempts until R is restarted. This is a deterrent against a leaked key file being used by someone who does not have the PIN, not strong protection (there are only a million 6-digit PINs, and the lock-out cannot stop guessing outside Classmate). The ultimate safeguard is that the instructor can revoke the underlying API key at Anthropic.
+The key file is encrypted with a 6-digit PIN chosen by the instructor (AES-256 under a key derived from the PIN with a slow key-derivation function, authenticated so that a wrong PIN is detected). The PIN is not stored in the file and is given to students separately; a student enters it once, when the key is first loaded, after which the key is saved on that computer and the PIN is not asked for again. After 10 wrong PINs Klausmate refuses further attempts until R is restarted. This is a deterrent against a leaked key file being used by someone who does not have the PIN, not strong protection (there are only a million 6-digit PINs, and the lock-out cannot stop guessing outside Klausmate). The ultimate safeguard is that the instructor can revoke the underlying API key at Anthropic.
 
-Once loaded, the key is stored locally on the student's machine in R's standard user configuration directory, in a file with a neutral, hidden-style name (it starts with a dot, and on Windows carries the hidden attribute). This makes the file less visible; it is not encrypted, and the API key is also held privately inside the Classmate package while the app runs (it is not placed in the `ANTHROPIC_API_KEY` environment variable, and is dropped when Classmate closes). Code run in the same R session could still reach it. It is not transmitted anywhere other than being used to authenticate API calls.
+Once loaded, the key is stored locally on the student's machine in R's standard user configuration directory, in a file with a neutral, hidden-style name (it starts with a dot, and on Windows carries the hidden attribute). This makes the file less visible; it is not encrypted, and the API key is also held privately inside the Klausmate package while the app runs (it is not placed in the `ANTHROPIC_API_KEY` environment variable, and is dropped when Klausmate closes). Code run in the same R session could still reach it. It is not transmitted anywhere other than being used to authenticate API calls.
 
 ---
 
 ## Student awareness — built-in prompts
 
-In addition to technical safeguards, classmate includes two in-app prompts designed to keep students aware of their data protection responsibilities.
+In addition to technical safeguards, klausmate includes two in-app prompts designed to keep students aware of their data protection responsibilities.
 
 ### Session startup disclaimer
 
@@ -154,8 +154,8 @@ Every time a student opens the app for the first time in an R session, a modal d
 
 - Their prompts and code are processed by Anthropic's Claude API (Anthropic, Inc., USA)
 - Only questions, code, and variable names are transmitted — data values are not (the exception is the Answer button, which sends summary results, never individual records)
-- Two separate warnings, shown in bold dark red: they must not include personal information about themselves or others in their prompts, and they must not use classmate with datasets that contain identifiable personal data
-- Use of classmate must comply with the university's AI policies; students should check with their module leader if unsure about a specific assessment
+- Two separate warnings, shown in bold dark red: they must not include personal information about themselves or others in their prompts, and they must not use klausmate with datasets that contain identifiable personal data
+- Use of klausmate must comply with the university's AI policies; students should check with their module leader if unsure about a specific assessment
 - Anthropic does not use API interactions for training; data is deleted after 30 days
 
 The student must click **I understand** to proceed, or **Quit** to exit. This dialog does not reappear if the student pauses and resumes the same session.
@@ -174,15 +174,15 @@ Every button in the app is disabled until the student presses **Clear** — with
 
 ## Recommendations for institutional deployment
 
-For universities deploying classmate to students, we recommend the following steps:
+For universities deploying klausmate to students, we recommend the following steps:
 
 1. **Execute a Data Processing Agreement with Anthropic.** This is the GDPR-required legal basis for sending any personal data to a third-party processor. Anthropic's legal team can supply a standard DPA.
 
 2. **Consider Zero Data Retention.** If your institution's data protection policy requires that personal data not be retained beyond the point of processing, request ZDR as part of the Anthropic enterprise agreement.
 
-3. **Include classmate in your privacy notice.** Students are already informed within the app itself (see above), but the course privacy notice should also reference the use of Anthropic's Claude API so that students have a record they can refer to outside the app.
+3. **Include klausmate in your privacy notice.** Students are already informed within the app itself (see above), but the course privacy notice should also reference the use of Anthropic's Claude API so that students have a record they can refer to outside the app.
 
-4. **Use the student key system.** Do not give students raw Anthropic API keys. The student key system enforces usage limits, enables automatic expiry, and means that students never hold credentials that could be misused beyond the classmate context.
+4. **Use the student key system.** Do not give students raw Anthropic API keys. The student key system enforces usage limits, enables automatic expiry, and means that students never hold credentials that could be misused beyond the klausmate context.
 
 5. **Use the non-student key for instructor access.** Instructors and developers who need unrestricted access should use their own Anthropic API key directly, not a student key. This keeps student quota separate from instructor use.
 
@@ -190,7 +190,7 @@ For universities deploying classmate to students, we recommend the following ste
 
 ## Summary
 
-| Concern | classmate's position |
+| Concern | klausmate's position |
 |---------|---------------------|
 | Data values sent to AI | No — only schemas (column names, types, dimensions) |
 | Console output with data rows | Filtered out before transmission |

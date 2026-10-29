@@ -1,13 +1,13 @@
-# Classmate online datasets
+# Klausmate online datasets
 
-Data offered in Classmate's **Load Package Data** window under *Classmate (online datasets)*. The
+Data offered in Klausmate's **Load Package Data** window under *Klausmate (online datasets)*. The
 files are kept here in their original formats and are **not** part of the R package (the folder is
-excluded in `.Rbuildignore`). Each file carries its own licence: the MIT licence of the Classmate
+excluded in `.Rbuildignore`). Each file carries its own licence: the MIT licence of the Klausmate
 code does not apply to them.
 
 `datasets.json` describes every dataset: title, description, file, format, size, SHA-256 checksum,
 source, date retrieved, licence (and its link), the credit wording required, any notice that must
-accompany it, and the date the licence was reviewed. Classmate shows this beside each dataset and
+accompany it, and the date the licence was reviewed. Klausmate shows this beside each dataset and
 adds the credit and licence as comments to the code log when the data are downloaded.
 
 ## Adding a dataset
@@ -24,7 +24,7 @@ adds the credit and licence as comments to the code log when the data are downlo
    the paperwork (fields present, licence on the approved list, files and checksums current); it
    cannot decide whether a licence really allows redistribution.
 4. Commit and push. The files are fetched from
-   `https://raw.githubusercontent.com/profrichharris/classmate/main/datasets/`.
+   `https://raw.githubusercontent.com/profrichharris/klausmate/main/datasets/`.
 
 ## Current datasets
 

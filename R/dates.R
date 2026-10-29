@@ -3,8 +3,8 @@
 # common form, and format dates in the preferred order.
 
 # Returns "dmy", "mdy" or "ymd".
-classmate_date_order <- function() {
-  opt <- getOption("classmate.date_order")
+klausmate_date_order <- function() {
+  opt <- getOption("klausmate.date_order")
   if (is.character(opt) && opt %in% c("dmy", "mdy", "ymd")) return(opt)
   s <- tryCatch(format(as.Date("2031-12-25"), "%x"), error = function(e) "")
   m <- gregexpr("[0-9]+", s)
@@ -17,12 +17,12 @@ classmate_date_order <- function() {
   if (ord %in% c("dmy", "mdy", "ymd")) ord else "dmy"
 }
 
-classmate_date_pattern <- function(order = classmate_date_order()) {
+klausmate_date_pattern <- function(order = klausmate_date_order()) {
   switch(order, mdy = "MM/DD/YYYY", ymd = "YYYY/MM/DD", "DD/MM/YYYY")
 }
 
 # Format a Date or POSIXct. with_time = TRUE appends HH:MM.
-classmate_format_date <- function(x, order = classmate_date_order(),
+klausmate_format_date <- function(x, order = klausmate_date_order(),
                                   with_time = inherits(x, "POSIXt")) {
   if (is.null(x) || length(x) == 0L || is.na(x)) return("")
   fmt <- switch(order, mdy = "%m/%d/%Y", ymd = "%Y/%m/%d", "%d/%m/%Y")
@@ -34,7 +34,7 @@ classmate_format_date <- function(x, order = classmate_date_order(),
 # Accepts 2026-12-31, 31/12/2026, 12/31/26, 31.12.26, 31 Dec 2026, Dec 31, 2026.
 # Ambiguous numeric dates (both parts <= 12) follow `order`.
 # Returns a POSIXct (local time) with attr "has_time", or NA.
-classmate_parse_date <- function(x, order = classmate_date_order()) {
+klausmate_parse_date <- function(x, order = klausmate_date_order()) {
   na <- structure(as.POSIXct(NA), has_time = FALSE)
   x <- trimws(as.character(x))
   if (length(x) != 1L || is.na(x) || !nzchar(x)) return(na)
@@ -84,13 +84,13 @@ classmate_parse_date <- function(x, order = classmate_date_order()) {
 }
 
 # Expiry may be a Date (valid through the end of that day) or a POSIXct.
-classmate_is_expired <- function(expiry) {
+klausmate_is_expired <- function(expiry) {
   if (is.null(expiry) || length(expiry) == 0L || is.na(expiry)) return(FALSE)
   if (inherits(expiry, "POSIXt")) Sys.time() > expiry
   else Sys.Date() > as.Date(expiry)
 }
 
-classmate_not_yet_valid <- function(valid_from) {
+klausmate_not_yet_valid <- function(valid_from) {
   if (is.null(valid_from) || length(valid_from) == 0L || is.na(valid_from)) return(FALSE)
   Sys.time() < as.POSIXct(valid_from)
 }

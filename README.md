@@ -1,12 +1,17 @@
-# classmate — AI Assistant for Teaching R
+# klausmate — AI Assistant for Teaching R
 
-**classmate** is an R package that wraps a Shiny front-end around Claude AI, designed
+**klausmate** is an R package that wraps a Shiny front-end around Claude AI, designed
 for students learning R. One function launches the full interface:
 
 ```r
-library(classmate)
+library(klausmate)
 talk()
 ```
+
+> **Renamed.** klausmate was called *classmate* up to version 0.5.143. If you have the old package,
+> install the new one as below (a saved key and language setting are picked up automatically; key
+> files made for classmate still work) and, if you like, remove the old one with
+> `remove.packages("classmate")`.
 
 ## Installation
 
@@ -14,8 +19,8 @@ talk()
 # Install remotes if needed
 install.packages("remotes")
 
-# Install classmate from GitHub
-remotes::install_github("profrichharris/classmate")
+# Install klausmate from GitHub
+remotes::install_github("profrichharris/klausmate")
 ```
 
 Other packages the app needs are installed automatically the first time it is launched.
@@ -24,7 +29,7 @@ After that, `talk()` checks GitHub for a newer release each session and installs
 ## Quick start
 
 ```r
-library(classmate)
+library(klausmate)
 talk()
 ```
 
@@ -47,7 +52,7 @@ instructor (spending, number of conversations, length of code, expiry date).
 | Feature | Detail |
 |---|---|
 | **Ask for Code** | Sends your prompt to Claude; the R code lands in the editable code box. Cmd/Ctrl+Enter in the prompt box does the same (pressed again, it runs the code) |
-| **Answer** | A plain-English answer instead of code. Classmate answers from what it knows about your objects, or runs a short read-only calculation behind the scenes and explains the summary results; "Show my working" reveals the code. Identifying columns are replaced by codes, and only summary results (not individual records) go to Claude |
+| **Answer** | A plain-English answer instead of code. Klausmate answers from what it knows about your objects, or runs a short read-only calculation behind the scenes and explains the summary results; "Show my working" reveals the code. Identifying columns are replaced by codes, and only summary results (not individual records) go to Claude |
 | **Run** | Runs the code in your live R session. Output, plots and warnings appear in **R output**; interactive maps and plots appear as thumbnails that expand and can be saved as web pages. Code that runs longer than the limit in Preferences is stopped |
 | **Changes** | When Claude edits code you already have, shows the new code beside the previous code with the differences highlighted |
 | **Explain / Fix** | Explains the code (or the part you select), at a level you choose, or repairs code that failed |
@@ -64,11 +69,11 @@ All files the app saves go to `outputs/` inside your current working directory.
 
 ## Data
 
-Classmate does not bundle any data. **Load Package Data** lists every installed R package
+Klausmate does not bundle any data. **Load Package Data** lists every installed R package
 that comes with datasets (and spatial files), so you can load, and add to your prompt's
 context, data from any of them, such as `datasets` or `spData`.
 
-It also offers **Classmate (online datasets)**: teaching data kept in the
+It also offers **Klausmate (online datasets)**: teaching data kept in the
 [`datasets/`](datasets/) folder of this repository, in its original formats. Choosing it
 lists each dataset with its size, source, licence and the credit wording that goes with it;
 **Add** fetches the files you tick from GitHub (once; they are checked against a
@@ -80,11 +85,11 @@ checksum), imports them and adds them to the prompt's context. See
 Create a key file for your class from the R console (you need an Anthropic API key):
 
 ```r
-classmate::classmate_make_key()
+klausmate::klausmate_make_key()
 ```
 
 It asks for the limits (cost per period, expiry date, number of conversations, maximum code
-length) and a 6-digit PIN (or makes one), and writes `classmate.key`. Share the file (or its
+length) and a 6-digit PIN (or makes one), and writes `klausmate.key`. Share the file (or its
 web address) and give students the PIN separately. Revoke the underlying API key at
 Anthropic if a key is ever misused.
 
@@ -92,12 +97,12 @@ Anthropic if a key is ever misused.
 
 `whisper()` starts a console-only helper that watches for errors, warnings and messages and
 explains them when you call `raisehand()` (or `rh()`); `ssshh()` switches it off.
-`classmate_speaks("Welsh")` sets the language of the responses. `classmate_reset()` removes
+`klausmate_speaks("Welsh")` sets the language of the responses. `klausmate_reset()` removes
 the saved key and language setting.
 
 ## Scope and privacy
 
-classmate is designed for R programming and data analysis. Prompts with no R angle are
+klausmate is designed for R programming and data analysis. Prompts with no R angle are
 declined by Claude itself. Personal data should never be put in prompts or used with the
 app: see [`SECURITY.md`](SECURITY.md) for what is, and is not, sent to Claude, and
 [`DESIGN.md`](DESIGN.md) for how it works.

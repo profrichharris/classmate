@@ -1,18 +1,18 @@
-# classmate — Design, Purpose and Architecture
+# klausmate — Design, Purpose and Architecture
 
-This document provides a comprehensive account of what classmate is, why it was built the way it was, and the thinking behind its key design decisions. It is intended to give a future developer or maintainer full context if the original development conversation is unavailable.
+This document provides a comprehensive account of what klausmate is, why it was built the way it was, and the thinking behind its key design decisions. It is intended to give a future developer or maintainer full context if the original development conversation is unavailable.
 
 ---
 
-## What classmate is
+## What klausmate is
 
-classmate is an R package that gives university students AI-assisted help with learning R, directly inside RStudio. It wraps Anthropic's Claude API in a purpose-built interface that keeps students focused on their own data and code, rather than having an unconstrained conversation with a general AI.
+klausmate is an R package that gives university students AI-assisted help with learning R, directly inside RStudio. It wraps Anthropic's Claude API in a purpose-built interface that keeps students focused on their own data and code, rather than having an unconstrained conversation with a general AI.
 
 It is **not** a general-purpose AI chat client. It is a teaching tool, designed with the same care that you would apply to any piece of educational infrastructure: scoped, accountable, and ethically constrained.
 
 The package is authored by Richard Harris (profrichharris@gmail.com) at a UK university and intended for use in university practical courses in data analysis, statistics, and GIS.
 
-**GitHub:** https://github.com/profrichharris/classmate
+**GitHub:** https://github.com/profrichharris/klausmate
 
 ---
 
@@ -44,9 +44,9 @@ This mode was designed for students who are working through exercises in the sta
 
 ## The student key system
 
-Students do not use their own Anthropic API keys. Instead, an instructor generates a `.key` file using `classmate_make_key()`. This file encodes:
+Students do not use their own Anthropic API keys. Instead, an instructor generates a `.key` file using `klausmate_make_key()`. This file encodes:
 
-- A rate-limited API key (the instructor's, used via classmate's own API calls)
+- A rate-limited API key (the instructor's, used via klausmate's own API calls)
 - A usage quota (maximum total spend per reset period, e.g. £2/week)
 - A `final_expiry` date (typically 15 weeks — the length of a university semester)
 - A mode flag: student, help, or non-student (instructor/developer)
@@ -80,11 +80,11 @@ The full `talk()` app runs in Shiny for several reasons:
 
 ## System prompt design
 
-Every API call includes a carefully constructed system prompt built from a set of named rules. These rules are the core of what makes classmate a teaching tool rather than a generic AI assistant. Current rules:
+Every API call includes a carefully constructed system prompt built from a set of named rules. These rules are the core of what makes klausmate a teaching tool rather than a generic AI assistant. Current rules:
 
 **COLUMN NAME RULE** — when a file or object with a known schema is in the context, the AI must use exact column names from that schema. It must never guess, abbreviate, or invent variable names. This is the single most important rule for making generated code actually run on the student's data.
 
-**tmap v4 instruction** — classmate is used heavily for spatial data work. tmap v4 introduced breaking changes from v3. Without this rule the AI frequently generates v3 syntax that fails silently.
+**tmap v4 instruction** — klausmate is used heavily for spatial data work. tmap v4 introduced breaking changes from v3. Without this rule the AI frequently generates v3 syntax that fails silently.
 
 **tmap breaks instruction** — interval labels on classified maps must use unambiguous notation (`(0,10]` not `0-10`).
 
@@ -106,7 +106,7 @@ All sentinel responses (`OUT_OF_SCOPE`, `NEEDS_CLARIFICATION`, `DISCLOSURE_RISK`
 
 ## Data minimisation
 
-classmate is designed so that as little personal data as possible leaves the student's machine.
+klausmate is designed so that as little personal data as possible leaves the student's machine.
 
 **What is sent to the API:**
 - The student's typed prompt
@@ -132,9 +132,9 @@ classmate is designed so that as little personal data as possible leaves the stu
 
 ## The preflight update system
 
-When `talk()` or `whisper()` is called for the first time in an R session, `classmate_preflight()` checks the GitHub releases API for a newer version. If one is found, it downloads and installs the tarball silently, then relaunches the appropriate function. This ensures students always run the latest version without any manual intervention.
+When `talk()` or `whisper()` is called for the first time in an R session, `klausmate_preflight()` checks the GitHub releases API for a newer version. If one is found, it downloads and installs the tarball silently, then relaunches the appropriate function. This ensures students always run the latest version without any manual intervention.
 
-A session guard (`options(classmate.update_checked = TRUE)`) ensures the check runs at most once per R session, regardless of how many times `talk()` or `whisper()` is called. If both are called in the same session, whichever runs first sets the flag and the second skips the check.
+A session guard (`options(klausmate.update_checked = TRUE)`) ensures the check runs at most once per R session, regardless of how many times `talk()` or `whisper()` is called. If both are called in the same session, whichever runs first sets the flag and the second skips the check.
 
 ---
 
@@ -199,7 +199,7 @@ Students (and instructors) can set preferences via a Preferences modal:
 - Comment density (None / Minimal / Most)
 - Image format, quality, and size for exports
 
-Preferences are persisted to `tools::R_user_dir("classmate", "config")/user_prefs.rds` so they survive R restarts and package updates. In student mode, maximum code lines and unlimited mode are locked; only instructors and developers can remove the length cap.
+Preferences are persisted to `tools::R_user_dir("klausmate", "config")/user_prefs.rds` so they survive R restarts and package updates. In student mode, maximum code lines and unlimited mode are locked; only instructors and developers can remove the length cap.
 
 When comment density changes, the current editor code is automatically rewritten by a separate Haiku call to apply the new density. This is a low-stakes cosmetic change, so Haiku (faster and cheaper) is used rather than Sonnet.
 
@@ -216,13 +216,13 @@ When comment density changes, the current editor code is automatically rewritten
 ## Release workflow
 
 ```bash
-cd /Users/ggrjh/Dropbox/Claude/classmate
-R -e "devtools::document('classmate')"   # regenerates NAMESPACE and man/ from @export tags
-R CMD build classmate
-R -e "devtools::install('classmate', quiet=TRUE)"
-cd classmate && git add -A && git commit -m "vX.Y.Z — description" && git push
-cd .. && gh release create vX.Y.Z classmate_X.Y.Z.tar.gz \
-  --repo profrichharris/classmate --title "vX.Y.Z" --notes "..."
+cd /Users/ggrjh/Dropbox/Claude/klausmate
+R -e "devtools::document('klausmate')"   # regenerates NAMESPACE and man/ from @export tags
+R CMD build klausmate
+R -e "devtools::install('klausmate', quiet=TRUE)"
+cd klausmate && git add -A && git commit -m "vX.Y.Z — description" && git push
+cd .. && gh release create vX.Y.Z klausmate_X.Y.Z.tar.gz \
+  --repo profrichharris/klausmate --title "vX.Y.Z" --notes "..."
 ```
 
 NAMESPACE is managed by roxygen2. Never edit it manually — add or remove `@export` tags in the R source and run `devtools::document()`.
@@ -236,9 +236,9 @@ NAMESPACE is managed by roxygen2. Never edit it manually — add or remove `@exp
 | File | Purpose |
 |------|---------|
 | `inst/app/app.R` | Entire Shiny UI and server logic (single file, ~4500 lines) |
-| `R/ask_claude.R` | `talk()`, `classmate_preflight()`, `classmate_do_update()`, `%||%` |
+| `R/ask_claude.R` | `talk()`, `klausmate_preflight()`, `klausmate_do_update()`, `%||%` |
 | `R/watch.R` | `whisper()`, `raisehand()`, `ssshh()`, `reset_key()` and all supporting helpers |
-| `R/instructor.R` | `classmate_make_key()`, `classmate_config_show()` |
+| `R/instructor.R` | `klausmate_make_key()`, `klausmate_config_show()` |
 | `R/key_pin.R` | PIN sealing / opening of key files, wrong-PIN counter, console unlock for `whisper()` |
 | `DESCRIPTION` | Package metadata and version |
 | `NAMESPACE` | Generated by roxygen2 — do not edit manually |

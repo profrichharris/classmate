@@ -1,4 +1,4 @@
-#' Create a classmate key file for distribution to students
+#' Create a klausmate key file for distribution to students
 #'
 #' Bundles an Anthropic API key together with per-student usage-limit settings
 #' into a single \code{.key} file that can be emailed to students. Students
@@ -44,12 +44,12 @@
 #'   it, so it is of no use without the PIN; students enter the PIN once, when they first load
 #'   the key. The PIN is not stored in the file, so tell students the PIN separately. If omitted
 #'   you are asked to choose one, or press Enter to have one generated.
-#' @param output_file Path for the key file. Default \code{"classmate.key"} in
+#' @param output_file Path for the key file. Default \code{"klausmate.key"} in
 #'   the current working directory.
 #'
 #' @return The normalised path to the key file, invisibly.
 #' @export
-classmate_make_key <- function(api_key           = NULL,
+klausmate_make_key <- function(api_key           = NULL,
                                 cost_limit,
                                 reset_period      = NULL,
                                 final_expiry      = NULL,
@@ -57,7 +57,7 @@ classmate_make_key <- function(api_key           = NULL,
                                 max_conversations,
                                 max_lines,
                                 pin               = NULL,
-                                output_file       = "classmate.key") {
+                                output_file       = "klausmate.key") {
 
   confirm_unlimited <- function(what) {
     ans <- trimws(readline(paste0(
@@ -77,11 +77,11 @@ classmate_make_key <- function(api_key           = NULL,
     repeat {
       ans <- trimws(readline("Choose a 6-digit PIN (or press Enter to generate one): "))
       if (!nzchar(ans)) { pin <- sprintf("%06d", sample(0L:999999L, 1L)); break }
-      if (classmate_pin_ok(ans)) { pin <- ans; break }
+      if (klausmate_pin_ok(ans)) { pin <- ans; break }
       message("The PIN must be exactly 6 digits.")
     }
   }
-  if (!classmate_pin_ok(pin))
+  if (!klausmate_pin_ok(pin))
     stop("pin must be exactly 6 digits, for example \"482915\".", call. = FALSE)
 
   if (missing(cost_limit)) {
@@ -130,8 +130,8 @@ classmate_make_key <- function(api_key           = NULL,
     reset_period <- if (!nzchar(ans)) "weekly" else ans
   }
 
-  date_order <- classmate_date_order()
-  pattern    <- classmate_date_pattern(date_order)
+  date_order <- klausmate_date_order()
+  pattern    <- klausmate_date_pattern(date_order)
   message("Dates are entered as ", pattern, " (taken from your system settings); ",
           "other forms such as 2026-12-31 or 31 Dec 2026 are also understood.")
 
@@ -139,17 +139,17 @@ classmate_make_key <- function(api_key           = NULL,
     now <- Sys.time()
     ans <- trimws(readline(paste0(
       "Start date [and optional time HH:MM] ", pattern,
-      " [default: now (", classmate_format_date(now, date_order), "), or press Enter to accept]: "
+      " [default: now (", klausmate_format_date(now, date_order), "), or press Enter to accept]: "
     )))
     valid_from <- if (!nzchar(ans)) now else {
-      parsed <- classmate_parse_date(ans, date_order)
+      parsed <- klausmate_parse_date(ans, date_order)
       if (is.na(parsed)) {
         message("Invalid date — starting now.")
         now
       } else as.POSIXct(parsed)
     }
   } else if (is.character(valid_from)) {
-    p <- classmate_parse_date(valid_from, date_order)
+    p <- klausmate_parse_date(valid_from, date_order)
     if (is.na(p)) stop("Could not understand valid_from: '", valid_from, "'", call. = FALSE)
     valid_from <- as.POSIXct(p)
   } else if (inherits(valid_from, "Date")) {
@@ -158,7 +158,7 @@ classmate_make_key <- function(api_key           = NULL,
 
   if (is.null(final_expiry)) {
     default_expiry <- Sys.Date() + 7L * 15L
-    default_str    <- classmate_format_date(default_expiry, date_order)
+    default_str    <- klausmate_format_date(default_expiry, date_order)
     ans <- trimws(readline(paste0(
       "Final expiry date [and optional time HH:MM] ", pattern,
       " [default: ", default_str, ", or press Enter to accept]: "
@@ -166,7 +166,7 @@ classmate_make_key <- function(api_key           = NULL,
     final_expiry <- if (!nzchar(ans)) {
       default_expiry
     } else {
-      parsed <- classmate_parse_date(ans, date_order)
+      parsed <- klausmate_parse_date(ans, date_order)
       if (is.na(parsed)) {
         message("Invalid date — using default of ", default_str, ".")
         default_expiry
@@ -174,12 +174,12 @@ classmate_make_key <- function(api_key           = NULL,
       else as.Date(format(parsed))
     }
   } else if (is.character(final_expiry)) {
-    parsed <- classmate_parse_date(final_expiry, date_order)
+    parsed <- klausmate_parse_date(final_expiry, date_order)
     if (is.na(parsed)) stop("Could not understand final_expiry: '", final_expiry, "'", call. = FALSE)
     final_expiry <- if (isTRUE(attr(parsed, "has_time"))) as.POSIXct(parsed)
                     else as.Date(format(parsed))
   }
-  if (classmate_is_expired(final_expiry) ||
+  if (klausmate_is_expired(final_expiry) ||
       (inherits(final_expiry, "Date") && as.POSIXct(format(final_expiry + 1L), tz = "") <= valid_from) ||
       (inherits(final_expiry, "POSIXt") && final_expiry <= valid_from))
     stop("The final expiry is not after the start date.", call. = FALSE)
@@ -245,7 +245,7 @@ classmate_make_key <- function(api_key           = NULL,
     max_lines         = max_lines,
     created           = Sys.time()
   )
-  saveRDS(classmate_seal_key(payload, pin), output_file)
+  saveRDS(klausmate_seal_key(payload, pin), output_file)
 
   out <- normalizePath(output_file)
   message("Key file created: ", out)
@@ -254,8 +254,8 @@ classmate_make_key <- function(api_key           = NULL,
     message("  Cost limit:   $", cost_limit, " per ", reset_period)
   else
     message("  Cost limit:   none")
-  message("  Valid from:   ", classmate_format_date(valid_from, date_order, with_time = TRUE))
-  message("  Final expiry: ", classmate_format_date(final_expiry, date_order))
+  message("  Valid from:   ", klausmate_format_date(valid_from, date_order, with_time = TRUE))
+  message("  Final expiry: ", klausmate_format_date(final_expiry, date_order))
   if (!is.null(max_conversations))
     message("  Max conversations per start: ", max_conversations)
   else
@@ -268,17 +268,17 @@ classmate_make_key <- function(api_key           = NULL,
 }
 
 
-#' Show the current classmate configuration
+#' Show the current klausmate configuration
 #'
 #' Prints the active cost limit and reset period stored in the most recently
 #' loaded key file.
 #'
 #' @return Invisible \code{NULL}.
 #' @export
-classmate_config_show <- function() {
-  cfg_path <- classmate_state_path("config")
+klausmate_config_show <- function() {
+  cfg_path <- klausmate_state_path("config")
 
-  cat("classmate configuration\n")
+  cat("klausmate configuration\n")
   if (file.exists(cfg_path)) {
     cfg <- tryCatch(readRDS(cfg_path), error = function(e) NULL)
     if (!is.null(cfg)) {

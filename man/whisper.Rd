@@ -2,7 +2,7 @@
 % Please edit documentation in R/watch.R
 \name{whisper}
 \alias{whisper}
-\title{Start the classmate whisper mode}
+\title{Start the klausmate whisper mode}
 \usage{
 whisper(key = NULL)
 }

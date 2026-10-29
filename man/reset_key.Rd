@@ -2,7 +2,7 @@
 % Please edit documentation in R/watch.R
 \name{reset_key}
 \alias{reset_key}
-\title{Clear the saved classmate key}
+\title{Clear the saved klausmate key}
 \usage{
 reset_key()
 }

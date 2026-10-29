@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "Datasets offered under 'Classmate (online datasets)' in Load Package Data. Check with: Rscript tools/check_datasets.R (add --update to refresh sizes and checksums).",
+  "note": "Datasets offered under 'Klausmate (online datasets)' in Load Package Data. Check with: Rscript tools/check_datasets.R (add --update to refresh sizes and checksums).",
   "datasets": [
     {
       "id": "chicago_tracts_income",
@@ -51,7 +51,7 @@
       "licence_id": "free-with-credit",
       "licence_url": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
       "attribution": "Source: Children's Commissioner for England, The Childhood Lottery (2026). Boundaries: Office for National Statistics licensed under the Open Government Licence v.3.0. Contains OS data © Crown copyright and database right 2025.",
-      "notice": "The Children's Commissioner publishes this dataset for free download but states no formal licence (\"All rights reserved\"). Classmate redistributes it, unaltered in content, for teaching with the source credited. Boundaries contain OS data © Crown copyright and database right 2025.",
+      "notice": "The Children's Commissioner publishes this dataset for free download but states no formal licence (\"All rights reserved\"). Klausmate redistributes it, unaltered in content, for teaching with the source credited. Boundaries contain OS data © Crown copyright and database right 2025.",
       "reviewed": "2026-10-22",
       "bytes": 1327104,
       "sha256": "7726611e036031e298c9384a409d8a86e1ec61ba467237a7c0d7de7f24efe896"
@@ -69,7 +69,7 @@
       "licence_id": "free-with-credit",
       "licence_url": "https://www.childrenscommissioner.gov.uk/the-childhood-lottery/",
       "attribution": "Source: Children's Commissioner for England, The Childhood Lottery (2026).",
-      "notice": "The Children's Commissioner publishes this dataset for free download but states no formal licence (\"All rights reserved\"). Classmate redistributes it, unaltered in content, for teaching with the source credited. ",
+      "notice": "The Children's Commissioner publishes this dataset for free download but states no formal licence (\"All rights reserved\"). Klausmate redistributes it, unaltered in content, for teaching with the source credited. ",
       "reviewed": "2026-10-22",
       "bytes": 45581,
       "sha256": "a72c022e1bf55133d34a1889bf0bf121b8d7d35918b846279843f14eeaae5333"

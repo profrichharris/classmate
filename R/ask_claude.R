@@ -1,8 +1,8 @@
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
-CLASSMATE_GITHUB_REPO <- "profrichharris/classmate"
+KLAUSMATE_GITHUB_REPO <- "profrichharris/klausmate"
 
-#' Launch the Classmate AI tutor Shiny app
+#' Launch the Klausmate AI tutor Shiny app
 #'
 #' Opens a Shiny front-end that connects students to Claude AI directly from
 #' their R session. Any missing dependencies (shiny, shinyjs, shinyFiles,
@@ -22,7 +22,7 @@ talk <- function() {
 
   # --- Stop whisper() if running — avoid conflicts with the app -------------
   if (.watch_env$active) {
-    message("Stopping classmate whisper before launching the app...")
+    message("Stopping klausmate whisper before launching the app...")
     ssshh()
   }
 
@@ -30,16 +30,16 @@ talk <- function() {
   cran_pkgs <- c("shiny", "shinyjs", "shinyFiles", "callr", "rstudioapi", "httr2")
   for (pkg in cran_pkgs) {
     if (!requireNamespace(pkg, quietly = TRUE)) {
-      message("classmate: installing missing dependency '", pkg, "' ...")
+      message("klausmate: installing missing dependency '", pkg, "' ...")
       utils::install.packages(pkg)
     }
   }
 
   # --- The package may have been reinstalled while this R session was running ---
-  if (classmate_session_is_stale("talk")) return(invisible(NULL))
+  if (klausmate_session_is_stale("talk")) return(invisible(NULL))
 
   # --- Preflight: check for updates (once per R session, not after a Pause) -
-  updated <- classmate_preflight()
+  updated <- klausmate_preflight()
   if (isTRUE(updated)) return(invisible(NULL))   # new talk() launched inside preflight
 
   # Drop the private copy of the student's API key however the app ends (Pause, Quit, Escape in
@@ -47,20 +47,20 @@ talk <- function() {
   on.exit(cm_clear_key(), add = TRUE)
 
   # --- Pass the caller's working directory to the app -----------------------
-  options(.classmate_project_root = getwd())
+  options(.klausmate_project_root = getwd())
 
-  app_dir <- system.file("app", package = "classmate")
+  app_dir <- system.file("app", package = "klausmate")
   if (!nzchar(app_dir)) {
-    stop("Could not locate the classmate app directory. Try reinstalling the package.")
+    stop("Could not locate the klausmate app directory. Try reinstalling the package.")
   }
 
   # A paused session remembers the port it ran on. Starting on the same port lets the old (disconnected) browser
   # tab reconnect by itself and carry on; a new tab is opened only if no tab has connected a few seconds later.
-  port <- classmate_paused_port()
-  options(classmate.session_connected = FALSE)
+  port <- klausmate_paused_port()
+  options(klausmate.session_connected = FALSE)
   launch <- if (is.null(port)) TRUE else function(url) {
     later::later(function() {
-      if (!isTRUE(getOption("classmate.session_connected"))) utils::browseURL(url)
+      if (!isTRUE(getOption("klausmate.session_connected"))) utils::browseURL(url)
     }, 6)
   }
   run_args <- list(appDir = app_dir, launch.browser = launch)
@@ -68,21 +68,21 @@ talk <- function() {
   suppressWarnings(suppressMessages(do.call(shiny::runApp, run_args)))
 
   # runApp() restores the working directory it found. If the user changed it
-  # inside Classmate (Change Working Directory, or setwd() in the Quick Console),
+  # inside Klausmate (Change Working Directory, or setwd() in the Quick Console),
   # carry the change back to this R session (and so to RStudio).
-  final_wd <- getOption(".classmate_project_root")
+  final_wd <- getOption(".klausmate_project_root")
   if (!is.null(final_wd) && dir.exists(final_wd)) {
     final_wd <- normalizePath(final_wd, winslash = "/")
     if (!identical(final_wd, normalizePath(getwd(), winslash = "/"))) {
       setwd(final_wd)
-      message("Classmate: your working directory is now ", final_wd)
+      message("Klausmate: your working directory is now ", final_wd)
     }
   }
   invisible(NULL)
 }
 
 # The port a paused session was running on (stored in its pause file), if it is still free
-classmate_paused_port <- function() {
+klausmate_paused_port <- function() {
   f <- file.path(getwd(), "claude_assistant_pause.rds")
   if (!file.exists(f)) return(NULL)
   port <- tryCatch(as.integer(readRDS(f)$port), error = function(e) NA_integer_)
@@ -96,8 +96,8 @@ classmate_paused_port <- function() {
 # The GitHub API is tried first; it only allows 60 anonymous requests an hour per network address, so a class
 # sharing one connection can be refused (HTTP 403). The fallback reads the version from DESCRIPTION on GitHub
 # (no such limit) and builds the release download address from it.
-classmate_latest_release <- function() {
-  repo <- CLASSMATE_GITHUB_REPO
+klausmate_latest_release <- function() {
+  repo <- KLAUSMATE_GITHUB_REPO
   from_api <- tryCatch({
     resp <- httr2::request(paste0("https://api.github.com/repos/", repo, "/releases/latest")) |>
       httr2::req_headers("Accept" = "application/vnd.github+json", "X-GitHub-Api-Version" = "2022-11-28") |>
@@ -123,7 +123,7 @@ classmate_latest_release <- function() {
     if (length(m) < 2) return(NULL)
     ver <- m[2]
     list(version = ver,
-         url = sprintf("https://github.com/%s/releases/download/v%s/classmate_%s.tar.gz", repo, ver, ver))
+         url = sprintf("https://github.com/%s/releases/download/v%s/klausmate_%s.tar.gz", repo, ver, ver))
   }, error = function(e) NULL)
 }
 
@@ -132,27 +132,27 @@ classmate_latest_release <- function() {
 # Returns TRUE if a new version was installed and a fresh talk() was launched.
 # Returns FALSE (silently) in every other case, including all error paths.
 # ---------------------------------------------------------------------------
-classmate_preflight <- function(relaunch = "talk", args = list()) {
+klausmate_preflight <- function(relaunch = "talk", args = list()) {
 
   # Already checked this session, or this is a post-update re-entry
-  if (isTRUE(getOption("classmate.update_checked"))) return(FALSE)
-  options(classmate.update_checked = TRUE)
+  if (isTRUE(getOption("klausmate.update_checked"))) return(FALSE)
+  options(klausmate.update_checked = TRUE)
 
-  release <- classmate_latest_release()
+  release <- klausmate_latest_release()
   if (is.null(release)) return(FALSE)   # offline, or GitHub could not be reached: carry on silently
 
   latest_version  <- release$version
-  current_version <- as.character(utils::packageVersion("classmate"))
+  current_version <- as.character(utils::packageVersion("klausmate"))
 
   if (!nzchar(latest_version)) return(FALSE)
   if (utils::compareVersion(latest_version, current_version) <= 0) return(FALSE)
 
   # Don't retry a version whose installation already failed this session
-  if (identical(getOption("classmate.failed_update_version"), latest_version))
+  if (identical(getOption("klausmate.failed_update_version"), latest_version))
     return(FALSE)
 
   download_url <- release$url
-  classmate_do_update(latest_version, download_url, relaunch, args)
+  klausmate_do_update(latest_version, download_url, relaunch, args)
 }
 
 # ---------------------------------------------------------------------------
@@ -160,16 +160,16 @@ classmate_preflight <- function(relaunch = "talk", args = list()) {
 # A naive live detach/reload causes the "lazyload database corrupt" error
 # (R still needs the old .rdb when the new version overwrites it), so the
 # lazy-load promises are all forced before installing, then the namespace is
-# unloaded and loaded afresh (classmate_reload_and_relaunch()); if that fails
+# unloaded and loaded afresh (klausmate_reload_and_relaunch()); if that fails
 # we fall back to asking the user to restart R.
 # Returns TRUE on success, FALSE if anything goes wrong (caller continues
 # with the existing version in that case).
 # ---------------------------------------------------------------------------
-classmate_do_update <- function(latest_version, download_url, relaunch = "talk", args = list()) {
+klausmate_do_update <- function(latest_version, download_url, relaunch = "talk", args = list()) {
 
   # Pull every lazy-loaded object of the running copy into memory first, so that nothing in
   # it needs to be read from the package files once the new version has overwritten them.
-  classmate_force_lazy_objects()
+  klausmate_force_lazy_objects()
 
   problems <- character(0)
   success <- tryCatch({
@@ -184,40 +184,40 @@ classmate_do_update <- function(latest_version, download_url, relaunch = "talk",
   }, error = function(e) { problems <<- c(problems, conditionMessage(e)); FALSE })
 
   # Say so (once) if the update could not be installed: the student should not be left on an old version without
-  # knowing. Running out of rate limit or being offline is not reported (see classmate_preflight()).
+  # knowing. Running out of rate limit or being offline is not reported (see klausmate_preflight()).
   say_failed <- function() {
-    options(classmate.failed_update_version = latest_version)
-    message("Classmate: version ", latest_version, " is available but could not be installed automatically",
+    options(klausmate.failed_update_version = latest_version)
+    message("Klausmate: version ", latest_version, " is available but could not be installed automatically",
             if (length(problems)) paste0(" (", substr(paste(unique(problems), collapse = "; "), 1, 300), ")"), ".\n",
-            "To update, restart R and, before loading classmate, run:\n",
-            "  remotes::install_github(\"", CLASSMATE_GITHUB_REPO, "\")")
+            "To update, restart R and, before loading klausmate, run:\n",
+            "  remotes::install_github(\"", KLAUSMATE_GITHUB_REPO, "\")")
     FALSE
   }
   if (!success) return(say_failed())
 
   new_version <- tryCatch(
-    as.character(utils::packageVersion("classmate")),
+    as.character(utils::packageVersion("klausmate")),
     error = function(e) ""
   )
 
   if (!identical(new_version, latest_version)) return(say_failed())
 
   # Swap the new version in and carry on, with no restart of R needed
-  if (classmate_reload_and_relaunch(relaunch, args)) return(TRUE)
+  if (klausmate_reload_and_relaunch(relaunch, args)) return(TRUE)
 
   relaunch_call <- if (relaunch == "whisper") "whisper()" else "talk()"
   message(
-    "Classmate has been updated to v", latest_version, ".\n",
+    "Klausmate has been updated to v", latest_version, ".\n",
     "Please restart R and then run ", relaunch_call, " to continue."
   )
   TRUE
 }
 
 
-# Evaluate every lazy-load promise in the classmate namespace and attached package environment.
-classmate_force_lazy_objects <- function() {
-  envs <- list(asNamespace("classmate"))
-  if ("package:classmate" %in% search()) envs <- c(envs, list(as.environment("package:classmate")))
+# Evaluate every lazy-load promise in the klausmate namespace and attached package environment.
+klausmate_force_lazy_objects <- function() {
+  envs <- list(asNamespace("klausmate"))
+  if ("package:klausmate" %in% search()) envs <- c(envs, list(as.environment("package:klausmate")))
   for (e in envs)
     for (n in ls(e, all.names = TRUE))
       tryCatch(get(n, envir = e), error = function(err) NULL)
@@ -231,37 +231,37 @@ classmate_force_lazy_objects <- function() {
 # package was reinstalled or updated while R was running, so the loaded R code may not match the
 # installed app). Then the new copy is loaded and `relaunch` is started again from it, or, if that is
 # not possible, the user is asked to restart R. Returns TRUE when the caller should stop.
-classmate_session_is_stale <- function(relaunch = "talk", args = list()) {
-  loaded    <- tryCatch(as.character(getNamespaceVersion("classmate")), error = function(e) NA_character_)
-  installed <- tryCatch(as.character(utils::packageVersion("classmate")), error = function(e) loaded)
+klausmate_session_is_stale <- function(relaunch = "talk", args = list()) {
+  loaded    <- tryCatch(as.character(getNamespaceVersion("klausmate")), error = function(e) NA_character_)
+  installed <- tryCatch(as.character(utils::packageVersion("klausmate")), error = function(e) loaded)
   if (is.na(loaded) || identical(loaded, installed)) return(FALSE)
-  if (classmate_reload_and_relaunch(relaunch, args)) return(TRUE)
-  message("Classmate was updated while R was running. Please restart R (Session > Restart R in RStudio) ",
+  if (klausmate_reload_and_relaunch(relaunch, args)) return(TRUE)
+  message("Klausmate was updated while R was running. Please restart R (Session > Restart R in RStudio) ",
           "and then run ", relaunch, "() again.")
   TRUE
 }
 
-classmate_reload_and_relaunch <- function(relaunch = "talk", args = list()) {
-  attached <- "package:classmate" %in% search()
+klausmate_reload_and_relaunch <- function(relaunch = "talk", args = list()) {
+  attached <- "package:klausmate" %in% search()
   ok <- tryCatch({
-    unloadNamespace("classmate")
-    loadNamespace("classmate")
-    if (attached) suppressMessages(library("classmate", character.only = TRUE))
+    unloadNamespace("klausmate")
+    loadNamespace("klausmate")
+    if (attached) suppressMessages(library("klausmate", character.only = TRUE))
     TRUE
   }, error = function(e) FALSE)
   if (!ok) return(FALSE)
   # Not inside tryCatch(): whisper() registers global calling handlers, which R only allows when
   # no other handlers are on the stack.
-  do.call(getExportedValue("classmate", relaunch), args)
+  do.call(getExportedValue("klausmate", relaunch), args)
   TRUE
 }
 
 
 # ---------------------------------------------------------------------------
-# classmate_speaks() / classmate_language()
+# klausmate_speaks() / klausmate_language()
 # ---------------------------------------------------------------------------
 
-.classmate_known_languages <- c(
+.klausmate_known_languages <- c(
   "Afrikaans", "Albanian", "Amharic", "Arabic", "Armenian", "Azerbaijani",
   "Basque", "Belarusian", "Bengali", "Bosnian", "Bulgarian", "Catalan",
   "Chinese", "Croatian", "Czech", "Danish", "Dutch", "English",
@@ -276,31 +276,31 @@ classmate_reload_and_relaunch <- function(relaunch = "talk", args = list()) {
   "Urdu", "Uzbek", "Vietnamese", "Welsh", "Zulu"
 )
 
-.classmate_lang_path <- function()
-  file.path(tools::R_user_dir("classmate", "config"), "language.rds")
+.klausmate_lang_path <- function()
+  file.path(klausmate_user_dir("config"), "language.rds")
 
-#' Set the language classmate responds in
+#' Set the language klausmate responds in
 #'
 #' Saves a language preference that is applied to all AI responses in both
 #' \code{talk()} and \code{whisper()}. R code is always written in English;
 #' only explanatory text (and optionally code comments) changes language.
-#' Call \code{classmate_speaks("English")} to revert to British English.
+#' Call \code{klausmate_speaks("English")} to revert to British English.
 #'
 #' @param language A language name, e.g. \code{"French"}, \code{"Spanish"},
 #'   \code{"Welsh"}. Minor misspellings are accepted.
 #' @return Invisible canonical language name, or invisible NULL on failure.
 #' @export
-classmate_speaks <- function(language) {
+klausmate_speaks <- function(language) {
   lang <- trimws(language)
   if (!nzchar(lang)) {
-    message("Please supply a language name, e.g. classmate_speaks(\"French\").")
+    message("Please supply a language name, e.g. klausmate_speaks(\"French\").")
     return(invisible(NULL))
   }
-  matches <- agrep(lang, .classmate_known_languages,
+  matches <- agrep(lang, .klausmate_known_languages,
                    ignore.case = TRUE, value = TRUE, max.distance = 0.25)
   if (length(matches) == 0) {
     message(
-      "classmate does not recognise '", lang, "' as a language.\n",
+      "klausmate does not recognise '", lang, "' as a language.\n",
       "Examples of supported languages: Arabic, Chinese, Dutch, French, German, ",
       "Hindi, Italian, Japanese, Korean, Polish, Portuguese, Russian, Spanish, ",
       "Swahili, Turkish, Ukrainian, Welsh — and many more.\n",
@@ -309,22 +309,22 @@ classmate_speaks <- function(language) {
     return(invisible(NULL))
   }
   canonical <- matches[1]
-  config_dir <- tools::R_user_dir("classmate", "config")
+  config_dir <- klausmate_user_dir("config")
   dir.create(config_dir, recursive = TRUE, showWarnings = FALSE)
-  saveRDS(canonical, .classmate_lang_path())
+  saveRDS(canonical, .klausmate_lang_path())
   if (tolower(canonical) == "english") {
-    message("classmate will respond in British English.",
+    message("klausmate will respond in British English.",
             " Restart talk() or whisper() to apply.")
   } else {
-    message("classmate will respond in ", canonical, ".",
+    message("klausmate will respond in ", canonical, ".",
             " Restart talk() or whisper() to apply.")
   }
   invisible(canonical)
 }
 
 #' @keywords internal
-classmate_language <- function() {
-  path <- .classmate_lang_path()
+klausmate_language <- function() {
+  path <- .klausmate_lang_path()
   if (!file.exists(path)) return("English")
   tryCatch(readRDS(path), error = function(e) "English")
 }
